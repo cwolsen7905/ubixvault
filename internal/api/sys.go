@@ -11,24 +11,47 @@ import (
 	"net/http"
 
 	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/kv"
 )
 
 // maxBodyBytes caps request bodies to guard against oversized payloads.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// Handler serves the HTTP API over a Core.
+// kvMountPrefix is the storage prefix under which the KV v2 engine is mounted.
+const kvMountPrefix = "secret"
+
+// Handler serves the HTTP API over a Core and its mounted engines.
 type Handler struct {
 	core *core.Core
+	kv   *kv.Engine
 }
 
-// NewHandler returns an http.Handler for the system endpoints backed by c.
+// NewHandler returns an http.Handler backed by c, with the KV v2 engine mounted
+// on the core's barrier at /v1/secret.
 func NewHandler(c *core.Core) http.Handler {
-	h := &Handler{core: c}
+	h := &Handler{
+		core: c,
+		kv:   kv.New(c.Barrier(), kvMountPrefix),
+	}
 	mux := http.NewServeMux()
+
+	// System / lifecycle.
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
 	mux.HandleFunc("POST /v1/sys/seal", h.seal)
+
+	// KV v2 secrets engine.
+	mux.HandleFunc("GET /v1/secret/data/{path...}", h.kvRead)
+	mux.HandleFunc("POST /v1/secret/data/{path...}", h.kvWrite)
+	mux.HandleFunc("DELETE /v1/secret/data/{path...}", h.kvDeleteLatest)
+	mux.HandleFunc("POST /v1/secret/delete/{path...}", h.kvDeleteVersions)
+	mux.HandleFunc("POST /v1/secret/undelete/{path...}", h.kvUndelete)
+	mux.HandleFunc("POST /v1/secret/destroy/{path...}", h.kvDestroy)
+	mux.HandleFunc("GET /v1/secret/metadata/{path...}", h.kvReadMetadata)
+	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.kvList)
+	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.kvDeleteMetadata)
+
 	return mux
 }
 
