@@ -14,28 +14,34 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
+	"github.com/cwolsen7905/ubixvault/internal/transit"
 )
 
 // maxBodyBytes caps request bodies to guard against oversized payloads.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// kvMountPrefix is the storage prefix under which the KV v2 engine is mounted.
-const kvMountPrefix = "secret"
+// Storage prefixes under which the engines are mounted.
+const (
+	kvMountPrefix      = "secret"
+	transitMountPrefix = "transit"
+)
 
 // Handler serves the HTTP API over a Core and its mounted engines.
 type Handler struct {
 	core     *core.Core
 	kv       *kv.Engine
+	transit  *transit.Engine
 	tokens   *token.Store
 	policies *policy.Store
 }
 
-// NewHandler returns an http.Handler backed by c, with the KV v2 engine mounted
-// on the core's barrier at /v1/secret.
+// NewHandler returns an http.Handler backed by c, with the KV v2 and transit
+// engines mounted on the core's barrier.
 func NewHandler(c *core.Core) http.Handler {
 	h := &Handler{
 		core:     c,
 		kv:       kv.New(c.Barrier(), kvMountPrefix),
+		transit:  transit.New(c.Barrier(), transitMountPrefix),
 		tokens:   c.Tokens(),
 		policies: policy.NewStore(c.Barrier()),
 	}
@@ -68,6 +74,15 @@ func NewHandler(c *core.Core) http.Handler {
 
 	// Token creation.
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
+
+	// Transit engine (encryption-as-a-service).
+	mux.HandleFunc("POST /v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))
+	mux.HandleFunc("GET /v1/transit/keys/{name}", h.authenticate(h.transitReadKey))
+	mux.HandleFunc("DELETE /v1/transit/keys/{name}", h.authenticate(h.transitDeleteKey))
+	mux.HandleFunc("LIST /v1/transit/keys", h.authenticate(h.transitListKeys))
+	mux.HandleFunc("POST /v1/transit/keys/{name}/rotate", h.authenticate(h.transitRotateKey))
+	mux.HandleFunc("POST /v1/transit/encrypt/{name}", h.authenticate(h.transitEncrypt))
+	mux.HandleFunc("POST /v1/transit/decrypt/{name}", h.authenticate(h.transitDecrypt))
 
 	return mux
 }
