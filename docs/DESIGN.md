@@ -218,7 +218,7 @@ every later extension additive.
 - **Default-deny** everywhere; **least privilege** via short-lived tokens and dynamic secrets.
 - **Fail closed** — if a mandatory audit device can't record, the request is refused; if the barrier can't verify, the node stays sealed.
 - **No secrets in logs or errors** — sensitive values are HMAC'd in audit, never logged in plaintext; error messages never leak key material.
-- **Constant-time** comparisons for tokens/HMACs (`crypto/subtle`); vetted stdlib crypto only — **no hand-rolled cryptography**.
+- **Constant-time** comparisons for tokens/HMACs (`crypto/subtle`); vetted stdlib crypto only — **no hand-rolled cryptography**. The sole, deliberate exception is Shamir secret sharing (a secret-sharing scheme, not a cipher), implemented in-house with constant-time field arithmetic and test vectors — see `docs/DECISIONS.md` (D-009). Ciphers, hashes, and primitives remain standard-library only.
 - **Defense in depth** — barrier encryption + sealed-at-rest + TLS-in-transit + ACLs are independent layers.
 - Track guidance from **OWASP ASVS** and the **OWASP Secrets Management Cheat Sheet** as the review checklist for the API and secret handling.
 

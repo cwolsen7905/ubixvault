@@ -135,3 +135,30 @@ objects in etcd (requiring etcd encryption-at-rest + tight RBAC to be even reaso
 Since uBixCore's own workloads can call the API, the operator/env-var machinery solves a
 problem we may not have — so it is deferred until a real unmodifiable-app case appears.
 This avoids over-engineering the delivery path. See `docs/DESIGN.md` §4.1.
+
+## D-009 — Implement Shamir Secret Sharing in-house (a narrow carve-out from "no hand-rolled crypto")
+
+**Status:** Accepted · 2026-07-18
+
+**Decision:** implement Shamir's Secret Sharing over GF(2^8) in-house (`internal/shamir`)
+rather than adding a third-party dependency, as a deliberate and narrow exception to the
+"no hand-rolled cryptography" standard (D-007 / DESIGN §7.2).
+
+**Why:** Shamir is an information-theoretic **secret-sharing scheme, not a cipher**. The
+actual cryptographic primitives — AES, GCM, hashing, the CSPRNG — remain standard-library
+only; this exception does not extend to them. Implementing Shamir ourselves keeps the
+project dependency-free (no supply-chain surface for a security-critical component) and is
+a well-understood, ~200-line construction.
+
+**Safeguards that make this acceptable** (without them, we would use a vetted library):
+- GF(2^8) arithmetic is **constant-time** with respect to its byte operands — no
+  data-dependent branches and no table lookups — to avoid timing side channels.
+- Multiplication is validated against the **FIPS-197 (AES) field test vectors**, and the
+  inverse against a full `a * a⁻¹ == 1` sweep of the field.
+- **Property tests** cover round-trip, every threshold subset recovering, and
+  fewer-than-threshold shares failing to recover.
+- Randomness (coefficients and share x-coordinates) comes from `crypto/rand`.
+
+**Scope of the carve-out:** this applies to Shamir only. Any future need for a
+cryptographic primitive uses the standard library or a vetted library — we do not
+generalize this into a license to roll our own crypto.
