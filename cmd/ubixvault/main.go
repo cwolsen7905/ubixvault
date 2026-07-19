@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/api"
+	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
@@ -60,6 +61,7 @@ func runServer(args []string) error {
 	dataDir := fs.String("data", "./data", "directory for encrypted storage")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
+	auditLog := fs.String("audit-log", "", "path to an audit log file (enables fail-closed audit logging)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,7 +71,20 @@ func runServer(args []string) error {
 		return fmt.Errorf("open storage: %w", err)
 	}
 	c := core.New(phys)
-	handler := api.NewHandler(c)
+
+	var opts []api.Option
+	if *auditLog != "" {
+		device, err := audit.NewFileDevice(*auditLog)
+		if err != nil {
+			return fmt.Errorf("open audit log: %w", err)
+		}
+		broker := audit.NewBroker(device)
+		defer func() { _ = broker.Close() }()
+		opts = append(opts, api.WithAudit(broker))
+		log.Printf("audit logging to %s", *auditLog)
+	}
+
+	handler := api.NewHandler(c, opts...)
 
 	srv := &http.Server{
 		Addr:              *listen,
