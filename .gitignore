@@ -5,8 +5,9 @@
 *.dll
 *.so
 *.dylib
-ubixvault
-ubixvault-*
+# Anchored to repo root so it never matches the cmd/ubixvault source directory.
+/ubixvault
+/ubixvault-*
 
 # Test and coverage artifacts
 *.test
