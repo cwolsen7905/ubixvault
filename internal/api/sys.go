@@ -12,6 +12,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
+	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
@@ -23,18 +24,20 @@ const kvMountPrefix = "secret"
 
 // Handler serves the HTTP API over a Core and its mounted engines.
 type Handler struct {
-	core   *core.Core
-	kv     *kv.Engine
-	tokens *token.Store
+	core     *core.Core
+	kv       *kv.Engine
+	tokens   *token.Store
+	policies *policy.Store
 }
 
 // NewHandler returns an http.Handler backed by c, with the KV v2 engine mounted
 // on the core's barrier at /v1/secret.
 func NewHandler(c *core.Core) http.Handler {
 	h := &Handler{
-		core:   c,
-		kv:     kv.New(c.Barrier(), kvMountPrefix),
-		tokens: c.Tokens(),
+		core:     c,
+		kv:       kv.New(c.Barrier(), kvMountPrefix),
+		tokens:   c.Tokens(),
+		policies: policy.NewStore(c.Barrier()),
 	}
 	mux := http.NewServeMux()
 
@@ -55,6 +58,16 @@ func NewHandler(c *core.Core) http.Handler {
 	mux.HandleFunc("GET /v1/secret/metadata/{path...}", h.authenticate(h.kvReadMetadata))
 	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.authenticate(h.kvList))
 	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.authenticate(h.kvDeleteMetadata))
+
+	// ACL policies (governed by the same ACL check; root or an explicit grant).
+	mux.HandleFunc("PUT /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
+	mux.HandleFunc("POST /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
+	mux.HandleFunc("GET /v1/sys/policies/acl/{name}", h.authenticate(h.policyRead))
+	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
+	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
+
+	// Token creation.
+	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
 
 	return mux
 }
