@@ -1,9 +1,11 @@
 # uBix Vault — Decision Log (ADRs)
 
-> **Status:** Draft — pre-implementation design · 2026-07-18
+> **Status:** Active · Last updated 2026-07-18
 > Architecture decision records: the trade-offs behind each significant choice, and why.
 
 ## D-001 — Implementation language: Go
+
+**Status:** Accepted · 2026-07-18
 
 **Decision:** Go.
 
@@ -34,6 +36,8 @@ swapped in if an extreme threat model ever becomes a first-order requirement.
 
 ## D-002 — MVP scope: core plus signature capabilities
 
+**Status:** Accepted · 2026-07-18
+
 **Decision:** lean core **plus** Transit and one dynamic DB engine (MariaDB reference; see D-006).
 
 **Why not lean-core-only:** Transit (encryption-as-a-service) and dynamic secrets are the
@@ -47,6 +51,8 @@ extensions (see `docs/ROADMAP.md`).
 
 ## D-003 — Compatibility: API-compatible with HashiCorp Vault
 
+**Status:** Accepted · 2026-07-18
+
 **Decision:** match Vault's REST paths/semantics per-subsystem.
 
 **Why:** wire-compatibility lets us reuse Vault's mature client ecosystem — existing client
@@ -58,6 +64,8 @@ it for the tooling reuse. Compatibility is verified per subsystem in CI using re
 client libraries.
 
 ## D-004 — Scope: a small complete core, not Vault parity
+
+**Status:** Accepted · 2026-07-18
 
 **Decision:** ship a finished, polished, tested single-node core (barrier + Shamir
 seal/unseal, KV v2, Transit, dynamic MariaDB, token auth, ACL policies, audit) and
@@ -71,11 +79,15 @@ clone. See `docs/ROADMAP.md`.
 
 ## D-005 — Build our own vs. use OpenBao
 
+**Status:** Accepted · 2026-07-18
+
 **Decision:** build uBix Vault rather than adopt OpenBao — a lightweight, from-scratch,
 uBixCore-native implementation with full control over the design. See
 `docs/POSITIONING.md` for the prior-art acknowledgment and rationale.
 
 ## D-006 — Dynamic DB engine: plugin interface, MariaDB reference
+
+**Status:** Accepted · 2026-07-18
 
 **Decision:** implement the dynamic database engine against a small `DatabasePlugin`
 interface and ship **MariaDB** as the MVP reference plugin. Postgres/MySQL/etc. are
@@ -90,6 +102,8 @@ applied concretely — see D-007.
 
 ## D-007 — Engineering standards: SOLID + industry norms as hard requirements
 
+**Status:** Accepted · 2026-07-18
+
 **Decision:** adopt SOLID (expressed through Go's interface idioms), plus security
 engineering norms (default-deny, fail-closed, no hand-rolled crypto, OWASP ASVS as review
 checklist), idiomatic-Go tooling (lint/vet/gofmt, `govulncheck`), table-driven tests with
@@ -103,6 +117,8 @@ rewrite, and it is the structural expression of Open/Closed + Dependency Inversi
 detail in `docs/DESIGN.md` §7.
 
 ## D-008 — Secret delivery to pods: direct API first, operator only if needed
+
+**Status:** Accepted · 2026-07-18
 
 **Decision:** the primary way workloads get secrets is to **call the vault API directly**
 (authenticated via the Kubernetes auth method) and hold secrets in memory. An operator that

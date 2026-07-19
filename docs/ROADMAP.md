@@ -1,6 +1,6 @@
 # uBix Vault — Roadmap
 
-> **Status:** Draft — pre-implementation design · 2026-07-18
+> **Status:** Active · Last updated 2026-07-18
 
 The project's deliverable is a **single-node secrets manager with a small, complete,
 deeply-implemented core** — not feature parity with HashiCorp Vault. The goal is a
