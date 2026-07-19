@@ -95,7 +95,7 @@ func (b *Barrier) Initialize(ctx context.Context, masterKey []byte) error {
 	if _, err := rand.Read(barrierKey); err != nil {
 		return fmt.Errorf("barrier: generate key: %w", err)
 	}
-	blob, err := encrypt(master, barrierKey)
+	blob, err := encrypt(master, barrierKey, keyringPath)
 	if err != nil {
 		return fmt.Errorf("barrier: seal keyring: %w", err)
 	}
@@ -140,7 +140,7 @@ func (b *Barrier) Unseal(ctx context.Context, masterKey []byte) error {
 		return ErrNotInitialized
 	}
 
-	barrierKey, err := decrypt(master, entry.Value)
+	barrierKey, err := decrypt(master, entry.Value, keyringPath)
 	if err != nil {
 		// A wrong master key fails GCM authentication; report it as an invalid key
 		// rather than leaking the cryptographic detail.
@@ -190,7 +190,7 @@ func (b *Barrier) Get(ctx context.Context, key string) (*storage.Entry, error) {
 	if err != nil || entry == nil {
 		return nil, err
 	}
-	plaintext, err := decrypt(b.aead, entry.Value)
+	plaintext, err := decrypt(b.aead, entry.Value, key)
 	if err != nil {
 		return nil, fmt.Errorf("barrier: decrypt %q: %w", key, err)
 	}
@@ -208,7 +208,7 @@ func (b *Barrier) Put(ctx context.Context, entry *storage.Entry) error {
 		return ErrSealed
 	}
 
-	blob, err := encrypt(b.aead, entry.Value)
+	blob, err := encrypt(b.aead, entry.Value, entry.Key)
 	if err != nil {
 		return fmt.Errorf("barrier: encrypt %q: %w", entry.Key, err)
 	}
@@ -274,9 +274,20 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// encrypt produces version || nonce || ciphertext+tag. The version byte is
-// authenticated as additional data so it cannot be tampered with.
-func encrypt(aead cipher.AEAD, plaintext []byte) ([]byte, error) {
+// aad builds the GCM additional authenticated data for an entry: the format
+// version byte followed by the storage path. Binding the path means a ciphertext
+// only authenticates at the exact location it was written to, so an attacker with
+// storage access cannot relocate a valid blob from one path to another (as
+// HashiCorp Vault's barrier also does). The version byte is likewise
+// authenticated, so the format cannot be silently downgraded.
+func aad(path string) []byte {
+	ad := make([]byte, 0, 1+len(path))
+	ad = append(ad, formatVersion)
+	return append(ad, path...)
+}
+
+// encrypt produces version || nonce || ciphertext+tag, binding path via the AAD.
+func encrypt(aead cipher.AEAD, plaintext []byte, path string) ([]byte, error) {
 	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("barrier: nonce: %w", err)
@@ -284,11 +295,12 @@ func encrypt(aead cipher.AEAD, plaintext []byte) ([]byte, error) {
 	out := make([]byte, 0, 1+len(nonce)+len(plaintext)+aead.Overhead())
 	out = append(out, formatVersion)
 	out = append(out, nonce...)
-	return aead.Seal(out, nonce, plaintext, []byte{formatVersion}), nil
+	return aead.Seal(out, nonce, plaintext, aad(path)), nil
 }
 
-// decrypt reverses encrypt, verifying the format version and authentication tag.
-func decrypt(aead cipher.AEAD, blob []byte) ([]byte, error) {
+// decrypt reverses encrypt, verifying the format version, path binding, and
+// authentication tag. path must be the same location the blob was written to.
+func decrypt(aead cipher.AEAD, blob []byte, path string) ([]byte, error) {
 	ns := aead.NonceSize()
 	if len(blob) < 1+ns {
 		return nil, errMalformed
@@ -298,7 +310,7 @@ func decrypt(aead cipher.AEAD, blob []byte) ([]byte, error) {
 	}
 	nonce := blob[1 : 1+ns]
 	ciphertext := blob[1+ns:]
-	return aead.Open(nil, nonce, ciphertext, []byte{formatVersion})
+	return aead.Open(nil, nonce, ciphertext, aad(path))
 }
 
 // zero overwrites b with zeros (best-effort key hygiene).
