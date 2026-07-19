@@ -1,6 +1,6 @@
 # uBix Vault — Design Document
 
-> **Status:** Draft — pre-implementation design · 2026-07-18
+> **Status:** Active · Last updated 2026-07-18
 
 ## 1. What uBix Vault is
 

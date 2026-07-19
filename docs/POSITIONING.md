@@ -1,6 +1,6 @@
 # uBix Vault — Positioning & Prior Art
 
-> **Status:** Draft — pre-implementation design · 2026-07-18
+> **Status:** Active · Last updated 2026-07-18
 > Why this project exists alongside HashiCorp Vault and OpenBao.
 
 ## Prior art (acknowledged up front)
