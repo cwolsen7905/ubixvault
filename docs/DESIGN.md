@@ -185,31 +185,31 @@ See `docs/ROADMAP.md` for phased milestones beyond the MVP.
 These are the standards the codebase is held to. They are not aspirational — each maps to a
 concrete structural decision, and code review checks against them.
 
-### 7.1 SOLID (expressed the Go way)
+### 7.1 Idiomatic Go first, with SOLID as a complementary lens
 
-Go isn't class-based, but SOLID maps directly onto its interface idioms ("accept interfaces,
-return structs; keep interfaces small"):
+The primary bar is **idiomatic Go**, not a language-agnostic checklist. Go is not
+class-based, so the principles that carry the most weight here are the language's own
+(see §7.3 for the canonical references):
 
-- **S — Single Responsibility.** Each package/type owns one concern: the *barrier* only
-  encrypts/decrypts at rest, the *seal* only manages unseal state, the *lease manager* only
-  tracks TTLs and revocation, a *secrets engine* only handles its own path. No catch-all types.
-- **O — Open/Closed.** The core is extended by *adding implementations*, never editing it.
-  New storage backends, auth methods, secrets engines, audit devices, and database plugins
-  plug in through interfaces; the core barrier/router/policy code doesn't change to add them.
-- **L — Liskov Substitution.** Any implementation of an interface is fully substitutable:
-  the file storage and (later) Raft storage are interchangeable behind `StorageBackend`;
-  the MariaDB and Postgres plugins behind `DatabasePlugin`; Shamir and (later) KMS behind
-  `Seal`. Contracts (error semantics, idempotency of revoke) are part of the interface.
-- **I — Interface Segregation.** Small, focused interfaces over broad ones — the Go norm.
-  `DatabasePlugin` exposes only `Initialize/CreateUser/RevokeUser/RotateRoot`; an audit
-  device only `LogRequest/LogResponse`. Consumers depend on the narrowest interface they need.
-- **D — Dependency Inversion.** The core depends on *interfaces*, and concrete
-  implementations are injected at startup (constructor injection / a small wiring layer in
-  `main`). Nothing in the core imports a concrete driver, cloud SDK, or storage engine.
+- **Accept interfaces, return structs** — functions depend on the narrow behavior they need; constructors return concrete types.
+- **Consumer-defined, minimal interfaces** — an interface belongs in the package that *uses* it and stays as small as possible (often one or two methods, in the spirit of `io.Reader`).
+- **Composition over inheritance** — behavior is assembled from embedding and small interfaces; Go has no inheritance by design.
+- **Useful zero values, errors as values, and "clear is better than clever."**
 
-**The key interfaces (the seams the whole design rests on):**
-`StorageBackend`, `Barrier`, `Seal`, `AuthMethod`, `SecretsEngine`, `DatabasePlugin`,
-`AuditDevice`. Defining these first (in the v1.0 core) is what makes every later extension additive.
+**SOLID** remains a useful shared vocabulary and maps cleanly onto those idioms, so we
+use it as a complementary lens — not the definition of quality:
+
+- **S — Single Responsibility.** Each package/type owns one concern: the *barrier* only encrypts/decrypts at rest, the *seal* only manages unseal state, the *lease manager* only tracks TTLs and revocation. No catch-all types.
+- **O — Open/Closed.** The core is extended by *adding implementations*, never editing it: new storage backends, auth methods, secrets engines, audit devices, and database plugins plug in through interfaces.
+- **L — Liskov Substitution.** Any implementation of an interface is fully substitutable, and **shared conformance tests enforce it** — e.g. the in-memory and file storage backends pass one common suite. Contracts (error semantics, idempotency of revoke) are part of the interface.
+- **I — Interface Segregation.** Small, focused interfaces over broad ones — the Go norm. `DatabasePlugin` exposes only `Initialize/CreateUser/RevokeUser/RotateRoot`.
+- **D — Dependency Inversion.** The core depends on *interfaces*; concrete implementations are injected at startup. Nothing in the core imports a concrete driver, cloud SDK, or storage engine.
+
+**The key interfaces (the seams the whole design rests on):** `storage.Backend`,
+`Barrier`, `Seal`, `AuthMethod`, `SecretsEngine`, `DatabasePlugin`, `AuditDevice`.
+Names follow Go convention — package-qualified and stutter-free (`storage.Backend`, not
+`storage.StorageBackend`). Defining these seams first (in the v1.0 core) is what makes
+every later extension additive.
 
 ### 7.2 Security engineering standards
 
@@ -222,7 +222,7 @@ return structs; keep interfaces small"):
 
 ### 7.3 Go & general engineering standards
 
-- **Idiomatic Go**: Effective Go conventions, `gofmt`/`goimports`, `go vet`, `golangci-lint` clean in CI. Errors wrapped with `%w`; context (`context.Context`) threaded through request paths.
+- **Idiomatic Go**: formatting is canonical and tool-enforced by `gofmt`/`goimports` — not a matter of style or debate. Conventions follow **Effective Go**, the **Go Code Review Comments**, and the **Google Go Style Guide**; `go vet`, `staticcheck`, and `golangci-lint` run clean in CI. Errors are wrapped with `%w`; `context.Context` is threaded through request paths.
 - **Testing**: table-driven unit tests; the crypto core and seal/unseal state machine held to high coverage; integration tests for the DB plugin against a real MariaDB (containerized in CI).
 - **API**: documented with an **OpenAPI** spec; Vault path-compatibility validated per subsystem against real Vault client libraries.
 - **Config**: 12-factor style — config via file + env, no secrets baked into images.
