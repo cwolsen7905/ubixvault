@@ -69,15 +69,19 @@ func runServer(args []string) error {
 		return fmt.Errorf("open storage: %w", err)
 	}
 	c := core.New(phys)
+	handler := api.NewHandler(c)
 
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           api.NewHandler(c),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Revoke expired dynamic-database leases in the background.
+	go handler.RunLeaseSweeper(ctx, time.Minute)
 
 	errCh := make(chan error, 1)
 	go func() {
