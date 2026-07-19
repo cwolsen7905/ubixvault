@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -94,6 +95,9 @@ type Engine struct {
 	now     func() time.Time
 	genUser func(role string) string
 	genPass func() (string, error)
+
+	mu    sync.Mutex // guards plugin initialization
+	ready bool       // plugin has been initialized against the stored config
 }
 
 // New returns an engine storing under prefix (e.g. "database") and using the
@@ -115,6 +119,9 @@ func (e *Engine) leaseKey(id string) string  { return e.prefix + "/lease/" + id 
 
 // Configure records the connection URL and initializes the plugin against it.
 func (e *Engine) Configure(ctx context.Context, connectionURL string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if err := e.plugin.Initialize(ctx, connectionURL); err != nil {
 		return fmt.Errorf("database: initialize plugin: %w", err)
 	}
@@ -125,6 +132,36 @@ func (e *Engine) Configure(ctx context.Context, connectionURL string) error {
 	if err := e.store.Put(ctx, &storage.Entry{Key: e.configKey(), Value: blob}); err != nil {
 		return fmt.Errorf("database: persist config: %w", err)
 	}
+	e.ready = true
+	return nil
+}
+
+// ensureReady initializes the plugin from the stored connection URL if it has
+// not been initialized in this process yet (e.g. after a restart). It returns
+// [ErrNotConfigured] if the engine was never configured.
+func (e *Engine) ensureReady(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ready {
+		return nil
+	}
+	entry, err := e.store.Get(ctx, e.configKey())
+	if err != nil {
+		return fmt.Errorf("database: read config: %w", err)
+	}
+	if entry == nil {
+		return ErrNotConfigured
+	}
+	var cfg struct {
+		ConnectionURL string `json:"connection_url"`
+	}
+	if err := json.Unmarshal(entry.Value, &cfg); err != nil {
+		return fmt.Errorf("database: unmarshal config: %w", err)
+	}
+	if err := e.plugin.Initialize(ctx, cfg.ConnectionURL); err != nil {
+		return fmt.Errorf("database: initialize plugin: %w", err)
+	}
+	e.ready = true
 	return nil
 }
 
@@ -195,10 +232,8 @@ func (e *Engine) DeleteRole(ctx context.Context, name string) error {
 // generates a username and password, has the plugin create the database user,
 // records a lease, and returns the credential.
 func (e *Engine) GenerateCredentials(ctx context.Context, roleName string) (*Credential, error) {
-	if ok, err := e.Configured(ctx); err != nil {
+	if err := e.ensureReady(ctx); err != nil {
 		return nil, err
-	} else if !ok {
-		return nil, ErrNotConfigured
 	}
 
 	role, err := e.ReadRole(ctx, roleName)
@@ -238,6 +273,9 @@ func (e *Engine) GenerateCredentials(ctx context.Context, roleName string) (*Cre
 
 // Revoke drops the credential for a lease and removes the lease.
 func (e *Engine) Revoke(ctx context.Context, leaseID string) error {
+	if err := e.ensureReady(ctx); err != nil {
+		return err
+	}
 	l, err := e.loadLease(ctx, leaseID)
 	if err != nil {
 		return err

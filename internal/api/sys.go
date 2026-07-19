@@ -4,13 +4,17 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/database"
+	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
@@ -22,26 +26,37 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 // Storage prefixes under which the engines are mounted.
 const (
-	kvMountPrefix      = "secret"
-	transitMountPrefix = "transit"
+	kvMountPrefix       = "secret"
+	transitMountPrefix  = "transit"
+	databaseMountPrefix = "database"
 )
 
-// Handler serves the HTTP API over a Core and its mounted engines.
+// Handler serves the HTTP API over a Core and its mounted engines. It implements
+// [http.Handler].
 type Handler struct {
 	core     *core.Core
 	kv       *kv.Engine
 	transit  *transit.Engine
+	database *database.Engine
 	tokens   *token.Store
 	policies *policy.Store
+	mux      *http.ServeMux
 }
 
-// NewHandler returns an http.Handler backed by c, with the KV v2 and transit
-// engines mounted on the core's barrier.
-func NewHandler(c *core.Core) http.Handler {
+// ServeHTTP dispatches to the configured routes.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mux.ServeHTTP(w, r)
+}
+
+// NewHandler returns a Handler backed by c, with the KV v2, transit, and dynamic
+// database engines mounted on the core's barrier. The database engine uses the
+// MariaDB reference plugin.
+func NewHandler(c *core.Core) *Handler {
 	h := &Handler{
 		core:     c,
 		kv:       kv.New(c.Barrier(), kvMountPrefix),
 		transit:  transit.New(c.Barrier(), transitMountPrefix),
+		database: database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
 		tokens:   c.Tokens(),
 		policies: policy.NewStore(c.Barrier()),
 	}
@@ -84,7 +99,36 @@ func NewHandler(c *core.Core) http.Handler {
 	mux.HandleFunc("POST /v1/transit/encrypt/{name}", h.authenticate(h.transitEncrypt))
 	mux.HandleFunc("POST /v1/transit/decrypt/{name}", h.authenticate(h.transitDecrypt))
 
-	return mux
+	// Dynamic database secrets engine.
+	mux.HandleFunc("POST /v1/database/config", h.authenticate(h.dbConfigure))
+	mux.HandleFunc("GET /v1/database/config", h.authenticate(h.dbConfigStatus))
+	mux.HandleFunc("POST /v1/database/roles/{name}", h.authenticate(h.dbWriteRole))
+	mux.HandleFunc("PUT /v1/database/roles/{name}", h.authenticate(h.dbWriteRole))
+	mux.HandleFunc("GET /v1/database/roles/{name}", h.authenticate(h.dbReadRole))
+	mux.HandleFunc("LIST /v1/database/roles", h.authenticate(h.dbListRoles))
+	mux.HandleFunc("DELETE /v1/database/roles/{name}", h.authenticate(h.dbDeleteRole))
+	mux.HandleFunc("GET /v1/database/creds/{name}", h.authenticate(h.dbCredentials))
+
+	// Lease revocation (currently database leases only).
+	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
+
+	h.mux = mux
+	return h
+}
+
+// RunLeaseSweeper periodically revokes expired database leases until ctx is
+// cancelled. Errors (including "sealed") are ignored; the next tick retries.
+func (h *Handler) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = h.database.RevokeExpired(ctx)
+		}
+	}
 }
 
 type initRequest struct {
