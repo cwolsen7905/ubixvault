@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
@@ -40,18 +41,22 @@ type Handler struct {
 	database *database.Engine
 	tokens   *token.Store
 	policies *policy.Store
+	audit    *audit.Broker
 	mux      *http.ServeMux
 }
 
-// ServeHTTP dispatches to the configured routes.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.mux.ServeHTTP(w, r)
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithAudit enables audit logging through the given broker.
+func WithAudit(b *audit.Broker) Option {
+	return func(h *Handler) { h.audit = b }
 }
 
 // NewHandler returns a Handler backed by c, with the KV v2, transit, and dynamic
 // database engines mounted on the core's barrier. The database engine uses the
 // MariaDB reference plugin.
-func NewHandler(c *core.Core) *Handler {
+func NewHandler(c *core.Core, opts ...Option) *Handler {
 	h := &Handler{
 		core:     c,
 		kv:       kv.New(c.Barrier(), kvMountPrefix),
@@ -113,6 +118,9 @@ func NewHandler(c *core.Core) *Handler {
 	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
 
 	h.mux = mux
+	for _, opt := range opts {
+		opt(h)
+	}
 	return h
 }
 
