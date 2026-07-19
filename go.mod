@@ -1,3 +1,3 @@
 module github.com/cwolsen7905/ubixvault
 
-go 1.26.5
+go 1.24
