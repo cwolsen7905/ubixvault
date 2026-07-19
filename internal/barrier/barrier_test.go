@@ -145,6 +145,32 @@ func TestNonceUniqueness(t *testing.T) {
 	}
 }
 
+// TestCiphertextCannotBeRelocated verifies the path is bound into the AEAD: a
+// valid blob copied from one path to another must fail to decrypt at the new
+// path, defeating a storage-level relocation attack.
+func TestCiphertextCannotBeRelocated(t *testing.T) {
+	ctx := context.Background()
+	b, mem, _ := newInitializedBarrier(t)
+
+	if err := b.Put(ctx, &storage.Entry{Key: "secret/source", Value: []byte("moved")}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Copy the raw ciphertext to a different path, bypassing the barrier.
+	raw, _ := mem.Get(ctx, "secret/source")
+	if err := mem.Put(ctx, &storage.Entry{Key: "secret/dest", Value: raw.Value}); err != nil {
+		t.Fatalf("relocate: %v", err)
+	}
+
+	// Sanity: it still decrypts at its original path.
+	if _, err := b.Get(ctx, "secret/source"); err != nil {
+		t.Fatalf("Get at original path: %v", err)
+	}
+	// But not at the path it was relocated to.
+	if _, err := b.Get(ctx, "secret/dest"); err == nil {
+		t.Fatal("relocated ciphertext decrypted at the wrong path")
+	}
+}
+
 func TestOperationsFailWhileSealed(t *testing.T) {
 	ctx := context.Background()
 	mem := storage.NewMemoryBackend()

@@ -64,7 +64,9 @@ uBix Vault is layered. Everything rests on the **barrier**; the barrier rests on
 ```
 
 ### 3.1 Barrier & Seal/Unseal
-- All data written to storage is encrypted by the **barrier** with a symmetric key (AES-256-GCM). Storage never sees plaintext.
+- All data written to storage is encrypted by the **barrier** with a symmetric key (AES-256-GCM). Storage never sees plaintext. Each entry is `version || nonce || ciphertext+tag`.
+- The **storage path and the format version are bound as GCM additional authenticated data.** Binding the path means a ciphertext only decrypts at the exact location it was written to, so an attacker with storage access cannot relocate a valid blob to another path; binding the version prevents silent format downgrade.
+- The 96-bit nonce is random per write. This carries a birthday bound (~2³² writes per key before collision risk becomes non-negligible), addressed by barrier-key rotation (§8.2).
 - On startup the node is **sealed**: it holds ciphertext but not the master key.
 - **Unsealing** reconstructs the master key. MVP uses **Shamir's Secret Sharing** (e.g. 3-of-5 key shares). The master key decrypts the barrier key; the barrier key decrypts data.
 - Key hierarchy: `unseal shares → master key → barrier encryption key → data`. Supports key rotation of the barrier key without re-sharing.
