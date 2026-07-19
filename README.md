@@ -71,6 +71,18 @@ curl -s -H "$T" $VAULT/v1/database/creds/readonly
 TLS is enabled by passing `-tls-cert` and `-tls-key`; without them the server
 logs a prominent no-TLS warning (dev only).
 
+### Operator CLI
+
+The lifecycle steps (1–2 above) can also be driven with the built-in client
+instead of curl (`-address` defaults to `$UBIXVAULT_ADDR`):
+
+```sh
+ubixvault operator init -shares 3 -threshold 2   # prints the keys + root token
+ubixvault operator unseal <key>                  # repeat until unsealed
+ubixvault operator seal-status
+ubixvault operator seal -token <root_token>
+```
+
 ## Architecture
 
 uBix Vault is layered, with everything resting on the encryption barrier:
