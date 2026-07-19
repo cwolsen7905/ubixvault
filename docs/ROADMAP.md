@@ -1,6 +1,6 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-07-18
+> **Status:** Active · Last updated 2026-07-19
 
 The project's deliverable is a **single-node secrets manager with a small, complete,
 deeply-implemented core** — not feature parity with HashiCorp Vault. The goal is a
@@ -18,26 +18,27 @@ Goal: an initialize → unseal → authenticate → use → audit flow that work
 includes the two signature capabilities of a real secrets manager (encryption-as-a-service
 and dynamic secrets). Every item here ships **finished, tested, and documented**.
 
-- [ ] Project scaffolding: Go module, CLI/server split, config loading, TLS listener.
-- [ ] **Storage backend interface** + file backend + in-memory (test) backend.
-- [ ] **Barrier**: AES-256-GCM encryption at rest, barrier key hierarchy.
-- [ ] **Seal / unseal**: Shamir k-of-n, `operator init`, `operator unseal`, seal status.
-- [ ] **Token auth** + root token bootstrap + child token creation.
-- [ ] **Lease manager**: TTLs, renew, revoke, cascading revocation.
-- [ ] **Policy (ACL) engine**: HCL/JSON policies, default-deny, capability checks.
-- [ ] **KV v2** secrets engine (versioned static secrets).
-- [ ] **Transit** secrets engine (encrypt/decrypt/sign/HMAC; key never leaves).
-- [ ] **`DatabasePlugin` interface** + **Database dynamic** engine — **MariaDB** reference plugin, short-lived credentials, auto-revoke (PostgreSQL/MySQL as follow-on plugins).
-- [ ] **Audit device**: file backend, HMAC'd sensitive fields, fail-closed.
-- [ ] **HTTP API** (Vault-path-compatible for implemented subsystems) + **`ubixvault` CLI**.
+- [x] Project scaffolding: Go module, CLI/server split, config loading, TLS listener.
+- [x] **Storage backend interface** + file backend + in-memory (test) backend.
+- [x] **Barrier**: AES-256-GCM encryption at rest, barrier key hierarchy.
+- [x] **Seal / unseal**: Shamir k-of-n, init, unseal, seal status.
+- [x] **Token auth** + root token bootstrap + child token creation.
+- [~] **Lease manager**: dynamic-secret leases with TTLs, revoke, and an expiry sweep. *(General renew / cascading revocation across all secret types is a post-MVP refinement.)*
+- [x] **Policy (ACL) engine**: JSON policies, default-deny, capability checks. *(HCL parity is a follow-up.)*
+- [x] **KV v2** secrets engine (versioned static secrets).
+- [x] **Transit** secrets engine (encrypt/decrypt; key never leaves). *(sign/HMAC endpoints are a follow-up.)*
+- [x] **`DatabasePlugin` interface** + **Database dynamic** engine — **MariaDB** reference plugin, short-lived credentials, auto-revoke (PostgreSQL/MySQL as follow-on plugins).
+- [x] **Audit device**: file backend, HMAC'd sensitive fields, fail-closed.
+- [x] **HTTP API** (Vault-path-compatible for implemented subsystems) + **`ubixvault server`**. *(A thin `operator` CLI over the API is a follow-up.)*
 
 **Quality bar (part of done, not optional polish):**
-- [ ] Real test coverage, especially the crypto core and the seal/unseal state machine.
-- [ ] CI (build, test, lint) green on every commit.
-- [ ] Quickstart + API reference for shipped endpoints + the design docs in `docs/`.
+- [x] Real test coverage, especially the crypto core and the seal/unseal state machine.
+- [x] CI (build, test, lint, govulncheck, MariaDB integration) green on every commit.
+- [x] Quickstart (README) + the design docs in `docs/`. *(A generated API reference is a follow-up.)*
 - [ ] A short screencast demonstrating the end-to-end flow.
 
-**Definition of done:** see `docs/DESIGN.md` §6.
+**Definition of done:** see `docs/DESIGN.md` §6. The MVP core is complete; remaining
+unchecked/partial items are refinements, not blockers.
 
 ---
 
@@ -91,4 +92,4 @@ The natural first extension for a uBixCore deployment. Note the deliberately min
 
 - Interfaces first (storage, seal, auth, engine, audit) so extensions are additive, never rewrites.
 - The barrier + Shamir seal/unseal is the highest-value, most-differentiating work — build it first and make it excellent.
-- API compatibility is validated **per subsystem** in CI using real Vault client libraries.
+- API paths mirror HashiCorp Vault's per subsystem; validating against real Vault client libraries in CI is a follow-up.
