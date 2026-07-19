@@ -26,6 +26,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/shamir"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 // masterKeySize is the length of the generated master key (AES-256).
@@ -51,10 +52,11 @@ type InitConfig struct {
 	SecretThreshold int // shares required to unseal (2..SecretShares)
 }
 
-// InitResult is returned by [Core.Initialize]. Keys are the unseal shares; they
-// are shown to the operator once and never persisted.
+// InitResult is returned by [Core.Initialize]. Keys are the unseal shares and
+// RootToken is the initial root token; both are shown to the operator once.
 type InitResult struct {
-	Keys [][]byte
+	Keys      [][]byte
+	RootToken string
 }
 
 // SealStatus describes the current lifecycle state.
@@ -76,6 +78,7 @@ type sealConfig struct {
 type Core struct {
 	phys    storage.Backend
 	barrier *barrier.Barrier
+	tokens  *token.Store
 
 	mu       sync.Mutex
 	progress [][]byte // unseal shares gathered so far (in-memory only)
@@ -83,11 +86,15 @@ type Core struct {
 
 // New returns a Core over phys.
 func New(phys storage.Backend) *Core {
-	return &Core{phys: phys, barrier: barrier.New(phys)}
+	b := barrier.New(phys)
+	return &Core{phys: phys, barrier: b, tokens: token.NewStore(b)}
 }
 
 // Barrier returns the underlying barrier, for use by upper layers once unsealed.
 func (c *Core) Barrier() *barrier.Barrier { return c.barrier }
+
+// Tokens returns the token store, for authentication by upper layers.
+func (c *Core) Tokens() *token.Store { return c.tokens }
 
 // Initialized reports whether the vault has been initialized.
 func (c *Core) Initialized(ctx context.Context) (bool, error) {
@@ -125,6 +132,18 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		return nil, fmt.Errorf("core: initialize barrier: %w", err)
 	}
 
+	// Briefly unseal to persist the initial root token, then re-seal. The
+	// operator must still unseal with the returned shares to use the vault.
+	if err := c.barrier.Unseal(ctx, masterKey); err != nil {
+		return nil, fmt.Errorf("core: unseal for init: %w", err)
+	}
+	root, err := c.tokens.CreateRoot(ctx)
+	if err != nil {
+		c.barrier.Seal()
+		return nil, fmt.Errorf("core: create root token: %w", err)
+	}
+	c.barrier.Seal()
+
 	shares, err := shamir.Split(masterKey, cfg.SecretShares, cfg.SecretThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("core: split master key: %w", err)
@@ -134,7 +153,7 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		return nil, err
 	}
 
-	return &InitResult{Keys: shares}, nil
+	return &InitResult{Keys: shares, RootToken: root.ID}, nil
 }
 
 // Unseal supplies one unseal share. It returns the resulting status. When the

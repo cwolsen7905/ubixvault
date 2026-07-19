@@ -19,7 +19,16 @@ func newTestHandler() http.Handler {
 // do issues a request against the handler and returns the recorder.
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doAuth(t, h, method, path, body, "")
+}
+
+// doAuth is like do but sets the X-Vault-Token header when token is non-empty.
+func doAuth(t *testing.T, h http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("X-Vault-Token", token)
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -96,13 +105,22 @@ func TestSealEndpoint(t *testing.T) {
 	do(t, h, "POST", "/v1/sys/unseal", `{"key":"`+init.Keys[0]+`"}`)
 	do(t, h, "POST", "/v1/sys/unseal", `{"key":"`+init.Keys[1]+`"}`)
 
-	rec := do(t, h, "POST", "/v1/sys/seal", "")
+	// Seal now requires authentication.
+	rec := doAuth(t, h, "POST", "/v1/sys/seal", "", init.RootToken)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("seal status = %d", rec.Code)
 	}
 	st := decode[statusResponse](t, do(t, h, "GET", "/v1/sys/seal-status", ""))
 	if !st.Sealed {
 		t.Fatal("not sealed after POST /v1/sys/seal")
+	}
+}
+
+func TestInitReturnsRootToken(t *testing.T) {
+	rec := do(t, newTestHandler(), "POST", "/v1/sys/init", `{"secret_shares":2,"secret_threshold":2}`)
+	init := decode[initResponse](t, rec)
+	if init.RootToken == "" {
+		t.Fatal("init did not return a root token")
 	}
 }
 

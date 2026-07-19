@@ -12,6 +12,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 // maxBodyBytes caps request bodies to guard against oversized payloads.
@@ -22,35 +23,38 @@ const kvMountPrefix = "secret"
 
 // Handler serves the HTTP API over a Core and its mounted engines.
 type Handler struct {
-	core *core.Core
-	kv   *kv.Engine
+	core   *core.Core
+	kv     *kv.Engine
+	tokens *token.Store
 }
 
 // NewHandler returns an http.Handler backed by c, with the KV v2 engine mounted
 // on the core's barrier at /v1/secret.
 func NewHandler(c *core.Core) http.Handler {
 	h := &Handler{
-		core: c,
-		kv:   kv.New(c.Barrier(), kvMountPrefix),
+		core:   c,
+		kv:     kv.New(c.Barrier(), kvMountPrefix),
+		tokens: c.Tokens(),
 	}
 	mux := http.NewServeMux()
 
-	// System / lifecycle.
+	// System / lifecycle. init/unseal/seal-status are unauthenticated by
+	// necessity: there is no token before the vault exists or while it is sealed.
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
-	mux.HandleFunc("POST /v1/sys/seal", h.seal)
+	mux.HandleFunc("POST /v1/sys/seal", h.authenticate(h.seal))
 
-	// KV v2 secrets engine.
-	mux.HandleFunc("GET /v1/secret/data/{path...}", h.kvRead)
-	mux.HandleFunc("POST /v1/secret/data/{path...}", h.kvWrite)
-	mux.HandleFunc("DELETE /v1/secret/data/{path...}", h.kvDeleteLatest)
-	mux.HandleFunc("POST /v1/secret/delete/{path...}", h.kvDeleteVersions)
-	mux.HandleFunc("POST /v1/secret/undelete/{path...}", h.kvUndelete)
-	mux.HandleFunc("POST /v1/secret/destroy/{path...}", h.kvDestroy)
-	mux.HandleFunc("GET /v1/secret/metadata/{path...}", h.kvReadMetadata)
-	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.kvList)
-	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.kvDeleteMetadata)
+	// KV v2 secrets engine — all endpoints require authentication.
+	mux.HandleFunc("GET /v1/secret/data/{path...}", h.authenticate(h.kvRead))
+	mux.HandleFunc("POST /v1/secret/data/{path...}", h.authenticate(h.kvWrite))
+	mux.HandleFunc("DELETE /v1/secret/data/{path...}", h.authenticate(h.kvDeleteLatest))
+	mux.HandleFunc("POST /v1/secret/delete/{path...}", h.authenticate(h.kvDeleteVersions))
+	mux.HandleFunc("POST /v1/secret/undelete/{path...}", h.authenticate(h.kvUndelete))
+	mux.HandleFunc("POST /v1/secret/destroy/{path...}", h.authenticate(h.kvDestroy))
+	mux.HandleFunc("GET /v1/secret/metadata/{path...}", h.authenticate(h.kvReadMetadata))
+	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.authenticate(h.kvList))
+	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.authenticate(h.kvDeleteMetadata))
 
 	return mux
 }
@@ -63,6 +67,7 @@ type initRequest struct {
 type initResponse struct {
 	Keys       []string `json:"keys"`        // hex-encoded unseal shares
 	KeysBase64 []string `json:"keys_base64"` // same shares, base64
+	RootToken  string   `json:"root_token"`  // initial root token, shown once
 }
 
 type unsealRequest struct {
@@ -111,6 +116,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request) {
 	resp := initResponse{
 		Keys:       make([]string, len(res.Keys)),
 		KeysBase64: make([]string, len(res.Keys)),
+		RootToken:  res.RootToken,
 	}
 	for i, k := range res.Keys {
 		resp.Keys[i] = hex.EncodeToString(k)
