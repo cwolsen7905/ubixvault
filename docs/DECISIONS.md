@@ -162,3 +162,24 @@ a well-understood, ~200-line construction.
 **Scope of the carve-out:** this applies to Shamir only. Any future need for a
 cryptographic primitive uses the standard library or a vetted library — we do not
 generalize this into a license to roll our own crypto.
+
+## D-010 — First third-party dependency: the MariaDB/MySQL driver
+
+**Status:** Accepted · 2026-07-19
+
+**Decision:** add `github.com/go-sql-driver/mysql` (the project's first
+third-party dependency) for the MariaDB reference plugin, rather than
+reimplementing the MySQL wire protocol.
+
+**Why:** the dynamic database engine must speak a database's native protocol to
+create and drop users; a wire-protocol client is exactly the kind of large,
+well-solved component that belongs in a vetted library. `go-sql-driver/mysql` is
+the de-facto standard, pure-Go, and widely audited. This does not weaken the
+"no hand-rolled cryptography" rule (D-007) — a database driver is not crypto —
+nor the minimal-dependency posture: dependencies are added when reimplementing
+would be wasteful or risky, and each is scanned by `govulncheck` in CI.
+
+**Isolation:** the driver is imported only by `internal/database/mariadb`, so
+packages that do not talk to MariaDB do not pull it in. Integration tests that
+require a real database are gated behind the `integration` build tag and run in a
+dedicated CI job against a MariaDB service container.
