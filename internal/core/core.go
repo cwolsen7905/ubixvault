@@ -17,6 +17,8 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -32,18 +34,29 @@ import (
 // masterKeySize is the length of the generated master key (AES-256).
 const masterKeySize = 32
 
-// sealConfigPath is where the (non-secret) share/threshold configuration lives.
-// It sits in the barrier's reserved "core/" namespace and is written through the
-// physical backend directly, so it remains readable while the barrier is sealed.
-const sealConfigPath = "core/seal-config"
+// Storage locations in the barrier's reserved "core/" namespace, written through
+// the physical backend directly so they remain readable while sealed.
+const (
+	sealConfigPath       = "core/seal-config"
+	wrappedMasterKeyPath = "core/auto-master" // auto-unseal: master key wrapped by the KEK
+)
+
+// Seal types recorded in the seal config.
+const (
+	SealTypeShamir = "shamir"
+	SealTypeAuto   = "auto"
+)
 
 // Errors returned by Core.
 var (
-	ErrAlreadyInitialized = errors.New("core: already initialized")
-	ErrNotInitialized     = errors.New("core: not initialized")
-	ErrInvalidConfig      = errors.New("core: invalid share configuration")
-	ErrInvalidShare       = errors.New("core: invalid unseal share")
-	ErrUnsealFailed       = errors.New("core: unseal failed (shares did not reconstruct the master key)")
+	ErrAlreadyInitialized      = errors.New("core: already initialized")
+	ErrNotInitialized          = errors.New("core: not initialized")
+	ErrInvalidConfig           = errors.New("core: invalid share configuration")
+	ErrInvalidShare            = errors.New("core: invalid unseal share")
+	ErrUnsealFailed            = errors.New("core: unseal failed (shares did not reconstruct the master key)")
+	ErrAutoUnsealNotConfigured = errors.New("core: auto-unseal is not configured")
+	ErrNotAutoUnseal           = errors.New("core: vault uses Shamir unseal, not auto-unseal")
+	ErrAutoUnsealShamir        = errors.New("core: vault uses auto-unseal; manual unseal not applicable")
 )
 
 // InitConfig parameterizes [Core.Initialize].
@@ -63,15 +76,17 @@ type InitResult struct {
 type SealStatus struct {
 	Initialized bool
 	Sealed      bool
+	Type        string // "shamir" or "auto"
 	Shares      int
 	Threshold   int
 	Progress    int // shares supplied so far toward the current unseal
 }
 
-// sealConfig is the persisted share/threshold configuration.
+// sealConfig is the persisted seal configuration.
 type sealConfig struct {
-	Shares    int `json:"shares"`
-	Threshold int `json:"threshold"`
+	Type      string `json:"type"`
+	Shares    int    `json:"shares"`
+	Threshold int    `json:"threshold"`
 }
 
 // Core manages initialization and seal/unseal over a storage backend.
@@ -79,16 +94,34 @@ type Core struct {
 	phys    storage.Backend
 	barrier *barrier.Barrier
 	tokens  *token.Store
+	autoKEK []byte // key-encryption key for auto-unseal; nil means Shamir mode
 
 	mu       sync.Mutex
 	progress [][]byte // unseal shares gathered so far (in-memory only)
 }
 
-// New returns a Core over phys.
-func New(phys storage.Backend) *Core {
-	b := barrier.New(phys)
-	return &Core{phys: phys, barrier: b, tokens: token.NewStore(b)}
+// Option configures a Core.
+type Option func(*Core)
+
+// WithAutoUnsealKey enables auto-unseal, protecting the master key with the
+// given 32-byte key-encryption key instead of Shamir shares. In production this
+// key comes from a KMS/HSM; here it is supplied directly.
+func WithAutoUnsealKey(kek []byte) Option {
+	return func(c *Core) { c.autoKEK = kek }
 }
+
+// New returns a Core over phys.
+func New(phys storage.Backend, opts ...Option) *Core {
+	b := barrier.New(phys)
+	c := &Core{phys: phys, barrier: b, tokens: token.NewStore(b)}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// AutoUnsealEnabled reports whether the core is configured for auto-unseal.
+func (c *Core) AutoUnsealEnabled() bool { return c.autoKEK != nil }
 
 // Barrier returns the underlying barrier, for use by upper layers once unsealed.
 func (c *Core) Barrier() *barrier.Barrier { return c.barrier }
@@ -106,9 +139,12 @@ func (c *Core) Initialized(ctx context.Context) (bool, error) {
 // Threshold required to reconstruct), persists the share configuration, and
 // returns the shares. The vault is left sealed; callers must Unseal.
 func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, error) {
-	if cfg.SecretShares < 2 || cfg.SecretShares > 255 ||
-		cfg.SecretThreshold < 2 || cfg.SecretThreshold > cfg.SecretShares {
-		return nil, ErrInvalidConfig
+	if c.autoKEK == nil {
+		// Shamir mode requires a valid share configuration.
+		if cfg.SecretShares < 2 || cfg.SecretShares > 255 ||
+			cfg.SecretThreshold < 2 || cfg.SecretThreshold > cfg.SecretShares {
+			return nil, ErrInvalidConfig
+		}
 	}
 
 	c.mu.Lock()
@@ -132,8 +168,9 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		return nil, fmt.Errorf("core: initialize barrier: %w", err)
 	}
 
-	// Briefly unseal to persist the initial root token, then re-seal. The
-	// operator must still unseal with the returned shares to use the vault.
+	// Unseal to persist the initial root token. In Shamir mode we re-seal after
+	// (the operator must unseal with the shares); in auto mode we leave it
+	// unsealed, since the master key is recoverable from the KEK.
 	if err := c.barrier.Unseal(ctx, masterKey); err != nil {
 		return nil, fmt.Errorf("core: unseal for init: %w", err)
 	}
@@ -142,18 +179,75 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		c.barrier.Seal()
 		return nil, fmt.Errorf("core: create root token: %w", err)
 	}
-	c.barrier.Seal()
 
+	if c.autoKEK != nil {
+		// Auto-unseal: wrap the master key under the KEK and store it, leaving
+		// the barrier unsealed.
+		wrapped, err := wrapKey(c.autoKEK, masterKey)
+		if err != nil {
+			c.barrier.Seal()
+			return nil, err
+		}
+		if err := c.phys.Put(ctx, &storage.Entry{Key: wrappedMasterKeyPath, Value: wrapped}); err != nil {
+			c.barrier.Seal()
+			return nil, fmt.Errorf("core: persist wrapped master key: %w", err)
+		}
+		if err := c.writeSealConfig(ctx, sealConfig{Type: SealTypeAuto}); err != nil {
+			return nil, err
+		}
+		return &InitResult{RootToken: root.ID}, nil
+	}
+
+	// Shamir mode: re-seal, split the master key, and return the shares.
+	c.barrier.Seal()
 	shares, err := shamir.Split(masterKey, cfg.SecretShares, cfg.SecretThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("core: split master key: %w", err)
 	}
-
-	if err := c.writeSealConfig(ctx, sealConfig{Shares: cfg.SecretShares, Threshold: cfg.SecretThreshold}); err != nil {
+	if err := c.writeSealConfig(ctx, sealConfig{Type: SealTypeShamir, Shares: cfg.SecretShares, Threshold: cfg.SecretThreshold}); err != nil {
 		return nil, err
 	}
-
 	return &InitResult{Keys: shares, RootToken: root.ID}, nil
+}
+
+// AutoUnseal unseals the barrier using the configured KEK, without operator
+// interaction. It is a no-op if already unsealed.
+func (c *Core) AutoUnseal(ctx context.Context) error {
+	if c.autoKEK == nil {
+		return ErrAutoUnsealNotConfigured
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.barrier.Sealed() {
+		return nil
+	}
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if cfg.Type != SealTypeAuto {
+		return ErrNotAutoUnseal
+	}
+
+	entry, err := c.phys.Get(ctx, wrappedMasterKeyPath)
+	if err != nil {
+		return fmt.Errorf("core: read wrapped master key: %w", err)
+	}
+	if entry == nil {
+		return fmt.Errorf("core: wrapped master key missing")
+	}
+	masterKey, err := unwrapKey(c.autoKEK, entry.Value)
+	if err != nil {
+		return err
+	}
+	defer zero(masterKey)
+
+	if err := c.barrier.Unseal(ctx, masterKey); err != nil {
+		return fmt.Errorf("core: auto-unseal barrier: %w", err)
+	}
+	return nil
 }
 
 // Unseal supplies one unseal share. It returns the resulting status. When the
@@ -171,6 +265,9 @@ func (c *Core) Unseal(ctx context.Context, share []byte) (*SealStatus, error) {
 	cfg, err := c.readSealConfig(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Type == SealTypeAuto {
+		return nil, ErrAutoUnsealShamir
 	}
 
 	if !c.barrier.Sealed() {
@@ -235,6 +332,7 @@ func (c *Core) statusLocked(cfg *sealConfig, sealed bool) *SealStatus {
 	return &SealStatus{
 		Initialized: true,
 		Sealed:      sealed,
+		Type:        cfg.Type,
 		Shares:      cfg.Shares,
 		Threshold:   cfg.Threshold,
 		Progress:    len(c.progress),
@@ -271,6 +369,9 @@ func (c *Core) readSealConfig(ctx context.Context) (*sealConfig, error) {
 	if err := json.Unmarshal(entry.Value, &cfg); err != nil {
 		return nil, fmt.Errorf("core: parse seal config: %w", err)
 	}
+	if cfg.Type == "" {
+		cfg.Type = SealTypeShamir // configs written before seal types existed
+	}
 	return &cfg, nil
 }
 
@@ -288,4 +389,47 @@ func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// wrapKey encrypts the master key under the auto-unseal KEK (AES-256-GCM). The
+// output is nonce || ciphertext+tag.
+func wrapKey(kek, masterKey []byte) ([]byte, error) {
+	aead, err := newAEAD(kek)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("core: wrap nonce: %w", err)
+	}
+	return aead.Seal(nonce, nonce, masterKey, nil), nil
+}
+
+// unwrapKey reverses wrapKey. A wrong KEK fails the GCM authentication.
+func unwrapKey(kek, wrapped []byte) ([]byte, error) {
+	aead, err := newAEAD(kek)
+	if err != nil {
+		return nil, err
+	}
+	if len(wrapped) < aead.NonceSize() {
+		return nil, fmt.Errorf("core: wrapped master key malformed")
+	}
+	nonce, ct := wrapped[:aead.NonceSize()], wrapped[aead.NonceSize():]
+	master, err := aead.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return nil, fmt.Errorf("core: auto-unseal key incorrect: %w", err)
+	}
+	return master, nil
+}
+
+// newAEAD builds an AES-256-GCM AEAD from a 32-byte key.
+func newAEAD(key []byte) (cipher.AEAD, error) {
+	if len(key) != masterKeySize {
+		return nil, fmt.Errorf("core: auto-unseal key must be %d bytes", masterKeySize)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("core: cipher: %w", err)
+	}
+	return cipher.NewGCM(block)
 }

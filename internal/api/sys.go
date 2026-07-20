@@ -168,11 +168,12 @@ type unsealRequest struct {
 }
 
 type statusResponse struct {
-	Initialized bool `json:"initialized"`
-	Sealed      bool `json:"sealed"`
-	T           int  `json:"t"` // threshold
-	N           int  `json:"n"` // total shares
-	Progress    int  `json:"progress"`
+	Initialized bool   `json:"initialized"`
+	Sealed      bool   `json:"sealed"`
+	Type        string `json:"type,omitempty"` // "shamir" or "auto"
+	T           int    `json:"t"`              // threshold
+	N           int    `json:"n"`              // total shares
+	Progress    int    `json:"progress"`
 }
 
 type errorResponse struct {
@@ -268,6 +269,7 @@ func writeStatus(w http.ResponseWriter, st *core.SealStatus) {
 	writeJSON(w, http.StatusOK, statusResponse{
 		Initialized: st.Initialized,
 		Sealed:      st.Sealed,
+		Type:        st.Type,
 		T:           st.Threshold,
 		N:           st.Shares,
 		Progress:    st.Progress,
