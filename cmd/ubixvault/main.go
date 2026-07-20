@@ -110,7 +110,7 @@ func runServer(args []string) error {
 		}
 	}
 
-	var opts []api.Option
+	opts := []api.Option{api.WithVersion(version)}
 	if *auditLog != "" {
 		device, err := audit.NewFileDevice(*auditLog)
 		if err != nil {

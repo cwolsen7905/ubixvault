@@ -44,6 +44,8 @@ type Handler struct {
 	tokens     *token.Store
 	policies   *policy.Store
 	audit      *audit.Broker
+	version    string
+	startTime  time.Time
 	mux        *http.ServeMux
 }
 
@@ -53,6 +55,11 @@ type Option func(*Handler)
 // WithAudit enables audit logging through the given broker.
 func WithAudit(b *audit.Broker) Option {
 	return func(h *Handler) { h.audit = b }
+}
+
+// WithVersion sets the build version reported by the health endpoint.
+func WithVersion(v string) Option {
+	return func(h *Handler) { h.version = v }
 }
 
 // NewHandler returns a Handler backed by c, with the KV v2, transit, and dynamic
@@ -67,11 +74,13 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
+		startTime:  time.Now().UTC(),
 	}
 	mux := http.NewServeMux()
 
-	// System / lifecycle. init/unseal/seal-status are unauthenticated by
-	// necessity: there is no token before the vault exists or while it is sealed.
+	// System / lifecycle. These are unauthenticated by necessity: there is no
+	// token before the vault exists or while it is sealed.
+	mux.HandleFunc("GET /v1/sys/health", h.health)
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
