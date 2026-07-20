@@ -16,6 +16,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
+	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
@@ -35,14 +36,15 @@ const (
 // Handler serves the HTTP API over a Core and its mounted engines. It implements
 // [http.Handler].
 type Handler struct {
-	core     *core.Core
-	kv       *kv.Engine
-	transit  *transit.Engine
-	database *database.Engine
-	tokens   *token.Store
-	policies *policy.Store
-	audit    *audit.Broker
-	mux      *http.ServeMux
+	core       *core.Core
+	kv         *kv.Engine
+	transit    *transit.Engine
+	database   *database.Engine
+	kubernetes *kubeauth.Method
+	tokens     *token.Store
+	policies   *policy.Store
+	audit      *audit.Broker
+	mux        *http.ServeMux
 }
 
 // Option configures a Handler.
@@ -58,12 +60,13 @@ func WithAudit(b *audit.Broker) Option {
 // MariaDB reference plugin.
 func NewHandler(c *core.Core, opts ...Option) *Handler {
 	h := &Handler{
-		core:     c,
-		kv:       kv.New(c.Barrier(), kvMountPrefix),
-		transit:  transit.New(c.Barrier(), transitMountPrefix),
-		database: database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
-		tokens:   c.Tokens(),
-		policies: policy.NewStore(c.Barrier()),
+		core:       c,
+		kv:         kv.New(c.Barrier(), kvMountPrefix),
+		transit:    transit.New(c.Barrier(), transitMountPrefix),
+		database:   database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
+		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
+		tokens:     c.Tokens(),
+		policies:   policy.NewStore(c.Barrier()),
 	}
 	mux := http.NewServeMux()
 
@@ -116,6 +119,15 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 
 	// Lease revocation (currently database leases only).
 	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
+
+	// Kubernetes auth method. login is unauthenticated (the ServiceAccount token
+	// IS the credential); config and role management require authentication.
+	mux.HandleFunc("POST /v1/auth/kubernetes/config", h.authenticate(h.k8sConfigure))
+	mux.HandleFunc("POST /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sWriteRole))
+	mux.HandleFunc("GET /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sReadRole))
+	mux.HandleFunc("LIST /v1/auth/kubernetes/role", h.authenticate(h.k8sListRoles))
+	mux.HandleFunc("DELETE /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sDeleteRole))
+	mux.HandleFunc("POST /v1/auth/kubernetes/login", h.k8sLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
