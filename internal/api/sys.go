@@ -95,8 +95,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
 
-	// Token creation.
+	// Token creation and renewal.
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
+	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
 
 	// Transit engine (encryption-as-a-service).
 	mux.HandleFunc("POST /v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))

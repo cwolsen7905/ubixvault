@@ -36,7 +36,7 @@ func (h *Handler) authenticate(next http.HandlerFunc) http.HandlerFunc {
 		case errors.Is(err, barrier.ErrSealed):
 			writeError(w, http.StatusServiceUnavailable, "vault is sealed")
 			return
-		case errors.Is(err, token.ErrTokenNotFound):
+		case errors.Is(err, token.ErrTokenNotFound), errors.Is(err, token.ErrTokenExpired):
 			writeError(w, http.StatusForbidden, "permission denied")
 			return
 		case err != nil:
@@ -57,6 +57,13 @@ func (h *Handler) authenticate(next http.HandlerFunc) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), tokenCtxKey, tok)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// tokenFromContext returns the authenticated token placed on the context by
+// authenticate.
+func tokenFromContext(ctx context.Context) (*token.Token, bool) {
+	tok, ok := ctx.Value(tokenCtxKey).(*token.Token)
+	return tok, ok
 }
 
 // apiPath is the policy-space path for a request: the URL path without the
