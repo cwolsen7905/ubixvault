@@ -12,7 +12,9 @@ import (
 // auditing is fail-closed: if the entry cannot be recorded, the request is
 // refused (500) and never processed, so nothing proceeds unaudited.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.audit == nil {
+	// The health endpoint is polled frequently by probes and carries no
+	// security-relevant access, so it is not audited.
+	if h.audit == nil || r.URL.Path == "/v1/sys/health" {
 		h.mux.ServeHTTP(w, r)
 		return
 	}
