@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -73,6 +74,8 @@ func runServer(args []string) error {
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
 	auditLog := fs.String("audit-log", "", "path to an audit log file (enables fail-closed audit logging)")
+	autoUnsealKey := fs.String("auto-unseal-key", os.Getenv("UBIXVAULT_AUTO_UNSEAL_KEY"),
+		"hex-encoded 32-byte key-encryption key; enables auto-unseal (or set $UBIXVAULT_AUTO_UNSEAL_KEY)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,7 +84,28 @@ func runServer(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}
-	c := core.New(phys)
+
+	var coreOpts []core.Option
+	if *autoUnsealKey != "" {
+		kek, err := hex.DecodeString(*autoUnsealKey)
+		if err != nil || len(kek) != 32 {
+			return fmt.Errorf("auto-unseal-key must be 64 hex characters (32 bytes)")
+		}
+		coreOpts = append(coreOpts, core.WithAutoUnsealKey(kek))
+	}
+	c := core.New(phys, coreOpts...)
+
+	// Auto-unseal on startup if configured and already initialized.
+	if c.AutoUnsealEnabled() {
+		switch err := c.AutoUnseal(context.Background()); {
+		case err == nil:
+			log.Printf("auto-unsealed")
+		case errors.Is(err, core.ErrNotInitialized):
+			log.Printf("auto-unseal configured; vault is not yet initialized")
+		default:
+			log.Printf("WARNING: auto-unseal failed, starting sealed: %v", err)
+		}
+	}
 
 	var opts []api.Option
 	if *auditLog != "" {
