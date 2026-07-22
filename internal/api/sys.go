@@ -121,6 +121,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// Lease revocation (currently database leases only).
 	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
 
+	// Backup: stream a snapshot of the encrypted store (root or an explicit grant).
+	mux.HandleFunc("POST /v1/sys/snapshot", h.authenticate(h.snapshot))
+
 	// Kubernetes auth method. login is unauthenticated (the ServiceAccount token
 	// IS the credential); config and role management require authentication.
 	mux.HandleFunc("POST /v1/auth/kubernetes/config", h.authenticate(h.k8sConfigure))

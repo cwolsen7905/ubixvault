@@ -22,6 +22,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/client"
 	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
 
@@ -63,6 +64,8 @@ func usage() {
 	fmt.Println("  operator unseal <key>      submit an unseal key")
 	fmt.Println("  operator seal-status       show seal status")
 	fmt.Println("  operator seal              re-seal (requires -token)")
+	fmt.Println("  operator snapshot save <f> back up the encrypted store (requires -token)")
+	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
 }
@@ -174,9 +177,79 @@ func runOperator(args []string) error {
 		return operatorSealStatus(args[1:])
 	case "seal":
 		return operatorSeal(args[1:])
+	case "snapshot":
+		return operatorSnapshot(args[1:])
 	default:
 		return fmt.Errorf("unknown operator subcommand %q", args[0])
 	}
+}
+
+func operatorSnapshot(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: operator snapshot save <file> | restore -data <dir> <file>")
+	}
+	switch args[0] {
+	case "save":
+		return operatorSnapshotSave(args[1:])
+	case "restore":
+		return operatorSnapshotRestore(args[1:])
+	default:
+		return fmt.Errorf("unknown snapshot subcommand %q", args[0])
+	}
+}
+
+func operatorSnapshotSave(args []string) error {
+	fs := flag.NewFlagSet("operator snapshot save", flag.ExitOnError)
+	addr := fs.String("address", defaultAddr(), "server address")
+	token := fs.String("token", os.Getenv("UBIXVAULT_TOKEN"), "auth token")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path := fs.Arg(0)
+	if path == "" {
+		return fmt.Errorf("usage: operator snapshot save [-address URL] [-token T] <file>")
+	}
+	f, err := os.Create(path) //nolint:gosec // G304: operator-provided output path
+	if err != nil {
+		return fmt.Errorf("create %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := client.New(*addr, *token).Snapshot(context.Background(), f); err != nil {
+		return err
+	}
+	fmt.Printf("snapshot written to %s\n", path)
+	return nil
+}
+
+// operatorSnapshotRestore restores a snapshot offline, directly into a data
+// directory (the server must not be running against it). Start the server on the
+// directory afterwards and unseal as usual.
+func operatorSnapshotRestore(args []string) error {
+	fs := flag.NewFlagSet("operator snapshot restore", flag.ExitOnError)
+	dataDir := fs.String("data", "", "data directory to restore into (must be empty/new)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path := fs.Arg(0)
+	if *dataDir == "" || path == "" {
+		return fmt.Errorf("usage: operator snapshot restore -data <dir> <file>")
+	}
+	f, err := os.Open(path) //nolint:gosec // G304: operator-provided snapshot path
+	if err != nil {
+		return fmt.Errorf("open %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	backend, err := storage.NewFileBackend(*dataDir)
+	if err != nil {
+		return fmt.Errorf("open data dir: %w", err)
+	}
+	if err := snapshot.Restore(context.Background(), backend, f); err != nil {
+		return err
+	}
+	fmt.Printf("restored %s into %s — start the server on this directory and unseal\n", path, *dataDir)
+	return nil
 }
 
 func defaultAddr() string {

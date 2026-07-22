@@ -79,6 +79,31 @@ func (c *Client) Seal(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/v1/sys/seal", nil, nil)
 }
 
+// Snapshot streams a backup of the encrypted store to w. It requires a token.
+func (c *Client) Snapshot(ctx context.Context, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.addr+"/v1/sys/snapshot", nil)
+	if err != nil {
+		return fmt.Errorf("client: new request: %w", err)
+	}
+	if c.token != "" {
+		req.Header.Set("X-Vault-Token", c.token)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("client: snapshot: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		return &APIError{StatusCode: resp.StatusCode, Errors: parseErrors(data)}
+	}
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("client: read snapshot: %w", err)
+	}
+	return nil
+}
+
 // do performs a request, encoding body as JSON and decoding a successful
 // response into out (if non-nil). Non-2xx responses are turned into errors.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
