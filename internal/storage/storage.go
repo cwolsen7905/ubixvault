@@ -94,6 +94,38 @@ func validatePrefix(prefix string) error {
 	return ValidateKey(strings.TrimSuffix(prefix, "/"))
 }
 
+// Walk visits every entry in b, calling fn for each leaf (in unspecified order).
+// It descends the "/"-separated hierarchy exposed by [Backend.List], reading each
+// leaf with [Backend.Get]. If fn returns an error, the walk stops and returns it.
+func Walk(ctx context.Context, b Backend, fn func(*Entry) error) error {
+	return walk(ctx, b, "", fn)
+}
+
+func walk(ctx context.Context, b Backend, prefix string, fn func(*Entry) error) error {
+	children, err := b.List(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	for _, c := range children {
+		if strings.HasSuffix(c, "/") {
+			if err := walk(ctx, b, prefix+c, fn); err != nil {
+				return err
+			}
+			continue
+		}
+		entry, err := b.Get(ctx, prefix+c)
+		if err != nil {
+			return err
+		}
+		if entry != nil {
+			if err := fn(entry); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // childUnder returns the immediate child of prefix on the path to key, and
 // whether key lies under prefix at all. If the child is itself an intermediate
 // segment (key has further path elements below it), the returned child carries a

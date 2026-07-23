@@ -25,8 +25,11 @@ import (
 	"fmt"
 	"sync"
 
+	"io"
+
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/shamir"
+	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
@@ -125,6 +128,13 @@ func (c *Core) AutoUnsealEnabled() bool { return c.autoKEK != nil }
 
 // Barrier returns the underlying barrier, for use by upper layers once unsealed.
 func (c *Core) Barrier() *barrier.Barrier { return c.barrier }
+
+// Snapshot streams a consistent copy of the entire encrypted store to w. The
+// values are ciphertext, so the snapshot never contains plaintext; a restored
+// copy still requires the unseal shares (or the auto-unseal KEK).
+func (c *Core) Snapshot(ctx context.Context, w io.Writer) error {
+	return snapshot.Write(ctx, c.phys, w)
+}
 
 // Tokens returns the token store, for authentication by upper layers.
 func (c *Core) Tokens() *token.Store { return c.tokens }
