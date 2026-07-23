@@ -20,6 +20,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,7 +61,27 @@ var (
 	ErrAutoUnsealNotConfigured = errors.New("core: auto-unseal is not configured")
 	ErrNotAutoUnseal           = errors.New("core: vault uses Shamir unseal, not auto-unseal")
 	ErrAutoUnsealShamir        = errors.New("core: vault uses auto-unseal; manual unseal not applicable")
+	ErrRootGenNotStarted       = errors.New("core: no root-generation attempt in progress")
+	ErrRootGenNonce            = errors.New("core: nonce does not match the current attempt")
+	ErrRootGenSealed           = errors.New("core: unseal the vault before regenerating root")
+	ErrRootGenNotShamir        = errors.New("core: root regeneration requires Shamir unseal")
 )
+
+// RootGenStatus describes a root-token regeneration attempt.
+type RootGenStatus struct {
+	Started   bool
+	Nonce     string
+	Progress  int
+	Required  int
+	Complete  bool
+	RootToken string // set only on the update that completes the attempt
+}
+
+// rootGen holds the in-progress attempt state.
+type rootGen struct {
+	nonce    string
+	progress [][]byte
+}
 
 // InitConfig parameterizes [Core.Initialize].
 type InitConfig struct {
@@ -99,8 +120,9 @@ type Core struct {
 	tokens  *token.Store
 	autoKEK []byte // key-encryption key for auto-unseal; nil means Shamir mode
 
-	mu       sync.Mutex
-	progress [][]byte // unseal shares gathered so far (in-memory only)
+	mu          sync.Mutex
+	progress    [][]byte // unseal shares gathered so far (in-memory only)
+	rootAttempt *rootGen // in-progress root regeneration, if any
 }
 
 // Option configures a Core.
@@ -314,6 +336,116 @@ func (c *Core) Unseal(ctx context.Context, share []byte) (*SealStatus, error) {
 	return c.statusLocked(cfg, false), nil
 }
 
+// GenerateRootInit starts a root-token regeneration attempt and returns its
+// nonce. Providing a quorum of unseal shares to GenerateRootUpdate then mints a
+// new root token — the recovery path for a lost root token (docs/DESIGN.md §8.3).
+// Only Shamir-unseal vaults are supported, and the vault must be unsealed (so the
+// new token can be persisted).
+func (c *Core) GenerateRootInit(ctx context.Context) (*RootGenStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Type != SealTypeShamir {
+		return nil, ErrRootGenNotShamir
+	}
+	if c.barrier.Sealed() {
+		return nil, ErrRootGenSealed
+	}
+
+	nonce, err := randomNonce()
+	if err != nil {
+		return nil, err
+	}
+	c.rootAttempt = &rootGen{nonce: nonce}
+	return &RootGenStatus{Started: true, Nonce: nonce, Progress: 0, Required: cfg.Threshold}, nil
+}
+
+// GenerateRootUpdate supplies one unseal share to the attempt identified by
+// nonce. When the threshold is reached it reconstructs the master key, verifies
+// it, and (if valid) returns a freshly minted root token in the status.
+func (c *Core) GenerateRootUpdate(ctx context.Context, nonce string, share []byte) (*RootGenStatus, error) {
+	if len(share) != masterKeySize+1 {
+		return nil, ErrInvalidShare
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.rootAttempt == nil {
+		return nil, ErrRootGenNotStarted
+	}
+	if nonce != c.rootAttempt.nonce {
+		return nil, ErrRootGenNonce
+	}
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !containsShare(c.rootAttempt.progress, share) {
+		c.rootAttempt.progress = append(c.rootAttempt.progress, append([]byte(nil), share...))
+	}
+	if len(c.rootAttempt.progress) < cfg.Threshold {
+		return &RootGenStatus{Started: true, Nonce: nonce, Progress: len(c.rootAttempt.progress), Required: cfg.Threshold}, nil
+	}
+
+	masterKey, err := shamir.Combine(c.rootAttempt.progress)
+	if err != nil {
+		c.rootAttempt = nil
+		return nil, fmt.Errorf("core: combine shares: %w", err)
+	}
+	defer zero(masterKey)
+
+	ok, err := c.barrier.VerifyMasterKey(ctx, masterKey)
+	if err != nil {
+		c.rootAttempt = nil
+		return nil, err
+	}
+	if !ok {
+		c.rootAttempt = nil
+		return nil, ErrUnsealFailed
+	}
+
+	root, err := c.tokens.CreateRoot(ctx)
+	if err != nil {
+		c.rootAttempt = nil
+		return nil, fmt.Errorf("core: create root token: %w", err)
+	}
+	c.rootAttempt = nil
+	return &RootGenStatus{Started: false, Complete: true, Required: cfg.Threshold, RootToken: root.ID}, nil
+}
+
+// GenerateRootCancel discards any in-progress attempt.
+func (c *Core) GenerateRootCancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rootAttempt = nil
+}
+
+// GenerateRootStatus reports the current attempt.
+func (c *Core) GenerateRootStatus(ctx context.Context) (*RootGenStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.rootAttempt == nil {
+		return &RootGenStatus{Started: false}, nil
+	}
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &RootGenStatus{
+		Started:  true,
+		Nonce:    c.rootAttempt.nonce,
+		Progress: len(c.rootAttempt.progress),
+		Required: cfg.Threshold,
+	}, nil
+}
+
 // Seal re-seals the barrier and discards any in-progress unseal shares.
 func (c *Core) Seal() {
 	c.mu.Lock()
@@ -392,6 +524,15 @@ func containsShare(list [][]byte, s []byte) bool {
 		}
 	}
 	return false
+}
+
+// randomNonce returns a random hex nonce for a root-generation attempt.
+func randomNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("core: generate nonce: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // zero overwrites b with zeros (best-effort key hygiene).

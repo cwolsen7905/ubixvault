@@ -77,6 +77,13 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
 	mux.HandleFunc("POST /v1/sys/seal", h.authenticate(h.seal))
 
+	// Root-token regeneration (recovery). Unauthenticated — authority is proven
+	// by supplying a quorum of unseal shares, since the root token is lost.
+	mux.HandleFunc("GET /v1/sys/generate-root/attempt", h.generateRootStatus)
+	mux.HandleFunc("POST /v1/sys/generate-root/init", h.generateRootInit)
+	mux.HandleFunc("DELETE /v1/sys/generate-root/init", h.generateRootCancel)
+	mux.HandleFunc("POST /v1/sys/generate-root/update", h.generateRootUpdate)
+
 	// KV v2 secrets engine — all endpoints require authentication.
 	mux.HandleFunc("GET /v1/secret/data/{path...}", h.authenticate(h.kvRead))
 	mux.HandleFunc("POST /v1/secret/data/{path...}", h.authenticate(h.kvWrite))

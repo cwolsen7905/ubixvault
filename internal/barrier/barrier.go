@@ -115,6 +115,29 @@ func (b *Barrier) Initialized(ctx context.Context) (bool, error) {
 	return entry != nil, nil
 }
 
+// VerifyMasterKey reports whether masterKey is the correct master key, by
+// attempting to authenticate the stored keyring with it. It does not change the
+// seal state, so it can validate a reconstructed key (e.g. during root
+// regeneration) whether the barrier is sealed or unsealed. It returns
+// [ErrNotInitialized] if no keyring exists.
+func (b *Barrier) VerifyMasterKey(ctx context.Context, masterKey []byte) (bool, error) {
+	master, err := newAEAD(masterKey)
+	if err != nil {
+		return false, err
+	}
+	entry, err := b.phys.Get(ctx, keyringPath)
+	if err != nil {
+		return false, fmt.Errorf("barrier: read keyring: %w", err)
+	}
+	if entry == nil {
+		return false, ErrNotInitialized
+	}
+	if _, err := decrypt(master, entry.Value, keyringPath); err != nil {
+		return false, nil // wrong key: authentication failed
+	}
+	return true, nil
+}
+
 // Unseal decrypts the stored barrier key with masterKey and makes the Barrier
 // usable. It returns [ErrNotInitialized] if no keyring exists and [ErrInvalidKey]
 // if masterKey is the wrong length or does not decrypt the keyring. Unsealing an
