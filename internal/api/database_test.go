@@ -152,3 +152,52 @@ func TestDatabaseRequiresAuth(t *testing.T) {
 		t.Fatalf("no token = %d, want 401", rec.Code)
 	}
 }
+
+func TestLeaseRenewOverHTTP(t *testing.T) {
+	h, root, _ := unsealedDBHandler(t)
+	configureAndRole(t, h, root)
+
+	lease := decode[map[string]any](t, doAuth(t, h, "GET", "/v1/database/creds/app", "", root))["data"].(map[string]any)["lease_id"].(string)
+
+	rec := doAuth(t, h, "PUT", "/v1/sys/leases/renew", `{"lease_id":"`+lease+`","increment":"2h"}`, root)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	ld := decode[map[string]any](t, rec)["data"].(map[string]any)["lease_duration"].(float64)
+	if ld < 7100 || ld > 7200 {
+		t.Fatalf("renewed lease_duration = %v, want ~7200", ld)
+	}
+}
+
+// TestTokenRevokeSelfCascades confirms revoking a token also revokes the dynamic
+// database credentials it created.
+func TestTokenRevokeSelfCascades(t *testing.T) {
+	h, root, fake := unsealedDBHandler(t)
+	configureAndRole(t, h, root)
+
+	// A policy allowing a scoped token to read creds and revoke itself.
+	doAuth(t, h, "PUT", "/v1/sys/policies/acl/app",
+		`{"path":{"database/creds/app":{"capabilities":["read"]},"auth/token/revoke-self":{"capabilities":["update"]}}}`, root)
+	scoped := createToken(t, h, root, `["app"]`)
+
+	// The scoped token gets a DB credential (lease attributed to it).
+	credRec := doAuth(t, h, "GET", "/v1/database/creds/app", "", scoped)
+	if credRec.Code != http.StatusOK {
+		t.Fatalf("creds = %d, body=%s", credRec.Code, credRec.Body.String())
+	}
+	if len(fake.created) != 1 {
+		t.Fatalf("plugin CreateUser calls = %d, want 1", len(fake.created))
+	}
+
+	// Revoke the token — its lease should cascade-revoke.
+	if rec := doAuth(t, h, "POST", "/v1/auth/token/revoke-self", "", scoped); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke-self = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if len(fake.revoked) != 1 {
+		t.Fatalf("plugin RevokeUser calls = %d, want 1 (cascade)", len(fake.revoked))
+	}
+	// And the token itself no longer works.
+	if rec := doAuth(t, h, "GET", "/v1/database/creds/app", "", scoped); rec.Code != http.StatusForbidden {
+		t.Fatalf("revoked token still works = %d, want 403", rec.Code)
+	}
+}

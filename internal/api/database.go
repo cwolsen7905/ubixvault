@@ -92,9 +92,14 @@ func (h *Handler) dbDeleteRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// dbCredentials issues a fresh short-lived database credential for a role.
+// dbCredentials issues a fresh short-lived database credential for a role. The
+// lease is attributed to the requesting token so it can be revoked with it.
 func (h *Handler) dbCredentials(w http.ResponseWriter, r *http.Request) {
-	cred, err := h.database.GenerateCredentials(r.Context(), r.PathValue("name"))
+	var createdBy string
+	if tok, ok := tokenFromContext(r.Context()); ok {
+		createdBy = tok.ID
+	}
+	cred, err := h.database.GenerateCredentials(r.Context(), r.PathValue("name"), createdBy)
 	if err != nil {
 		writeDatabaseError(w, err)
 		return
@@ -107,17 +112,77 @@ func (h *Handler) dbCredentials(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type leaseRevokeRequest struct {
-	LeaseID string `json:"lease_id"`
+type leaseIDRequest struct {
+	LeaseID   string `json:"lease_id"`
+	Increment string `json:"increment"` // renew only; optional duration
 }
 
 func (h *Handler) leaseRevoke(w http.ResponseWriter, r *http.Request) {
-	var req leaseRevokeRequest
+	var req leaseIDRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.database.Revoke(r.Context(), req.LeaseID); err != nil {
 		writeDatabaseError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) leaseRenew(w http.ResponseWriter, r *http.Request) {
+	var req leaseIDRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	var ttl time.Duration
+	if req.Increment != "" {
+		d, err := time.ParseDuration(req.Increment)
+		if err != nil || d <= 0 {
+			writeError(w, http.StatusBadRequest, "increment must be a positive duration")
+			return
+		}
+		ttl = d
+	}
+	info, err := h.database.Renew(r.Context(), req.LeaseID, ttl)
+	if err != nil {
+		writeDatabaseError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"lease_id": info.LeaseID, "lease_duration": int(info.TTL.Seconds())})
+}
+
+func (h *Handler) leaseLookup(w http.ResponseWriter, r *http.Request) {
+	var req leaseIDRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	info, err := h.database.Lookup(r.Context(), req.LeaseID)
+	if err != nil {
+		writeDatabaseError(w, err)
+		return
+	}
+	writeData(w, map[string]any{
+		"lease_id":       info.LeaseID,
+		"role":           info.Role,
+		"lease_duration": int(info.TTL.Seconds()),
+	})
+}
+
+// tokenRevokeSelf revokes the calling token and cascades: every dynamic-database
+// lease created by that token is revoked too, so its credentials do not outlive
+// it.
+func (h *Handler) tokenRevokeSelf(w http.ResponseWriter, r *http.Request) {
+	tok, ok := tokenFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "no token on request")
+		return
+	}
+	if _, err := h.database.RevokeByToken(r.Context(), tok.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.tokens.Revoke(r.Context(), tok.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

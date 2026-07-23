@@ -70,7 +70,7 @@ func TestConfigureInitializesPlugin(t *testing.T) {
 
 func TestGenerateBeforeConfigure(t *testing.T) {
 	e, _ := newEngine(t)
-	if _, err := e.GenerateCredentials(context.Background(), "app"); !errors.Is(err, ErrNotConfigured) {
+	if _, err := e.GenerateCredentials(context.Background(), "app", ""); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
 }
@@ -79,7 +79,7 @@ func TestGenerateCredentials(t *testing.T) {
 	ctx := context.Background()
 	e, p := configured(t)
 
-	cred, err := e.GenerateCredentials(ctx, "app")
+	cred, err := e.GenerateCredentials(ctx, "app", "")
 	if err != nil {
 		t.Fatalf("GenerateCredentials: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestGenerateCredentials(t *testing.T) {
 func TestGenerateUnknownRole(t *testing.T) {
 	ctx := context.Background()
 	e, _ := configured(t)
-	if _, err := e.GenerateCredentials(ctx, "missing"); !errors.Is(err, ErrRoleNotFound) {
+	if _, err := e.GenerateCredentials(ctx, "missing", ""); !errors.Is(err, ErrRoleNotFound) {
 		t.Fatalf("want ErrRoleNotFound, got %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestRevoke(t *testing.T) {
 	ctx := context.Background()
 	e, p := configured(t)
 
-	cred, _ := e.GenerateCredentials(ctx, "app")
+	cred, _ := e.GenerateCredentials(ctx, "app", "")
 	if err := e.Revoke(ctx, cred.LeaseID); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestRevokeExpired(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	e.now = func() time.Time { return base }
 
-	cred, _ := e.GenerateCredentials(ctx, "app") // expires at base+1h
+	cred, _ := e.GenerateCredentials(ctx, "app", "") // expires at base+1h
 
 	// Not yet expired.
 	if n, err := e.RevokeExpired(ctx); err != nil || n != 0 {
@@ -161,7 +161,7 @@ func TestCreateUserFailureDoesNotLeaveLease(t *testing.T) {
 	e, p := configured(t)
 	p.createErr = errors.New("connection refused")
 
-	if _, err := e.GenerateCredentials(ctx, "app"); err == nil {
+	if _, err := e.GenerateCredentials(ctx, "app", ""); err == nil {
 		t.Fatal("expected error when plugin CreateUser fails")
 	}
 	// No lease should have been recorded.
@@ -200,5 +200,87 @@ func TestInvalidRoleName(t *testing.T) {
 	e, _ := newEngine(t)
 	if err := e.WriteRole(ctx, "bad/name", Role{}); !errors.Is(err, ErrInvalidName) {
 		t.Fatalf("want ErrInvalidName, got %v", err)
+	}
+}
+
+func TestRenewExtendsLease(t *testing.T) {
+	ctx := context.Background()
+	e, _ := configured(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return base }
+
+	cred, _ := e.GenerateCredentials(ctx, "app", "") // expires base+1h (role TTL)
+	base2 := base.Add(30 * time.Minute)
+	e.now = func() time.Time { return base2 }
+
+	info, err := e.Renew(ctx, cred.LeaseID, 2*time.Hour)
+	if err != nil {
+		t.Fatalf("Renew: %v", err)
+	}
+	if info.TTL != 2*time.Hour {
+		t.Fatalf("renewed TTL = %v, want 2h", info.TTL)
+	}
+	// Now the sweep at base+90m must NOT revoke it (new expiry is base+2.5h).
+	e.now = func() time.Time { return base.Add(90 * time.Minute) }
+	if n, _ := e.RevokeExpired(ctx); n != 0 {
+		t.Fatalf("renewed lease was swept: %d", n)
+	}
+}
+
+func TestLookupLease(t *testing.T) {
+	ctx := context.Background()
+	e, _ := configured(t)
+	cred, _ := e.GenerateCredentials(ctx, "app", "tok-1")
+
+	info, err := e.Lookup(ctx, cred.LeaseID)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if info.LeaseID != cred.LeaseID || info.Role != "app" || info.Username != cred.Username {
+		t.Fatalf("lookup = %+v", info)
+	}
+	if _, err := e.Lookup(ctx, "nope"); !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatalf("lookup missing: want ErrLeaseNotFound, got %v", err)
+	}
+}
+
+func TestRevokeByTokenCascades(t *testing.T) {
+	ctx := context.Background()
+	e, p := configured(t)
+
+	// Two creds from token A, one from token B.
+	a1, _ := e.GenerateCredentials(ctx, "app", "token-A")
+	a2, _ := e.GenerateCredentials(ctx, "app", "token-A")
+	b1, _ := e.GenerateCredentials(ctx, "app", "token-B")
+
+	n, err := e.RevokeByToken(ctx, "token-A")
+	if err != nil {
+		t.Fatalf("RevokeByToken: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("revoked %d, want 2", n)
+	}
+	// A's leases are gone; B's remains.
+	if _, err := e.Lookup(ctx, a1.LeaseID); !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatal("a1 lease not revoked")
+	}
+	if _, err := e.Lookup(ctx, a2.LeaseID); !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatal("a2 lease not revoked")
+	}
+	if _, err := e.Lookup(ctx, b1.LeaseID); err != nil {
+		t.Fatalf("b1 lease should survive: %v", err)
+	}
+	// The plugin revoked exactly A's two users.
+	if len(p.revoked) != 2 {
+		t.Fatalf("plugin revoked %d users, want 2", len(p.revoked))
+	}
+}
+
+func TestRevokeByTokenEmptyIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	e, _ := configured(t)
+	_, _ = e.GenerateCredentials(ctx, "app", "token-A")
+	if n, err := e.RevokeByToken(ctx, ""); err != nil || n != 0 {
+		t.Fatalf("RevokeByToken(\"\") = %d, err %v", n, err)
 	}
 }
