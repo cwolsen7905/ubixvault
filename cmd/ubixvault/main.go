@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -79,7 +80,15 @@ func runServer(args []string) error {
 	auditLog := fs.String("audit-log", "", "path to an audit log file (enables fail-closed audit logging)")
 	autoUnsealKey := fs.String("auto-unseal-key", os.Getenv("UBIXVAULT_AUTO_UNSEAL_KEY"),
 		"hex-encoded 32-byte key-encryption key; enables auto-unseal (or set $UBIXVAULT_AUTO_UNSEAL_KEY)")
+	devNoTLS := fs.Bool("dev-no-tls", false, "allow serving plaintext HTTP on a non-loopback address (INSECURE)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// Refuse to serve secrets in the clear over a network: without TLS, only bind
+	// to loopback unless explicitly overridden.
+	tlsEnabled := *tlsCert != "" && *tlsKey != ""
+	if err := checkTLSPolicy(*listen, tlsEnabled, *devNoTLS); err != nil {
 		return err
 	}
 
@@ -138,7 +147,7 @@ func runServer(args []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		if *tlsCert != "" && *tlsKey != "" {
+		if tlsEnabled {
 			log.Printf("uBix Vault %s listening on https://%s (data: %s)", version, *listen, *dataDir)
 			errCh <- srv.ListenAndServeTLS(*tlsCert, *tlsKey)
 		} else {
@@ -159,6 +168,37 @@ func runServer(args []string) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// checkTLSPolicy refuses to start a plaintext server on a non-loopback address
+// unless explicitly overridden, so secrets are never served in the clear over a
+// network by accident.
+func checkTLSPolicy(listen string, tlsEnabled, devNoTLS bool) error {
+	if tlsEnabled || devNoTLS || isLoopbackListen(listen) {
+		return nil
+	}
+	return fmt.Errorf("refusing to serve plaintext HTTP on non-loopback address %q: "+
+		"set -tls-cert/-tls-key, or pass -dev-no-tls to override (INSECURE)", listen)
+}
+
+// isLoopbackListen reports whether a listen address binds only the loopback
+// interface. An empty/missing host (":8200", "0.0.0.0:8200") binds all
+// interfaces and is not loopback. A non-IP hostname is treated conservatively as
+// not loopback.
+func isLoopbackListen(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		host = listen // no port present
+	}
+	switch host {
+	case "":
+		return false
+	case "localhost":
+		return true
+	default:
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
 	}
 }
 
