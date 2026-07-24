@@ -183,3 +183,27 @@ would be wasteful or risky, and each is scanned by `govulncheck` in CI.
 packages that do not talk to MariaDB do not pull it in. Integration tests that
 require a real database are gated behind the `integration` build tag and run in a
 dedicated CI job against a MariaDB service container.
+
+## D-011 — HCL policy support via an in-house parser (no new dependency)
+
+**Status:** Accepted · 2026-07-23
+
+**Decision:** accept HashiCorp-style **HCL** policy documents (in addition to JSON)
+via a small, purpose-built parser in `internal/policy`, rather than adding the
+`hashicorp/hcl` dependency.
+
+**Why:** the policy grammar is a tiny, well-defined subset — `path "<pattern>" {
+capabilities = [...] }` blocks with comments — so a ~200-line lexer/parser covers
+it cleanly and keeps the project dependency-light (consistent with the
+minimal-dependency posture; the only third-party dependency remains the MySQL
+driver, D-010). `ParseDocument` auto-detects the format (leading `{` → JSON, else
+HCL). This is parsing, not cryptography, so it does not touch the
+"no hand-rolled crypto" rule.
+
+**Trade-off / follow-up:** the in-house parser is **not full HCL** — no heredocs,
+interpolation, nested blocks, or number/bool values beyond the policy grammar.
+For complete compatibility with arbitrary Vault policy files, switch to
+`github.com/hashicorp/hcl` later. That library is **MPL 2.0**, which as a
+dependency does **not** affect this project's BSD-3-Clause license (MPL is
+file-level copyleft governing only its own files); it would be recorded as its
+own ADR when added.

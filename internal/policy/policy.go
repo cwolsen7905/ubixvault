@@ -74,6 +74,25 @@ type document struct {
 	} `json:"path"`
 }
 
+// ParseDocument builds a policy from either a JSON or an HCL document, detecting
+// the format: content whose first non-space byte is '{' is treated as JSON,
+// otherwise as HCL.
+func ParseDocument(name string, data []byte) (*Policy, error) {
+	trimmed := bytesTrimLeadingSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		return Parse(name, data)
+	}
+	return ParseHCL(name, data)
+}
+
+func bytesTrimLeadingSpace(data []byte) []byte {
+	i := 0
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r') {
+		i++
+	}
+	return data[i:]
+}
+
 // Parse builds a named policy from its JSON document.
 func Parse(name string, data []byte) (*Policy, error) {
 	var doc document
