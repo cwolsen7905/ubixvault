@@ -111,9 +111,11 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
 
-	// Token creation and renewal.
+	// Token creation, renewal, and revocation (revoke cascades to the token's
+	// dynamic-database leases).
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
 	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
+	mux.HandleFunc("POST /v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
 
 	// Transit engine (encryption-as-a-service).
 	mux.HandleFunc("POST /v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))
@@ -134,8 +136,10 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("DELETE /v1/database/roles/{name}", h.authenticate(h.dbDeleteRole))
 	mux.HandleFunc("GET /v1/database/creds/{name}", h.authenticate(h.dbCredentials))
 
-	// Lease revocation (currently database leases only).
+	// Lease management (currently database leases only).
 	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
+	mux.HandleFunc("PUT /v1/sys/leases/renew", h.authenticate(h.leaseRenew))
+	mux.HandleFunc("PUT /v1/sys/leases/lookup", h.authenticate(h.leaseLookup))
 
 	// Backup: stream a snapshot of the encrypted store (root or an explicit grant).
 	mux.HandleFunc("POST /v1/sys/snapshot", h.authenticate(h.snapshot))

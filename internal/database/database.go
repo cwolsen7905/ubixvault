@@ -77,6 +77,15 @@ type lease struct {
 	Role       string    `json:"role"`
 	Username   string    `json:"username"`
 	Expiration time.Time `json:"expiration"`
+	CreatedBy  string    `json:"created_by,omitempty"` // token that requested it (for cascading revocation)
+}
+
+// LeaseInfo is the non-secret view of a lease.
+type LeaseInfo struct {
+	LeaseID  string
+	Role     string
+	TTL      time.Duration // remaining time until expiration
+	Username string
 }
 
 // Storage is the subset of a backend the engine needs.
@@ -230,8 +239,9 @@ func (e *Engine) DeleteRole(ctx context.Context, name string) error {
 
 // GenerateCredentials issues a fresh short-lived credential for a role: it
 // generates a username and password, has the plugin create the database user,
-// records a lease, and returns the credential.
-func (e *Engine) GenerateCredentials(ctx context.Context, roleName string) (*Credential, error) {
+// records a lease attributed to createdBy (the requesting token, "" if none),
+// and returns the credential.
+func (e *Engine) GenerateCredentials(ctx context.Context, roleName, createdBy string) (*Credential, error) {
 	if err := e.ensureReady(ctx); err != nil {
 		return nil, err
 	}
@@ -261,7 +271,7 @@ func (e *Engine) GenerateCredentials(ctx context.Context, roleName string) (*Cre
 	if err != nil {
 		return nil, err
 	}
-	if err := e.saveLease(ctx, lease{ID: id, Role: roleName, Username: username, Expiration: expiration}); err != nil {
+	if err := e.saveLease(ctx, lease{ID: id, Role: roleName, Username: username, Expiration: expiration, CreatedBy: createdBy}); err != nil {
 		// Best-effort cleanup: the user was created but the lease could not be
 		// recorded, so drop the user rather than leak an untracked credential.
 		_ = e.plugin.RevokeUser(ctx, username)
@@ -269,6 +279,67 @@ func (e *Engine) GenerateCredentials(ctx context.Context, roleName string) (*Cre
 	}
 
 	return &Credential{LeaseID: id, Username: username, Password: password, TTL: role.DefaultTTL}, nil
+}
+
+// Lookup returns the non-secret information for a lease.
+func (e *Engine) Lookup(ctx context.Context, leaseID string) (*LeaseInfo, error) {
+	l, err := e.loadLease(ctx, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	ttl := time.Until(l.Expiration)
+	if ttl < 0 {
+		ttl = 0
+	}
+	return &LeaseInfo{LeaseID: l.ID, Role: l.Role, TTL: ttl, Username: l.Username}, nil
+}
+
+// Renew extends a lease's expiration by ttl from now (or the role's default TTL
+// if ttl <= 0) and returns the updated lease info. This delays revocation of the
+// underlying database user by the expiry sweeper.
+func (e *Engine) Renew(ctx context.Context, leaseID string, ttl time.Duration) (*LeaseInfo, error) {
+	l, err := e.loadLease(ctx, leaseID)
+	if err != nil {
+		return nil, err
+	}
+	if ttl <= 0 {
+		if role, rerr := e.ReadRole(ctx, l.Role); rerr == nil {
+			ttl = role.DefaultTTL
+		}
+	}
+	l.Expiration = e.now().Add(ttl)
+	if err := e.saveLease(ctx, *l); err != nil {
+		return nil, err
+	}
+	return &LeaseInfo{LeaseID: l.ID, Role: l.Role, TTL: ttl, Username: l.Username}, nil
+}
+
+// RevokeByToken revokes every lease created by the given token and returns the
+// count. This is the cascade applied when a token is revoked, so its dynamic
+// credentials do not outlive it.
+func (e *Engine) RevokeByToken(ctx context.Context, tokenID string) (int, error) {
+	if tokenID == "" {
+		return 0, nil
+	}
+	ids, err := e.store.List(ctx, e.prefix+"/lease/")
+	if err != nil {
+		return 0, fmt.Errorf("database: list leases: %w", err)
+	}
+	revoked := 0
+	for _, id := range ids {
+		l, err := e.loadLease(ctx, id)
+		if err != nil {
+			continue
+		}
+		if l.CreatedBy != tokenID {
+			continue
+		}
+		if err := e.Revoke(ctx, id); err != nil {
+			return revoked, err
+		}
+		revoked++
+	}
+	return revoked, nil
 }
 
 // Revoke drops the credential for a lease and removes the lease.
