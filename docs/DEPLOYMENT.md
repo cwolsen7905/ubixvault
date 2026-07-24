@@ -103,6 +103,30 @@ docker run -d --name ubixvault \
 Provide the auto-unseal KEK via `-e UBIXVAULT_AUTO_UNSEAL_KEY=...` (ideally from a
 Docker/Kubernetes secret, not a plain env var in your compose file).
 
+### Kubernetes (Helm)
+
+A single-node Helm chart lives in [`deploy/charts/ubixvault`](../deploy/charts/ubixvault).
+It deploys a StatefulSet with a persistent data volume, auto-unseal by default,
+split TCP-liveness / HTTP-readiness probes (a sealed vault returns `503`, so an
+httpGet liveness probe would crash-loop it), and the `system:auth-delegator`
+binding the Kubernetes auth method needs. Build and push the image from the
+repo-root `Dockerfile` first (no official image is published yet), then:
+
+```sh
+kubectl create ns ubixvault
+kubectl -n ubixvault create secret generic ubixvault-kek \
+  --from-literal=auto-unseal-key="$(head -c32 /dev/urandom | xxd -p | tr -d '\n')"
+
+helm install vault ./deploy/charts/ubixvault -n ubixvault \
+  --set image.repository=<your-registry>/ubixvault \
+  --set tls.existingSecret=ubixvault-tls \
+  --set autoUnseal.existingSecret=ubixvault-kek
+```
+
+Then run `operator init` once inside the pod (`kubectl exec … ubixvault operator
+init`). It is single-node only — the chart refuses `replicaCount > 1`. See the
+chart [README](../deploy/charts/ubixvault/README.md) for all values.
+
 ## 5. Health checks
 
 `GET /v1/sys/health` is unauthenticated and encodes readiness in its status code
