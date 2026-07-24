@@ -11,7 +11,7 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - name: https
+    - name: {{ if .Values.tls.enabled }}https{{ else }}http{{ end }}
       port: {{ .Values.service.port }}
       targetPort: api
       protocol: TCP

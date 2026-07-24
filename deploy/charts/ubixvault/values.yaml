@@ -78,6 +78,9 @@ devNoTLS: false
 # unexpectedly. Enable with a DEDICATED volume in production-like use.
 audit:
   enabled: false
+  # Must live under audit.persistence.mountPath below — the server opens this
+  # file without creating parent dirs, and audit is fail-closed, so a path
+  # outside the mounted volume stops the vault from serving.
   path: /var/log/ubixvault/audit.log
   persistence:
     enabled: true

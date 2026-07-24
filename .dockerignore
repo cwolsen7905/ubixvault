@@ -5,6 +5,4 @@ coverage.out
 deploy
 docs
 *.md
-!go.mod
-!go.sum
 .golangci.yml
