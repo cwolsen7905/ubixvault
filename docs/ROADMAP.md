@@ -24,7 +24,7 @@ and dynamic secrets). Every item here ships **finished, tested, and documented**
 - [x] **Seal / unseal**: Shamir k-of-n, init, unseal, seal status.
 - [x] **Token auth** + root token bootstrap + child token creation.
 - [~] **Lease manager**: dynamic-secret leases with TTLs, revoke, and an expiry sweep. *(General renew / cascading revocation across all secret types is a post-MVP refinement.)*
-- [x] **Policy (ACL) engine**: JSON policies, default-deny, capability checks. *(HCL parity is a follow-up.)*
+- [x] **Policy (ACL) engine**: JSON *and* HCL policies, default-deny, capability checks.
 - [x] **KV v2** secrets engine (versioned static secrets).
 - [x] **Transit** secrets engine (encrypt/decrypt; key never leaves). *(sign/HMAC endpoints are a follow-up.)*
 - [x] **`DatabasePlugin` interface** + **Database dynamic** engine — **MariaDB** reference plugin, short-lived credentials, auto-revoke (PostgreSQL/MySQL as follow-on plugins).

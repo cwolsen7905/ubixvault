@@ -101,3 +101,31 @@ func TestScopedTokenCannotCreateTokens(t *testing.T) {
 		t.Fatalf("scoped token create = %d, want 403", rec.Code)
 	}
 }
+
+// TestPolicyAcceptsHCL confirms a HashiCorp-style HCL policy is accepted and
+// enforced identically to the JSON form.
+func TestPolicyAcceptsHCL(t *testing.T) {
+	h, root := unsealedHandler(t)
+
+	doAuth(t, h, "POST", "/v1/secret/data/app/db", `{"data":{"pw":"s3cr3t"}}`, root)
+	hcl := "path \"secret/data/app/*\" {\n  capabilities = [\"read\"]\n}\n"
+	if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/app-ro", hcl, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("write HCL policy = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	scoped := createToken(t, h, root, `["app-ro"]`)
+	if rec := doAuth(t, h, "GET", "/v1/secret/data/app/db", "", scoped); rec.Code != http.StatusOK {
+		t.Fatalf("HCL-policy read = %d, want 200", rec.Code)
+	}
+	if rec := doAuth(t, h, "POST", "/v1/secret/data/app/db", `{"data":{"pw":"x"}}`, scoped); rec.Code != http.StatusForbidden {
+		t.Fatalf("HCL-policy write = %d, want 403", rec.Code)
+	}
+}
+
+func TestPolicyRejectsMalformedHCL(t *testing.T) {
+	h, root := unsealedHandler(t)
+	rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/bad", `path "a" { capabilities = [`, root)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed HCL = %d, want 400", rec.Code)
+	}
+}

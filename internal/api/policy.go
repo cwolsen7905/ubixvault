@@ -18,7 +18,7 @@ func (h *Handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := policy.Parse(r.PathValue("name"), body)
+	p, err := policy.ParseDocument(r.PathValue("name"), body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
