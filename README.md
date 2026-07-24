@@ -6,10 +6,11 @@ sealed barrier: an encryption barrier, Shamir seal/unseal, token auth with ACL
 policies, versioned KV secrets, encryption-as-a-service, and dynamic database
 credentials — over a Vault-API-compatible HTTP interface.
 
-> **Status: working MVP — not yet production-hardened.** The core is built,
-> tested, and demonstrated end-to-end, but it has not had the security review or
-> operational hardening a production secrets store needs. For production today,
-> use [HashiCorp Vault](https://www.vaultproject.io/) or
+> **Status: beta (`v0.2.0-beta`) — not yet production-hardened.** Usable for real
+> workloads — token TTLs, auto-unseal, backups/restore, health checks, and TLS
+> enforcement (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)) — but it has not
+> had the external security review a production secrets store needs. For
+> production today, use [HashiCorp Vault](https://www.vaultproject.io/) or
 > [OpenBao](https://openbao.org/). Why uBix Vault exists alongside them:
 > [`docs/POSITIONING.md`](docs/POSITIONING.md).
 
@@ -107,6 +108,7 @@ The architecture and reasoning are first-class parts of the project:
 - **[docs/DECISIONS.md](docs/DECISIONS.md)** — architecture decision records (Go vs. Rust vs. C++, in-house Shamir, first dependency, …).
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — the v1.0 core and possible extensions.
 - **[docs/POSITIONING.md](docs/POSITIONING.md)** — prior art and why this was built.
+- **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — running it: TLS, unsealing, systemd/Docker, backups, upgrades.
 
 ## Development
 
