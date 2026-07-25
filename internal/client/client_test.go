@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,29 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
+
+func TestTLSOptions(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewTLSServer(api.NewHandler(core.New(storage.NewMemoryBackend())))
+	t.Cleanup(srv.Close)
+
+	// A default client must reject the server's self-signed certificate.
+	if _, err := New(srv.URL, "").SealStatus(ctx); err == nil {
+		t.Fatal("expected TLS verification failure against self-signed server, got nil")
+	}
+
+	// -tls-skip-verify reaches it.
+	if _, err := New(srv.URL, "", WithTLSSkipVerify(true)).SealStatus(ctx); err != nil {
+		t.Fatalf("WithTLSSkipVerify: %v", err)
+	}
+
+	// Trusting the server's CA reaches it without skipping verification.
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	if _, err := New(srv.URL, "", WithRootCAs(pool)).SealStatus(ctx); err != nil {
+		t.Fatalf("WithRootCAs: %v", err)
+	}
+}
 
 // testServer spins up a real handler over an in-memory backend.
 func testServer(t *testing.T) *httptest.Server {

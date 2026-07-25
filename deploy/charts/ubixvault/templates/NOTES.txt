@@ -1,3 +1,4 @@
+{{- $tls := "" }}{{- if .Values.tls.enabled }}{{- $tls = " -address https://127.0.0.1:8200 -tls-skip-verify" }}{{- end }}
 uBix Vault ({{ .Chart.AppVersion }}) deployed as {{ include "ubixvault.fullname" . }}.
 
   ⚠  Single-node, beta. No Raft HA and no external security review. Suitable for
@@ -14,9 +15,13 @@ Service (in-cluster):
 1. The vault starts SEALED and must be INITIALIZED once. Run init inside the pod:
 
      kubectl -n {{ .Release.Namespace }} exec -it {{ include "ubixvault.fullname" . }}-0 -- \
-       ubixvault operator init -shares 5 -threshold 3
+       ubixvault operator init{{ $tls }} -shares 5 -threshold 3
 
    SAVE the unseal shares and the root token it prints — they are shown once.
+{{- if .Values.tls.enabled }}
+   (TLS is on, so the CLI targets https and skips verifying the cert, which is
+   issued for the ingress host, not localhost.)
+{{- end }}
 
 {{- if .Values.autoUnseal.enabled }}
 
@@ -29,7 +34,7 @@ Service (in-cluster):
    by providing a threshold of shares:
 
      kubectl -n {{ .Release.Namespace }} exec -it {{ include "ubixvault.fullname" . }}-0 -- \
-       ubixvault operator unseal <key>   # repeat until sealed=false
+       ubixvault operator unseal{{ $tls }} <key>   # repeat until sealed=false
 
    The pod stays NotReady until unsealed (readiness probe gates on 200).
 {{- end }}
@@ -37,7 +42,7 @@ Service (in-cluster):
 3. Check status:
 
      kubectl -n {{ .Release.Namespace }} exec -it {{ include "ubixvault.fullname" . }}-0 -- \
-       ubixvault operator seal-status
+       ubixvault operator seal-status{{ $tls }}
 
 {{- if .Values.kubernetesAuth.enabled }}
 
