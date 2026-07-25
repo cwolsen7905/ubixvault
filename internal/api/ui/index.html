@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>uBix Vault — Console</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="mark">uBix&nbsp;Vault</span><span class="sub">Console</span></div>
+  <div class="version" id="version" title="server version">—</div>
+</header>
+
+<main>
+  <!-- Signature: the vault's seal state, front and center. -->
+  <section class="seal" id="seal" data-state="unknown" aria-live="polite">
+    <div class="seal-bar"></div>
+    <div class="seal-main">
+      <span class="dot"></span>
+      <div>
+        <div class="word" id="seal-word">Connecting…</div>
+        <div class="tagline" id="seal-tagline">Reading vault status</div>
+      </div>
+    </div>
+    <dl class="seal-meta">
+      <div><dt>Initialized</dt><dd id="m-init">—</dd></div>
+      <div><dt>Seal type</dt><dd id="m-type">—</dd></div>
+      <div><dt>Uptime</dt><dd id="m-uptime">—</dd></div>
+    </dl>
+    <button class="ghost" id="refresh" type="button">Refresh</button>
+  </section>
+
+  <section class="panel">
+    <h2>Token</h2>
+    <p class="hint">Paste a token to read secrets. It stays in this browser tab and is
+      sent only to this vault.</p>
+    <form class="row" id="token-form">
+      <input type="password" id="token" placeholder="uv.…" autocomplete="off" spellcheck="false" aria-label="token">
+      <button type="submit">Use token</button>
+      <button type="button" id="token-clear" class="ghost">Clear</button>
+      <span class="tag" id="token-state" data-set="false">no token</span>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>KV&nbsp;v2 secrets <span class="ro">read-only</span></h2>
+    <form class="row" id="kv-form">
+      <input type="text" id="kv-path" placeholder="path, e.g. app/config" spellcheck="false" aria-label="secret path">
+      <button type="submit">Read</button>
+      <button type="button" id="kv-list" class="ghost">List</button>
+    </form>
+    <div id="kv-out" class="out" aria-live="polite"></div>
+  </section>
+</main>
+
+<footer>
+  <span>uBix Vault console · read-only (beta)</span>
+  <a href="/v1/sys/health">Health</a>
+</footer>
+
+<script src="console.js"></script>
+</body>
+</html>
