@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -69,6 +70,7 @@ func usage() {
 	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
+	fmt.Println("  TLS: -ca-cert <pem> (or $UBIXVAULT_CACERT), -tls-skip-verify (or $UBIXVAULT_TLS_SKIP_VERIFY)")
 }
 
 func runServer(args []string) error {
@@ -240,8 +242,7 @@ func operatorSnapshot(args []string) error {
 
 func operatorSnapshotSave(args []string) error {
 	fs := flag.NewFlagSet("operator snapshot save", flag.ExitOnError)
-	addr := fs.String("address", defaultAddr(), "server address")
-	token := fs.String("token", os.Getenv("UBIXVAULT_TOKEN"), "auth token")
+	cc := registerClientFlags(fs, true)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -255,7 +256,11 @@ func operatorSnapshotSave(args []string) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	if err := client.New(*addr, *token).Snapshot(context.Background(), f); err != nil {
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	if err := c.Snapshot(context.Background(), f); err != nil {
 		return err
 	}
 	fmt.Printf("snapshot written to %s\n", path)
@@ -299,16 +304,73 @@ func defaultAddr() string {
 	return "http://127.0.0.1:8200"
 }
 
+func envTrue(name string) bool {
+	switch os.Getenv(name) {
+	case "1", "true", "TRUE", "yes":
+		return true
+	}
+	return false
+}
+
+// clientConfig holds the connection flags shared by the operator subcommands.
+type clientConfig struct {
+	addr       *string
+	token      *string // nil when the command takes no -token
+	caCert     *string
+	skipVerify *bool
+}
+
+// registerClientFlags adds -address, -ca-cert and -tls-skip-verify to fs (and
+// -token when withToken), each backed by the matching environment variable.
+func registerClientFlags(fs *flag.FlagSet, withToken bool) *clientConfig {
+	cc := &clientConfig{
+		addr:       fs.String("address", defaultAddr(), "server address (or $UBIXVAULT_ADDR)"),
+		caCert:     fs.String("ca-cert", os.Getenv("UBIXVAULT_CACERT"), "PEM CA bundle to trust for HTTPS (or $UBIXVAULT_CACERT)"),
+		skipVerify: fs.Bool("tls-skip-verify", envTrue("UBIXVAULT_TLS_SKIP_VERIFY"), "skip TLS certificate verification, INSECURE (or $UBIXVAULT_TLS_SKIP_VERIFY)"),
+	}
+	if withToken {
+		cc.token = fs.String("token", os.Getenv("UBIXVAULT_TOKEN"), "auth token (or $UBIXVAULT_TOKEN)")
+	}
+	return cc
+}
+
+// newClient builds a client from the parsed flags, applying TLS options.
+func (cc *clientConfig) newClient() (*client.Client, error) {
+	var opts []client.Option
+	if *cc.skipVerify {
+		opts = append(opts, client.WithTLSSkipVerify(true))
+	}
+	if *cc.caCert != "" {
+		pem, err := os.ReadFile(*cc.caCert)
+		if err != nil {
+			return nil, fmt.Errorf("read ca-cert: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ca-cert %q: no PEM certificates found", *cc.caCert)
+		}
+		opts = append(opts, client.WithRootCAs(pool))
+	}
+	token := ""
+	if cc.token != nil {
+		token = *cc.token
+	}
+	return client.New(*cc.addr, token, opts...), nil
+}
+
 func operatorInit(args []string) error {
 	fs := flag.NewFlagSet("operator init", flag.ExitOnError)
-	addr := fs.String("address", defaultAddr(), "server address")
+	cc := registerClientFlags(fs, false)
 	shares := fs.Int("shares", 5, "number of unseal key shares")
 	threshold := fs.Int("threshold", 3, "shares required to unseal")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	res, err := client.New(*addr, "").Init(context.Background(), *shares, *threshold)
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	res, err := c.Init(context.Background(), *shares, *threshold)
 	if err != nil {
 		return err
 	}
@@ -323,7 +385,7 @@ func operatorInit(args []string) error {
 
 func operatorUnseal(args []string) error {
 	fs := flag.NewFlagSet("operator unseal", flag.ExitOnError)
-	addr := fs.String("address", defaultAddr(), "server address")
+	cc := registerClientFlags(fs, false)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -331,7 +393,11 @@ func operatorUnseal(args []string) error {
 	if key == "" {
 		return fmt.Errorf("usage: operator unseal [-address URL] <key>")
 	}
-	st, err := client.New(*addr, "").Unseal(context.Background(), key)
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	st, err := c.Unseal(context.Background(), key)
 	if err != nil {
 		return err
 	}
@@ -341,11 +407,15 @@ func operatorUnseal(args []string) error {
 
 func operatorSealStatus(args []string) error {
 	fs := flag.NewFlagSet("operator seal-status", flag.ExitOnError)
-	addr := fs.String("address", defaultAddr(), "server address")
+	cc := registerClientFlags(fs, false)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, err := client.New(*addr, "").SealStatus(context.Background())
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	st, err := c.SealStatus(context.Background())
 	if err != nil {
 		return err
 	}
@@ -355,12 +425,15 @@ func operatorSealStatus(args []string) error {
 
 func operatorSeal(args []string) error {
 	fs := flag.NewFlagSet("operator seal", flag.ExitOnError)
-	addr := fs.String("address", defaultAddr(), "server address")
-	token := fs.String("token", os.Getenv("UBIXVAULT_TOKEN"), "auth token")
+	cc := registerClientFlags(fs, true)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if err := client.New(*addr, *token).Seal(context.Background()); err != nil {
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	if err := c.Seal(context.Background()); err != nil {
 		return err
 	}
 	fmt.Println("Sealed.")

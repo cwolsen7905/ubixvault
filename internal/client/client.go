@@ -5,6 +5,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,19 +17,51 @@ import (
 
 // Client talks to a uBix Vault server.
 type Client struct {
-	addr  string
-	token string
-	hc    *http.Client
+	addr          string
+	token         string
+	hc            *http.Client
+	tlsSkipVerify bool
+	rootCAs       *x509.CertPool
+}
+
+// Option configures a [Client].
+type Option func(*Client)
+
+// WithTLSSkipVerify disables TLS certificate verification. INSECURE — intended
+// for reaching a TLS server whose certificate does not cover the dial address
+// (e.g. https://127.0.0.1 inside a pod, or a self-signed cert in testing).
+func WithTLSSkipVerify(skip bool) Option {
+	return func(c *Client) { c.tlsSkipVerify = skip }
+}
+
+// WithRootCAs sets the pool of CA certificates to trust for HTTPS, instead of
+// the system roots. Use this to trust a private CA without skipping verification.
+func WithRootCAs(pool *x509.CertPool) Option {
+	return func(c *Client) { c.rootCAs = pool }
 }
 
 // New returns a client for the server at addr, sending token (may be empty) as
-// the X-Vault-Token header.
-func New(addr, token string) *Client {
-	return &Client{
+// the X-Vault-Token header. TLS behaviour is controlled by the options.
+func New(addr, token string, opts ...Option) *Client {
+	c := &Client{
 		addr:  strings.TrimRight(addr, "/"),
 		token: token,
-		hc:    &http.Client{Timeout: 30 * time.Second},
 	}
+	for _, o := range opts {
+		o(c)
+	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	if c.tlsSkipVerify || c.rootCAs != nil {
+		hc.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: c.tlsSkipVerify, //nolint:gosec // G402: opt-in via -tls-skip-verify, documented as INSECURE
+				RootCAs:            c.rootCAs,
+			},
+		}
+	}
+	c.hc = hc
+	return c
 }
 
 // InitResult is returned by [Client.Init].

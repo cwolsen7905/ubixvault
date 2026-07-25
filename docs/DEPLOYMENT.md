@@ -123,9 +123,19 @@ helm install vault ./deploy/charts/ubixvault -n ubixvault \
   --set autoUnseal.existingSecret=ubixvault-kek
 ```
 
-Then run `operator init` once inside the pod (`kubectl exec … ubixvault operator
-init`). It is single-node only — the chart refuses `replicaCount > 1`. See the
-chart [README](../deploy/charts/ubixvault/README.md) for all values.
+Then run `operator init` once inside the pod. With TLS on (the chart default),
+the CLI must target HTTPS and skip verifying the cert (it is issued for the
+ingress host, not localhost):
+
+```sh
+kubectl -n ubixvault exec vault-ubixvault-0 -- \
+  ubixvault operator init -address https://127.0.0.1:8200 -tls-skip-verify \
+    -shares 5 -threshold 3
+```
+
+Use `-ca-cert <pem>` instead of `-tls-skip-verify` to verify against a specific
+CA. It is single-node only — the chart refuses `replicaCount > 1`. See the chart
+[README](../deploy/charts/ubixvault/README.md) for all values.
 
 ## 5. Health checks
 
