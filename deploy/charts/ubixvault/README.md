@@ -63,6 +63,11 @@ kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
   Secret. Disabling TLS requires `devNoTLS=true` and is INSECURE.
 - **Audit is off by default** and fail-closed: enable it with a dedicated volume
   (`audit.enabled=true`), never sharing the data disk.
+- **Ingress is optional and encrypted end to end.** When `ingress.enabled`, the
+  Ingress is annotated `backend-protocol: HTTPS` so ingress-nginx re-encrypts to
+  the vault (which serves HTTPS) — the ingress never sees plaintext secrets. A
+  secrets manager is sensitive: prefer internal access, or lock it down with
+  `ingress.whitelistSourceRange`.
 - **Hardened pod:** non-root (uid 65532), read-only root filesystem, all
   capabilities dropped, `RuntimeDefault` seccomp.
 
@@ -83,6 +88,10 @@ kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
 | `audit.enabled` | `false` | Fail-closed audit log; use a dedicated volume. |
 | `kubernetesAuth.enabled` | `true` | Bind SA to `system:auth-delegator`. |
 | `service.type` / `.port` | `ClusterIP` / `8200` | In-cluster Service. |
+| `ingress.enabled` | `false` | Expose over an Ingress (requires `tls.enabled`). |
+| `ingress.host` | `""` | Hostname, e.g. `vault.prod.ubixsys.com`. |
+| `ingress.tlsSecret` | `""` | TLS Secret in this namespace (e.g. a Replikate-synced wildcard). |
+| `ingress.whitelistSourceRange` | `""` | Optional CIDR allow-list to restrict access. |
 
 See [`values.yaml`](values.yaml) for the full list.
 
