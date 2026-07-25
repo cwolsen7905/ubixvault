@@ -4,6 +4,16 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Web console (read-only)** — an embedded, self-contained admin console at
+  `/ui/` (with `/` redirecting to it), replacing the "coming soon" placeholder.
+  It shows the vault's seal state and reads/lists KV v2 secrets with a token the
+  operator supplies in the browser. Vanilla HTML/JS/CSS served from the binary
+  under a strict CSP (no external assets, no new dependency).
+
 ## [0.2.0-beta.2] — 2026-07-24
 
 Second beta: Kubernetes deployment support and an auto-unseal recovery-key fix.

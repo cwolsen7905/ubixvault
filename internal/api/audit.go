@@ -48,10 +48,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // auditablePath reports whether a path should be audited. Unauthenticated,
-// high-frequency, non-sensitive endpoints are excluded.
+// high-frequency, non-sensitive endpoints — and the static console assets — are
+// excluded. (Reads the console makes against /v1/* are audited normally.)
 func auditablePath(path string) bool {
+	if strings.HasPrefix(path, "/ui/") {
+		return false
+	}
 	switch path {
-	case "/", "/v1/sys/health", "/v1/sys/metrics":
+	case "/", "/ui", "/v1/sys/health", "/v1/sys/metrics":
 		return false
 	default:
 		return true

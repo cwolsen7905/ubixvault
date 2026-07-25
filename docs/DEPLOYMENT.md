@@ -157,6 +157,11 @@ of secret material, so it is safe to scrape; restrict it at the network layer as
 you would any `/metrics`. The Helm chart can create a Prometheus Operator
 `ServiceMonitor` (`metrics.serviceMonitor.enabled=true`).
 
+**Web console.** A read-only console is served at `/ui/` (`/` redirects there).
+It shows the vault's seal state and lets an operator read/list KV secrets with a
+token they supply in the browser. The assets are static and embedded in the
+binary; the token is held only in the browser tab. It is currently read-only.
+
 ## 6. Backups
 
 Snapshots are consistent, encrypted copies of the whole store — safe to store at
