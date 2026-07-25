@@ -18,6 +18,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
+	"github.com/cwolsen7905/ubixvault/internal/metrics"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/transit"
@@ -44,6 +45,7 @@ type Handler struct {
 	tokens     *token.Store
 	policies   *policy.Store
 	audit      *audit.Broker
+	metrics    *metrics.Metrics
 	version    string
 	startTime  time.Time
 	mux        *http.ServeMux
@@ -74,8 +76,10 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
+		metrics:    metrics.New(),
 		startTime:  time.Now().UTC(),
 	}
+	h.registerMetrics()
 	mux := http.NewServeMux()
 
 	// Root placeholder: a static "admin portal coming soon" page at exactly "/",
@@ -86,6 +90,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// System / lifecycle. These are unauthenticated by necessity: there is no
 	// token before the vault exists or while it is sealed.
 	mux.HandleFunc("GET /v1/sys/health", h.health)
+	mux.HandleFunc("GET /v1/sys/metrics", h.metricsEndpoint)
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)

@@ -151,6 +151,12 @@ CA. It is single-node only — the chart refuses `replicaCount > 1`. See the cha
 - `503` — sealed (not ready)
 - `501` — not initialized
 
+**Metrics.** `GET /v1/sys/metrics` returns Prometheus text-format metrics
+(build info, seal state, uptime, HTTP request counts) — unauthenticated and free
+of secret material, so it is safe to scrape; restrict it at the network layer as
+you would any `/metrics`. The Helm chart can create a Prometheus Operator
+`ServiceMonitor` (`metrics.serviceMonitor.enabled=true`).
+
 ## 6. Backups
 
 Snapshots are consistent, encrypted copies of the whole store — safe to store at

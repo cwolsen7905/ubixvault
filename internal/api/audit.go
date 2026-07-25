@@ -12,11 +12,16 @@ import (
 // auditing is fail-closed: if the entry cannot be recorded, the request is
 // refused (500) and never processed, so nothing proceeds unaudited.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// The health endpoint is polled frequently by probes, and the root is a
-	// static placeholder page; neither carries security-relevant access, so they
-	// are not audited.
-	if h.audit == nil || r.URL.Path == "/v1/sys/health" || r.URL.Path == "/" {
-		h.mux.ServeHTTP(w, r)
+	// Wrap once so both metrics and audit see the final status code; count every
+	// request toward metrics regardless of the audit decision below.
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	defer func() { h.metrics.ObserveRequest(rec.status) }()
+
+	// The health and metrics endpoints are polled frequently by probes/scrapers,
+	// and the root is a static placeholder page; none carries security-relevant
+	// access, so they are not audited.
+	if h.audit == nil || !auditablePath(r.URL.Path) {
+		h.mux.ServeHTTP(rec, r)
 		return
 	}
 
@@ -29,11 +34,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req := base
 	if err := h.audit.LogRequest(r.Context(), &req); err != nil {
-		writeError(w, http.StatusInternalServerError, "audit logging failed")
+		writeError(rec, http.StatusInternalServerError, "audit logging failed")
 		return
 	}
 
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	h.mux.ServeHTTP(rec, r)
 
 	resp := base
@@ -41,6 +45,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The request has already been served; a response-audit failure cannot unwind
 	// it, so it is best-effort (the fail-closed guarantee is on the request).
 	_ = h.audit.LogResponse(r.Context(), &resp)
+}
+
+// auditablePath reports whether a path should be audited. Unauthenticated,
+// high-frequency, non-sensitive endpoints are excluded.
+func auditablePath(path string) bool {
+	switch path {
+	case "/", "/v1/sys/health", "/v1/sys/metrics":
+		return false
+	default:
+		return true
+	}
 }
 
 // operationForMethod maps an HTTP method to an audit operation name.

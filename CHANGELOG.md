@@ -8,6 +8,10 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Prometheus metrics** — `GET /v1/sys/metrics` exposes operational series
+  (build info, seal state, uptime, HTTP request counts) in Prometheus text
+  format, via an in-house exporter (no new dependency, ADR D-012). The Helm
+  chart can create a `ServiceMonitor` (`metrics.serviceMonitor.enabled`).
 - **Auto-unseal recovery keys** — auto-unseal `init` now generates *k-of-n*
   recovery keys (default 5/3) and returns them once. The KEK still unseals the
   vault automatically; the recovery keys authorize **root-token regeneration**,
