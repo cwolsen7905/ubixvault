@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # --- build stage -----------------------------------------------------------
-FROM golang:1.24-alpine AS build
+# Pin to the build host's native arch and cross-compile to the target arch, so
+# multi-arch builds don't emulate the Go toolchain under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 WORKDIR /src
 
 # Cache module downloads before copying the full tree.
@@ -11,8 +13,11 @@ RUN go mod download
 COPY . .
 
 # VERSION is stamped into the binary (matches the Makefile's -ldflags).
+# TARGETOS/TARGETARCH are provided automatically by buildx.
 ARG VERSION=0.0.0-dev
-RUN CGO_ENABLED=0 go build -trimpath \
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/ubixvault ./cmd/ubixvault
 
