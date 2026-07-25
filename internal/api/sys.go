@@ -186,9 +186,11 @@ type initRequest struct {
 }
 
 type initResponse struct {
-	Keys       []string `json:"keys"`        // hex-encoded unseal shares
-	KeysBase64 []string `json:"keys_base64"` // same shares, base64
-	RootToken  string   `json:"root_token"`  // initial root token, shown once
+	Keys               []string `json:"keys"`                           // hex-encoded unseal shares (Shamir mode)
+	KeysBase64         []string `json:"keys_base64"`                    // same shares, base64
+	RecoveryKeys       []string `json:"recovery_keys,omitempty"`        // hex-encoded recovery shares (auto-unseal mode)
+	RecoveryKeysBase64 []string `json:"recovery_keys_base64,omitempty"` // same recovery shares, base64
+	RootToken          string   `json:"root_token"`                     // initial root token, shown once
 }
 
 type unsealRequest struct {
@@ -243,6 +245,10 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request) {
 	for i, k := range res.Keys {
 		resp.Keys[i] = hex.EncodeToString(k)
 		resp.KeysBase64[i] = base64.StdEncoding.EncodeToString(k)
+	}
+	for _, k := range res.RecoveryKeys {
+		resp.RecoveryKeys = append(resp.RecoveryKeys, hex.EncodeToString(k))
+		resp.RecoveryKeysBase64 = append(resp.RecoveryKeysBase64, base64.StdEncoding.EncodeToString(k))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

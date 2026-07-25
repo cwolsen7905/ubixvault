@@ -64,11 +64,13 @@ func New(addr, token string, opts ...Option) *Client {
 	return c
 }
 
-// InitResult is returned by [Client.Init].
+// InitResult is returned by [Client.Init]. Keys are the Shamir unseal shares;
+// in auto-unseal mode Keys is empty and RecoveryKeys holds the recovery shares.
 type InitResult struct {
-	Keys       []string `json:"keys"`
-	KeysBase64 []string `json:"keys_base64"`
-	RootToken  string   `json:"root_token"`
+	Keys         []string `json:"keys"`
+	KeysBase64   []string `json:"keys_base64"`
+	RecoveryKeys []string `json:"recovery_keys"`
+	RootToken    string   `json:"root_token"`
 }
 
 // SealStatus is the seal-status of the vault.

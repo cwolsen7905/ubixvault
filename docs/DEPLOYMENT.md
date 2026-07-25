@@ -58,6 +58,11 @@ The KEK protects the entire vault — store it in a secrets manager or KMS, not 
 the same disk as the data. (A pluggable cloud-KMS seal is on the roadmap; today
 the KEK is supplied directly.)
 
+Auto-unseal `init` also returns **recovery keys** (k-of-n, like Shamir shares).
+The vault unseals itself with the KEK, so you never enter them to unseal — but a
+threshold of them is the *only* way to regenerate a lost root token (see
+[§7](#7-lost-root-token)). Save them as carefully as the KEK.
+
 ## 4. Running as a service
 
 ### systemd
@@ -164,14 +169,20 @@ ubixvault server -data /var/lib/ubixvault-restored ...   # then unseal / auto-un
 
 ## 7. Lost root token
 
-Recover a new root token from a quorum of unseal shares (Shamir mode; the vault
-must be unsealed):
+Recover a new root token from a quorum of keys (the vault must be unsealed):
+
+- **Shamir mode:** use a threshold of the **unseal shares**.
+- **Auto-unseal mode:** use a threshold of the **recovery keys** returned at
+  `init` (the KEK unseals the vault; the recovery keys exist for exactly this).
 
 ```sh
 # Over the API: POST /v1/sys/generate-root/init returns a nonce, then
-# POST /v1/sys/generate-root/update with the nonce + each unseal key until
-# it returns a new root_token.
+# POST /v1/sys/generate-root/update with the nonce + each unseal/recovery key
+# until it returns a new root_token.
 ```
+
+If an auto-unseal vault was initialized before recovery-key support, it has no
+recovery keys and a lost root token cannot be regenerated — reinitialize.
 
 ## 8. Upgrades
 

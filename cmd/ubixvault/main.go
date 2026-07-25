@@ -377,9 +377,19 @@ func operatorInit(args []string) error {
 	for i, k := range res.Keys {
 		fmt.Printf("Unseal Key %d: %s\n", i+1, k)
 	}
+	for i, k := range res.RecoveryKeys {
+		fmt.Printf("Recovery Key %d: %s\n", i+1, k)
+	}
 	fmt.Printf("\nInitial Root Token: %s\n", res.RootToken)
 	fmt.Printf("\nSave these now — they are shown only once.\n")
-	fmt.Printf("Unseal with any %d of the %d keys.\n", *threshold, *shares)
+	if len(res.RecoveryKeys) > 0 {
+		// Auto-unseal: the KEK unseals automatically; recovery keys exist only to
+		// regenerate a lost root token.
+		fmt.Printf("Auto-unseal is enabled — the server unseals itself. Keep the %d recovery\n", len(res.RecoveryKeys))
+		fmt.Printf("keys safe: any %d of them can regenerate the root token if it is lost.\n", *threshold)
+	} else {
+		fmt.Printf("Unseal with any %d of the %d keys.\n", *threshold, *shares)
+	}
 	return nil
 }
 

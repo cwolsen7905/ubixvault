@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cwolsen7905/ubixvault/internal/shamir"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
 
@@ -105,14 +106,60 @@ func TestGenerateRootSealed(t *testing.T) {
 	}
 }
 
-func TestGenerateRootAutoModeUnsupported(t *testing.T) {
+func TestGenerateRootAutoModeWithRecoveryKeys(t *testing.T) {
 	ctx := context.Background()
 	c := New(storage.NewMemoryBackend(), WithAutoUnsealKey(newKEK(t)))
-	if _, err := c.Initialize(ctx, InitConfig{}); err != nil {
+	res, err := c.Initialize(ctx, InitConfig{SecretShares: 3, SecretThreshold: 2})
+	if err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
-	if _, err := c.GenerateRootInit(ctx); !errors.Is(err, ErrRootGenNotShamir) {
-		t.Fatalf("want ErrRootGenNotShamir, got %v", err)
+	if len(res.Keys) != 0 {
+		t.Fatalf("auto-unseal returned %d unseal keys, want 0", len(res.Keys))
+	}
+	if len(res.RecoveryKeys) != 3 {
+		t.Fatalf("got %d recovery keys, want 3", len(res.RecoveryKeys))
+	}
+
+	// Regenerate a root token using a threshold of recovery keys.
+	st, err := c.GenerateRootInit(ctx)
+	if err != nil {
+		t.Fatalf("GenerateRootInit: %v", err)
+	}
+	if st.Required != 2 {
+		t.Fatalf("required = %d, want 2", st.Required)
+	}
+	var out *RootGenStatus
+	for _, share := range res.RecoveryKeys[:2] {
+		out, err = c.GenerateRootUpdate(ctx, st.Nonce, share)
+		if err != nil {
+			t.Fatalf("GenerateRootUpdate: %v", err)
+		}
+	}
+	if !out.Complete || out.RootToken == "" {
+		t.Fatalf("root regeneration did not complete: %+v", out)
+	}
+}
+
+func TestGenerateRootAutoModeRejectsWrongKeys(t *testing.T) {
+	ctx := context.Background()
+	c := New(storage.NewMemoryBackend(), WithAutoUnsealKey(newKEK(t)))
+	if _, err := c.Initialize(ctx, InitConfig{SecretShares: 3, SecretThreshold: 2}); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	// Shares from an unrelated split must not reconstruct the recovery key.
+	bogus, err := shamir.Split(make([]byte, 32), 3, 2)
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	st, err := c.GenerateRootInit(ctx)
+	if err != nil {
+		t.Fatalf("GenerateRootInit: %v", err)
+	}
+	if _, err := c.GenerateRootUpdate(ctx, st.Nonce, bogus[0]); err != nil {
+		t.Fatalf("first share: %v", err)
+	}
+	if _, err := c.GenerateRootUpdate(ctx, st.Nonce, bogus[1]); !errors.Is(err, ErrUnsealFailed) {
+		t.Fatalf("want ErrUnsealFailed for wrong recovery keys, got %v", err)
 	}
 }
 

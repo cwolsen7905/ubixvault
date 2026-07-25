@@ -78,6 +78,7 @@ func writeRootGenError(w http.ResponseWriter, err error) {
 	case errors.Is(err, core.ErrRootGenSealed):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, core.ErrRootGenNotShamir),
+		errors.Is(err, core.ErrRootGenNoRecovery),
 		errors.Is(err, core.ErrRootGenNotStarted),
 		errors.Is(err, core.ErrRootGenNonce),
 		errors.Is(err, core.ErrInvalidShare),

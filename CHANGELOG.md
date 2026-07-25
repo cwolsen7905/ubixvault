@@ -4,6 +4,21 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Auto-unseal recovery keys** — auto-unseal `init` now generates *k-of-n*
+  recovery keys (default 5/3) and returns them once. The KEK still unseals the
+  vault automatically; the recovery keys authorize **root-token regeneration**,
+  closing a lockout gap where a lost root token was unrecoverable under
+  auto-unseal. `POST /v1/sys/generate-root/*` accepts recovery keys in
+  auto-unseal mode. (Vaults initialized before this have no recovery keys.)
+- **Helm chart** (`deploy/charts/ubixvault`), multi-arch image publishing to
+  ghcr.io, an optional chart Ingress, and TLS options for the operator CLI
+  (`-ca-cert`, `-tls-skip-verify`).
+- **Admin portal placeholder** — a static "coming soon" page served at `/`.
+
 ## [0.2.0-beta.1] — 2026-07-23
 
 Beta: hardening and completeness on top of the MVP. uBix Vault is now usable for
