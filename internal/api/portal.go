@@ -6,7 +6,7 @@ import "net/http"
 // standing in for the future admin portal instead of returning a bare 404. It
 // deliberately exposes nothing sensitive — no version, seal state, or data — so
 // it is safe to serve unauthenticated.
-func (h *Handler) portalComingSoon(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) portalComingSoon(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -27,7 +27,7 @@ func (h *Handler) registerMetrics() {
 // and exposes only operational series (seal state, uptime, request counts) — no
 // secret material — so it is safe to scrape. Restrict it at the network layer as
 // you would any /metrics endpoint.
-func (h *Handler) metricsEndpoint(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) metricsEndpoint(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	h.metrics.WriteProm(w)
 }
