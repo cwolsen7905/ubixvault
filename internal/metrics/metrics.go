@@ -50,28 +50,29 @@ func (m *Metrics) ObserveRequest(code int) {
 	m.mu.Unlock()
 }
 
-// WriteProm renders all series in Prometheus text exposition format.
+// WriteProm renders all series in Prometheus text exposition format. Write
+// errors on w are ignored (metrics must never fail the caller).
 func (m *Metrics) WriteProm(w io.Writer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, g := range m.gauges {
-		fmt.Fprintf(w, "# HELP %s %s\n", g.name, g.help)
-		fmt.Fprintf(w, "# TYPE %s gauge\n", g.name)
-		fmt.Fprintf(w, "%s%s %s\n", g.name, formatLabels(g.labels), formatFloat(g.fn()))
+		_, _ = fmt.Fprintf(w, "# HELP %s %s\n", g.name, g.help)
+		_, _ = fmt.Fprintf(w, "# TYPE %s gauge\n", g.name)
+		_, _ = fmt.Fprintf(w, "%s%s %s\n", g.name, formatLabels(g.labels), formatFloat(g.fn()))
 	}
 
 	if len(m.requests) > 0 {
 		const name = "ubixvault_http_requests_total"
-		fmt.Fprintf(w, "# HELP %s Total HTTP requests handled, by response status code.\n", name)
-		fmt.Fprintf(w, "# TYPE %s counter\n", name)
+		_, _ = fmt.Fprintf(w, "# HELP %s Total HTTP requests handled, by response status code.\n", name)
+		_, _ = fmt.Fprintf(w, "# TYPE %s counter\n", name)
 		codes := make([]int, 0, len(m.requests))
 		for code := range m.requests {
 			codes = append(codes, code)
 		}
 		sort.Ints(codes)
 		for _, code := range codes {
-			fmt.Fprintf(w, "%s{code=\"%d\"} %d\n", name, code, m.requests[code])
+			_, _ = fmt.Fprintf(w, "%s{code=\"%d\"} %d\n", name, code, m.requests[code])
 		}
 	}
 }
