@@ -1,6 +1,6 @@
 "use strict";
-// uBix Vault console — read-only. Vanilla JS, no dependencies. Secret values are
-// rendered via textContent only (never innerHTML), so a value can't inject markup.
+// uBix Vault console. Vanilla JS, no dependencies. Secret values are rendered via
+// textContent only (never innerHTML), so a value can't inject markup.
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "ubixvault.token";
@@ -18,15 +18,20 @@ function reflectToken() {
   tag.dataset.set = String(has);
 }
 
-// api performs a same-origin request, attaching the token when present.
-async function api(method, path) {
+// api performs a same-origin request, attaching the token and JSON body if given.
+async function api(method, path, body) {
   const headers = {};
   const tok = getToken();
   if (tok) headers["X-Vault-Token"] = tok;
-  const res = await fetch(path, { method, headers });
-  let body = null;
-  try { body = await res.json(); } catch (_) { /* empty/non-JSON */ }
-  return { status: res.status, ok: res.ok, body };
+  const opts = { method, headers };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  let payload = null;
+  try { payload = await res.json(); } catch (_) { /* 204 / empty */ }
+  return { status: res.status, ok: res.ok, body: payload };
 }
 
 function friendlyError(status, body) {
@@ -85,9 +90,10 @@ async function refreshStatus() {
   }
 }
 
-// ---- KV ----
+// ---- KV paths ----
 const KV_DATA = (p) => "/v1/secret/data/" + p;
 const KV_META = (p) => "/v1/secret/metadata/" + p;
+const KV_UNDELETE = (p) => "/v1/secret/undelete/" + p;
 
 function cleanPath(raw) {
   let p = (raw || "").trim().replace(/^\/+/, "");
@@ -104,20 +110,41 @@ function outMsg(cls, text) {
   out.appendChild(d);
 }
 
+function actionButton(label, cls, onClick) {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = label;
+  if (cls) b.className = cls;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// ---- read + lifecycle ----
+// Reading a soft-deleted current version returns 404 on the data endpoint but
+// the metadata endpoint still describes it, so fall back to metadata to show the
+// deleted state (and the Undelete action).
 async function kvRead(path) {
   const p = cleanPath(path);
   if (!p) { outMsg("error", "Enter a secret path."); return; }
   const r = await api("GET", KV_DATA(p));
-  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  if (r.ok) { renderSecret(p, r.body); return; }
+  if (r.status === 404) {
+    const meta = await api("GET", KV_META(p));
+    if (meta.ok) { renderDeleted(p, meta.body); return; }
+  }
+  outMsg("error", friendlyError(r.status, r.body));
+}
 
-  const data = (r.body && r.body.data && r.body.data.data) || {};
-  const meta = (r.body && r.body.data && r.body.data.metadata) || {};
+function renderSecret(p, body) {
+  const data = (body && body.data && body.data.data) || {};
+  const meta = (body && body.data && body.data.metadata) || {};
   const out = $("kv-out");
   out.replaceChildren();
 
   const keys = Object.keys(data);
   if (!keys.length) {
-    outMsg("ok", "Secret at “" + p + "” has no fields.");
+    const m = document.createElement("div");
+    m.className = "msg ok"; m.textContent = "Secret at “" + p + "” has no fields.";
+    out.appendChild(m);
   } else {
     const table = document.createElement("table");
     table.className = "kv-table";
@@ -131,14 +158,54 @@ async function kvRead(path) {
     }
     out.appendChild(table);
   }
+
   if (meta.version != null) {
     const line = document.createElement("div");
     line.className = "kv-metaline";
-    line.textContent = "version " + meta.version +
-      (meta.created_time ? " · created " + meta.created_time : "") +
-      (meta.destroyed ? " · destroyed" : meta.deleted ? " · deleted" : "");
+    line.textContent = "version " + meta.version + (meta.created_time ? " · created " + meta.created_time : "");
     out.appendChild(line);
   }
+
+  const actions = document.createElement("div");
+  actions.className = "kv-actions";
+  actions.appendChild(actionButton("Edit", "", () => openEditor(p, data)));
+  actions.appendChild(actionButton("Delete (soft)", "btn-danger", () => kvDelete(p)));
+  out.appendChild(actions);
+}
+
+function renderDeleted(p, body) {
+  const md = (body && body.data) || {};
+  const cv = md.current_version;
+  const vinfo = (md.versions && md.versions[String(cv)]) || {};
+  const out = $("kv-out");
+  out.replaceChildren();
+
+  const m = document.createElement("div");
+  m.className = "msg";
+  m.textContent = vinfo.destroyed
+    ? "Version " + cv + " of “" + p + "” is destroyed (permanently gone)."
+    : "Version " + cv + " of “" + p + "” is soft-deleted.";
+  out.appendChild(m);
+
+  const actions = document.createElement("div");
+  actions.className = "kv-actions";
+  if (!vinfo.destroyed) {
+    actions.appendChild(actionButton("Undelete", "", () => kvUndelete(p, cv)));
+    actions.appendChild(actionButton("New version", "", () => openEditor(p, null)));
+  }
+  if (actions.childElementCount) out.appendChild(actions);
+}
+
+async function kvDelete(path) {
+  const r = await api("DELETE", KV_DATA(path));
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  kvRead(path); // re-read; renderDeleted shows the Undelete action
+}
+
+async function kvUndelete(path, version) {
+  const r = await api("POST", KV_UNDELETE(path), { versions: [version] });
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  kvRead(path);
 }
 
 async function kvList(path) {
@@ -154,17 +221,77 @@ async function kvList(path) {
   ul.className = "kv-keys";
   for (const k of keys) {
     const li = document.createElement("li");
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "linklike"; b.textContent = k;
     const child = (p ? p.replace(/\/?$/, "/") : "") + k;
-    b.addEventListener("click", () => {
-      if (k.endsWith("/")) { $("kv-path").value = child; kvList(child); }
-      else { $("kv-path").value = child; kvRead(child); }
+    const b = actionButton(k, "linklike", () => {
+      $("kv-path").value = child;
+      if (k.endsWith("/")) kvList(child); else kvRead(child);
     });
     li.appendChild(b);
     ul.appendChild(li);
   }
   out.appendChild(ul);
+}
+
+// ---- editor (write) ----
+function addFieldRow(key = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "editor-row";
+  const k = document.createElement("input");
+  k.type = "text"; k.className = "k"; k.placeholder = "key"; k.value = key; k.spellcheck = false;
+  const v = document.createElement("input");
+  v.type = "text"; v.placeholder = "value"; v.value = value; v.spellcheck = false;
+  const del = actionButton("✕", "del", () => row.remove());
+  del.setAttribute("aria-label", "remove field");
+  row.append(k, v, del);
+  $("editor-fields").appendChild(row);
+  return row;
+}
+
+function openEditor(path, existing) {
+  const p = cleanPath(path);
+  if (!p) { outMsg("error", "Enter a path first, then New / edit."); $("kv-path").focus(); return; }
+  const ed = $("kv-editor");
+  ed.dataset.path = p;
+  $("editor-title").textContent = existing ? "Edit secret" : "New secret";
+  $("editor-path").textContent = p;
+  $("editor-fields").replaceChildren();
+  const entries = existing ? Object.entries(existing) : [];
+  if (entries.length) {
+    for (const [k, v] of entries) addFieldRow(k, typeof v === "string" ? v : JSON.stringify(v));
+  } else {
+    addFieldRow();
+  }
+  ed.hidden = false;
+  ed.scrollIntoView({ block: "nearest" });
+}
+
+function closeEditor() {
+  const ed = $("kv-editor");
+  ed.hidden = true;
+  ed.dataset.path = "";
+  $("editor-fields").replaceChildren();
+}
+
+function collectFields() {
+  const data = {};
+  for (const row of $("editor-fields").querySelectorAll(".editor-row")) {
+    const inputs = row.querySelectorAll("input");
+    const k = inputs[0].value.trim();
+    if (k) data[k] = inputs[1].value;
+  }
+  return data;
+}
+
+async function saveSecret() {
+  const p = $("kv-editor").dataset.path;
+  if (!p) return;
+  const data = collectFields();
+  if (!Object.keys(data).length) { outMsg("error", "Add at least one field with a key."); return; }
+  const r = await api("POST", KV_DATA(p), { data });
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  closeEditor();
+  $("kv-path").value = p;
+  kvRead(p); // show the new version
 }
 
 // ---- wire up ----
@@ -178,7 +305,13 @@ document.addEventListener("DOMContentLoaded", () => {
     setToken($("token").value.trim());
     $("token").value = "";
   });
-  $("token-clear").addEventListener("click", () => { setToken(""); });
+  $("token-clear").addEventListener("click", () => setToken(""));
+
   $("kv-form").addEventListener("submit", (e) => { e.preventDefault(); kvRead($("kv-path").value); });
   $("kv-list").addEventListener("click", () => kvList($("kv-path").value));
+  $("kv-new").addEventListener("click", () => openEditor($("kv-path").value, null));
+
+  $("editor-add").addEventListener("click", () => addFieldRow());
+  $("editor-cancel").addEventListener("click", closeEditor);
+  $("kv-editor").addEventListener("submit", (e) => { e.preventDefault(); saveSecret(); });
 });

@@ -4,6 +4,16 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Web console — write operations** — the `/ui/` console can now create and edit
+  KV v2 secrets (key/value editor, saves a new version), soft-delete the latest
+  version, and undelete it. Still token-in-header, strict-CSP, and every write
+  goes through the audited `/v1` API. (Destroy, version history, and policy/token
+  management remain for a later phase.)
+
 ## [0.2.0-beta.2] — 2026-07-25
 
 Second beta: Kubernetes deployment (Helm chart, image publishing, ingress,
