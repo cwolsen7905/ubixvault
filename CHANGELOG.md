@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.2] — 2026-07-24
+
+Second beta: Kubernetes deployment support and an auto-unseal recovery-key fix.
 
 ### Added
 
@@ -18,6 +20,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   ghcr.io, an optional chart Ingress, and TLS options for the operator CLI
   (`-ca-cert`, `-tls-skip-verify`).
 - **Admin portal placeholder** — a static "coming soon" page served at `/`.
+
+[0.2.0-beta.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.2
 
 ## [0.2.0-beta.1] — 2026-07-23
 
