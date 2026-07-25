@@ -6,6 +6,8 @@ PKG         := ./...
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -X main.version=$(VERSION)
 GOBIN       := $(shell go env GOPATH)/bin
+IMAGE       ?= ghcr.io/cwolsen7905/ubixvault
+CHART       := deploy/charts/ubixvault
 
 .DEFAULT_GOAL := help
 
@@ -55,6 +57,18 @@ tidy: ## Tidy go.mod/go.sum
 
 .PHONY: ci
 ci: fmtcheck vet test build ## Run the checks CI runs
+
+.PHONY: docker
+docker: ## Build the container image (tagged with VERSION)
+	docker build -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	helm lint $(CHART) --set tls.existingSecret=tls --set autoUnseal.existingSecret=kek
+
+.PHONY: helm-template
+helm-template: ## Render the Helm chart to stdout
+	helm template ubixvault $(CHART) --set tls.existingSecret=tls --set autoUnseal.existingSecret=kek
 
 .PHONY: clean
 clean: ## Remove build and coverage artifacts

@@ -1,0 +1,25 @@
+apiVersion: v2
+name: ubixvault
+description: |
+  uBix Vault — a self-hosted secrets manager (HashiCorp Vault-style). This chart
+  deploys a single-node vault: there is no Raft HA yet, so it is suitable for
+  sandbox / dev / internal use, not a production HA story.
+type: application
+# Chart version — bump on chart changes, independent of the app.
+version: 0.1.0
+# The uBix Vault release this chart targets.
+appVersion: "0.2.0-beta.1"
+kubeVersion: ">=1.24.0-0"
+home: https://github.com/cwolsen7905/ubixvault
+sources:
+  - https://github.com/cwolsen7905/ubixvault
+keywords:
+  - secrets
+  - vault
+  - security
+  - kv
+  - transit
+  - encryption
+maintainers:
+  - name: cwolsen
+    url: https://github.com/cwolsen7905

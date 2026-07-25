@@ -1,0 +1,185 @@
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- fail "ubixvault is single-node (no Raft HA yet): replicaCount must be 1" -}}
+{{- end -}}
+{{- if and .Values.tls.enabled (not .Values.tls.certManager.enabled) (not .Values.tls.existingSecret) -}}
+{{- fail "tls.enabled is true: set tls.existingSecret (a kubernetes.io/tls Secret) or enable tls.certManager" -}}
+{{- end -}}
+{{- if and .Values.autoUnseal.enabled (not .Values.autoUnseal.existingSecret) (not .Values.autoUnseal.create) -}}
+{{- fail "autoUnseal.enabled is true: set autoUnseal.existingSecret, or autoUnseal.create with autoUnseal.key" -}}
+{{- end -}}
+{{- $tlsSecret := "" -}}
+{{- if .Values.tls.enabled -}}
+{{- $tlsSecret = default .Values.tls.certManager.secretName .Values.tls.existingSecret -}}
+{{- if .Values.tls.certManager.enabled -}}{{- $tlsSecret = .Values.tls.certManager.secretName -}}{{- end -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ubixvault.fullname" . }}
+  labels:
+    {{- include "ubixvault.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "ubixvault.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ubixvault.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ubixvault.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ubixvault.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ubixvault
+          image: {{ include "ubixvault.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - server
+            - -listen
+            - {{ printf "0.0.0.0:%d" (int .Values.containerPort) | quote }}
+            - -data
+            - {{ .Values.persistence.mountPath | quote }}
+            {{- if .Values.tls.enabled }}
+            - -tls-cert
+            - {{ printf "%s/tls.crt" .Values.tls.mountPath | quote }}
+            - -tls-key
+            - {{ printf "%s/tls.key" .Values.tls.mountPath | quote }}
+            {{- else if .Values.devNoTLS }}
+            - -dev-no-tls
+            {{- end }}
+            {{- if .Values.audit.enabled }}
+            - -audit-log
+            - {{ .Values.audit.path | quote }}
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- if .Values.autoUnseal.enabled }}
+            - name: UBIXVAULT_AUTO_UNSEAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ubixvault.autoUnsealSecretName" . }}
+                  key: {{ .Values.autoUnseal.secretKey }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          # Liveness is a TCP check on purpose: a sealed vault answers 503 on
+          # /v1/sys/health, so an httpGet liveness probe would kill it before a
+          # human (or auto-unseal) can unseal it. Readiness uses the health
+          # endpoint so only an unsealed vault (200) receives traffic.
+          startupProbe:
+            tcpSocket:
+              port: api
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: api
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.audit.enabled .Values.audit.persistence.enabled }}
+            - name: audit
+              mountPath: {{ .Values.audit.persistence.mountPath }}
+            {{- end }}
+      volumes:
+        {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- else if .Values.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ $tlsSecret }}
+        {{- end }}
+        {{- if and .Values.audit.enabled (not .Values.audit.persistence.enabled) }}
+        - name: audit
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if or (and .Values.persistence.enabled (not .Values.persistence.existingClaim)) (and .Values.audit.enabled .Values.audit.persistence.enabled) }}
+  volumeClaimTemplates:
+    {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+    - metadata:
+        name: data
+        labels:
+          {{- include "ubixvault.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+    {{- end }}
+    {{- if and .Values.audit.enabled .Values.audit.persistence.enabled }}
+    - metadata:
+        name: audit
+        labels:
+          {{- include "ubixvault.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.audit.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.audit.persistence.size }}
+        {{- if .Values.audit.persistence.storageClass }}
+        storageClassName: {{ .Values.audit.persistence.storageClass | quote }}
+        {{- end }}
+    {{- end }}
+  {{- end }}
