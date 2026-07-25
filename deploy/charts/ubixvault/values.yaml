@@ -22,6 +22,22 @@ service:
   port: 8200
   annotations: {}
 
+# --- Ingress ---------------------------------------------------------------
+# Expose the vault over an ingress. Requires tls.enabled: the vault serves
+# HTTPS and the Ingress reaches it over HTTPS (backend-protocol), so traffic
+# stays encrypted end to end. A secrets manager is sensitive — prefer keeping
+# it internal, or restrict access with whitelistSourceRange.
+ingress:
+  enabled: false
+  className: nginx
+  host: ""                    # e.g. vault.prod.ubixsys.com
+  # TLS Secret to terminate on (must exist in this namespace). With Replikate,
+  # label the namespace so the wildcard is synced in, then name it here.
+  tlsSecret: ""               # e.g. tls-wildcard-ubixsys-prod
+  # Optional CIDR allow-list (comma-separated) — restrict who can reach it.
+  whitelistSourceRange: ""    # e.g. "10.0.0.0/8,192.168.0.0/16"
+  annotations: {}
+
 # --- Persistence -----------------------------------------------------------
 # The encrypted data directory. This is the whole vault at rest — back it up.
 persistence:
