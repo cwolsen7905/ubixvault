@@ -207,3 +207,29 @@ For complete compatibility with arbitrary Vault policy files, switch to
 dependency does **not** affect this project's BSD-3-Clause license (MPL is
 file-level copyleft governing only its own files); it would be recorded as its
 own ADR when added.
+
+## D-012 — Prometheus metrics via an in-house text exporter (no client library)
+
+**Status:** Accepted · 2026-07-24
+
+**Decision:** expose Prometheus metrics at `GET /v1/sys/metrics` by rendering the
+text exposition format directly from a small `internal/metrics` package, rather
+than depending on `prometheus/client_golang`.
+
+**Why:** the vault exposes only a handful of series (build info, seal state,
+uptime, HTTP request counts by status code). The Prometheus text format for
+these is trivial to emit correctly, and `client_golang` pulls in a non-trivial
+transitive dependency graph. A small, auditable dependency graph is itself a
+security feature here, so — consistent with D-009 (in-house Shamir) and D-011
+(in-house HCL) — a ~100-line exporter is preferred. This is serialization, not
+cryptography, so it does not touch the "no hand-rolled crypto" rule.
+
+**Shape:** counters incremented inline; gauges gathered from a callback at scrape
+time (so seal state and uptime are always current). The endpoint is
+unauthenticated and exposes only operational data (no secret names or values),
+like `/v1/sys/health`; restrict it at the network layer as usual for `/metrics`.
+
+**Trade-off / follow-up:** no histograms/summaries (request-duration buckets) and
+no Go runtime/process collectors that `client_golang` provides for free. If those
+are wanted later, adding `client_golang` would be its own ADR; it is Apache-2.0,
+which as a dependency does not affect this project's BSD-3-Clause license.

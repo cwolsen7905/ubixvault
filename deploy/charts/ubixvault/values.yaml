@@ -38,6 +38,17 @@ ingress:
   whitelistSourceRange: ""    # e.g. "10.0.0.0/8,192.168.0.0/16"
   annotations: {}
 
+# --- Metrics ---------------------------------------------------------------
+# The vault exposes Prometheus metrics at GET /v1/sys/metrics (unauthenticated,
+# operational data only — no secrets). Optionally create a Prometheus Operator
+# ServiceMonitor to scrape it. Requires the monitoring.coreos.com CRDs.
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}          # extra labels, e.g. { release: kube-prometheus-stack }
+
 # --- Persistence -----------------------------------------------------------
 # The encrypted data directory. This is the whole vault at rest — back it up.
 persistence:
