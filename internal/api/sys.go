@@ -78,6 +78,11 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	}
 	mux := http.NewServeMux()
 
+	// Root placeholder: a static "admin portal coming soon" page at exactly "/",
+	// so a browser hitting the host sees something intentional instead of a bare
+	// 404. The {$} anchor matches only the exact root and never shadows /v1 routes.
+	mux.HandleFunc("GET /{$}", h.portalComingSoon)
+
 	// System / lifecycle. These are unauthenticated by necessity: there is no
 	// token before the vault exists or while it is sealed.
 	mux.HandleFunc("GET /v1/sys/health", h.health)
