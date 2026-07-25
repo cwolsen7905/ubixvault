@@ -20,6 +20,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -65,7 +67,11 @@ var (
 	ErrRootGenNonce            = errors.New("core: nonce does not match the current attempt")
 	ErrRootGenSealed           = errors.New("core: unseal the vault before regenerating root")
 	ErrRootGenNotShamir        = errors.New("core: root regeneration requires Shamir unseal")
+	ErrRootGenNoRecovery       = errors.New("core: this auto-unseal vault has no recovery keys (initialized before recovery-key support)")
 )
+
+// recoveryKeySize is the length of the generated recovery key (auto-unseal mode).
+const recoveryKeySize = 32
 
 // RootGenStatus describes a root-token regeneration attempt.
 type RootGenStatus struct {
@@ -89,11 +95,14 @@ type InitConfig struct {
 	SecretThreshold int // shares required to unseal (2..SecretShares)
 }
 
-// InitResult is returned by [Core.Initialize]. Keys are the unseal shares and
-// RootToken is the initial root token; both are shown to the operator once.
+// InitResult is returned by [Core.Initialize]. In Shamir mode Keys holds the
+// unseal shares. In auto-unseal mode Keys is empty and RecoveryKeys holds the
+// recovery shares (which authorize root-token regeneration, not unseal).
+// RootToken is the initial root token. All are shown to the operator once.
 type InitResult struct {
-	Keys      [][]byte
-	RootToken string
+	Keys         [][]byte
+	RecoveryKeys [][]byte
+	RootToken    string
 }
 
 // SealStatus describes the current lifecycle state.
@@ -106,11 +115,16 @@ type SealStatus struct {
 	Progress    int // shares supplied so far toward the current unseal
 }
 
-// sealConfig is the persisted seal configuration.
+// sealConfig is the persisted seal configuration. In Shamir mode Shares and
+// Threshold describe the unseal shares. In auto-unseal mode the master key is
+// wrapped by the KEK instead, and these describe the *recovery* shares:
+// RecoveryHash is the SHA-256 of a random recovery key that k-of-n recovery
+// shares reconstruct, used to authorize root-token regeneration.
 type sealConfig struct {
-	Type      string `json:"type"`
-	Shares    int    `json:"shares"`
-	Threshold int    `json:"threshold"`
+	Type         string `json:"type"`
+	Shares       int    `json:"shares"`
+	Threshold    int    `json:"threshold"`
+	RecoveryHash []byte `json:"recovery_hash,omitempty"`
 }
 
 // Core manages initialization and seal/unseal over a storage backend.
@@ -171,12 +185,16 @@ func (c *Core) Initialized(ctx context.Context) (bool, error) {
 // Threshold required to reconstruct), persists the share configuration, and
 // returns the shares. The vault is left sealed; callers must Unseal.
 func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, error) {
-	if c.autoKEK == nil {
-		// Shamir mode requires a valid share configuration.
-		if cfg.SecretShares < 2 || cfg.SecretShares > 255 ||
-			cfg.SecretThreshold < 2 || cfg.SecretThreshold > cfg.SecretShares {
-			return nil, ErrInvalidConfig
-		}
+	// In auto-unseal mode the shares configure the *recovery* keys; default to
+	// 5-of-3 when unspecified so callers that don't care still get recovery keys.
+	if c.autoKEK != nil && cfg.SecretShares == 0 && cfg.SecretThreshold == 0 {
+		cfg.SecretShares, cfg.SecretThreshold = 5, 3
+	}
+	// Both modes need a valid k-of-n configuration (unseal shares for Shamir,
+	// recovery shares for auto-unseal).
+	if cfg.SecretShares < 2 || cfg.SecretShares > 255 ||
+		cfg.SecretThreshold < 2 || cfg.SecretThreshold > cfg.SecretShares {
+		return nil, ErrInvalidConfig
 	}
 
 	c.mu.Lock()
@@ -224,10 +242,32 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 			c.barrier.Seal()
 			return nil, fmt.Errorf("core: persist wrapped master key: %w", err)
 		}
-		if err := c.writeSealConfig(ctx, sealConfig{Type: SealTypeAuto}); err != nil {
+
+		// Generate recovery keys: a random recovery key split into k-of-n shares,
+		// with only its hash persisted. The KEK unseals; the recovery shares
+		// authorize root-token regeneration (the sole recovery path when the
+		// operator holds no unseal shares).
+		recoveryKey := make([]byte, recoveryKeySize)
+		if _, err := rand.Read(recoveryKey); err != nil {
+			c.barrier.Seal()
+			return nil, fmt.Errorf("core: generate recovery key: %w", err)
+		}
+		defer zero(recoveryKey)
+		recoveryShares, err := shamir.Split(recoveryKey, cfg.SecretShares, cfg.SecretThreshold)
+		if err != nil {
+			c.barrier.Seal()
+			return nil, fmt.Errorf("core: split recovery key: %w", err)
+		}
+		hash := sha256.Sum256(recoveryKey)
+		if err := c.writeSealConfig(ctx, sealConfig{
+			Type:         SealTypeAuto,
+			Shares:       cfg.SecretShares,
+			Threshold:    cfg.SecretThreshold,
+			RecoveryHash: hash[:],
+		}); err != nil {
 			return nil, err
 		}
-		return &InitResult{RootToken: root.ID}, nil
+		return &InitResult{RootToken: root.ID, RecoveryKeys: recoveryShares}, nil
 	}
 
 	// Shamir mode: re-seal, split the master key, and return the shares.
@@ -349,8 +389,10 @@ func (c *Core) GenerateRootInit(ctx context.Context) (*RootGenStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Type != SealTypeShamir {
-		return nil, ErrRootGenNotShamir
+	// Shamir vaults verify against the master key; auto-unseal vaults verify
+	// against the recovery keys generated at init.
+	if cfg.Type == SealTypeAuto && len(cfg.RecoveryHash) == 0 {
+		return nil, ErrRootGenNoRecovery
 	}
 	if c.barrier.Sealed() {
 		return nil, ErrRootGenSealed
@@ -393,17 +435,25 @@ func (c *Core) GenerateRootUpdate(ctx context.Context, nonce string, share []byt
 		return &RootGenStatus{Started: true, Nonce: nonce, Progress: len(c.rootAttempt.progress), Required: cfg.Threshold}, nil
 	}
 
-	masterKey, err := shamir.Combine(c.rootAttempt.progress)
+	combined, err := shamir.Combine(c.rootAttempt.progress)
 	if err != nil {
 		c.rootAttempt = nil
 		return nil, fmt.Errorf("core: combine shares: %w", err)
 	}
-	defer zero(masterKey)
+	defer zero(combined)
 
-	ok, err := c.barrier.VerifyMasterKey(ctx, masterKey)
-	if err != nil {
-		c.rootAttempt = nil
-		return nil, err
+	// Shamir: the combined value is the master key, verified against the barrier.
+	// Auto-unseal: it is the recovery key, verified against its stored hash.
+	var ok bool
+	if cfg.Type == SealTypeAuto {
+		got := sha256.Sum256(combined)
+		ok = subtle.ConstantTimeCompare(got[:], cfg.RecoveryHash) == 1
+	} else {
+		ok, err = c.barrier.VerifyMasterKey(ctx, combined)
+		if err != nil {
+			c.rootAttempt = nil
+			return nil, err
+		}
 	}
 	if !ok {
 		c.rootAttempt = nil
