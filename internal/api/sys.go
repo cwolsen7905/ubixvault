@@ -79,7 +79,6 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		metrics:    metrics.New(),
 		startTime:  time.Now().UTC(),
 	}
-	h.registerMetrics()
 	mux := http.NewServeMux()
 
 	// Embedded read-only web console at /ui/, with / redirecting to it.
@@ -165,6 +164,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	for _, opt := range opts {
 		opt(h)
 	}
+	// Register metrics after options so gauges like build_info capture the
+	// version set by WithVersion.
+	h.registerMetrics()
 	return h
 }
 

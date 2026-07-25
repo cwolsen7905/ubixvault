@@ -4,7 +4,21 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
+
+func TestMetricsBuildInfoVersion(t *testing.T) {
+	// build_info must report the version set via WithVersion (regression: the
+	// gauge used to be registered before options were applied, so it read "").
+	h := NewHandler(core.New(storage.NewMemoryBackend()), WithVersion("9.9.9-test"))
+	do(t, h, "GET", "/v1/sys/health", "")
+	body := do(t, h, "GET", "/v1/sys/metrics", "").Body.String()
+	if !strings.Contains(body, `ubixvault_build_info{version="9.9.9-test"} 1`) {
+		t.Fatalf("build_info did not reflect the version:\n%s", body)
+	}
+}
 
 func TestMetricsEndpoint(t *testing.T) {
 	h := newTestHandler()
