@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -13,14 +14,22 @@ import (
 // refused (500) and never processed, so nothing proceeds unaudited.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Wrap once so both metrics and audit see the final status code; count every
-	// request toward metrics regardless of the audit decision below.
+	// request toward metrics regardless of the decisions below.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	defer func() { h.metrics.ObserveRequest(rec.status) }()
 
-	// The health and metrics endpoints are polled frequently by probes/scrapers,
-	// and the root is a static placeholder page; none carries security-relevant
-	// access, so they are not audited.
-	if h.audit == nil || !auditablePath(r.URL.Path) {
+	// Rate limiting: throttle authenticated/lifecycle endpoints (health, metrics,
+	// and the console are exempt so probes/scrapers/browsers aren't blocked).
+	if h.limiter != nil && !publicEndpoint(r.URL.Path) {
+		if !h.limiter.Allow(h.clientKey(r)) {
+			rec.Header().Set("Retry-After", "1")
+			writeError(rec, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+	}
+
+	// Public endpoints (health, metrics, console) are not audited.
+	if h.audit == nil || publicEndpoint(r.URL.Path) {
 		h.mux.ServeHTTP(rec, r)
 		return
 	}
@@ -47,19 +56,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = h.audit.LogResponse(r.Context(), &resp)
 }
 
-// auditablePath reports whether a path should be audited. Unauthenticated,
-// high-frequency, non-sensitive endpoints — and the static console assets — are
-// excluded. (Reads the console makes against /v1/* are audited normally.)
-func auditablePath(path string) bool {
+// publicEndpoint reports whether a path is an unauthenticated, non-sensitive
+// endpoint — the health/metrics endpoints and the static console assets. These
+// are exempt from both auditing and rate limiting. (The /v1/* calls the console
+// makes on the operator's behalf are audited and rate-limited normally.)
+func publicEndpoint(path string) bool {
 	if strings.HasPrefix(path, "/ui/") {
-		return false
+		return true
 	}
 	switch path {
 	case "/", "/ui", "/v1/sys/health", "/v1/sys/metrics":
-		return false
-	default:
 		return true
+	default:
+		return false
 	}
+}
+
+// clientKey identifies the caller for rate limiting: the direct peer IP, or the
+// leftmost X-Forwarded-For entry when trustForwarded is set (behind a proxy).
+func (h *Handler) clientKey(r *http.Request) string {
+	if h.trustForwarded {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.IndexByte(xff, ','); i >= 0 {
+				return strings.TrimSpace(xff[:i])
+			}
+			return strings.TrimSpace(xff)
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 // operationForMethod maps an HTTP method to an audit operation name.

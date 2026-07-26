@@ -24,6 +24,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/client"
 	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
@@ -83,6 +84,10 @@ func runServer(args []string) error {
 	autoUnsealKey := fs.String("auto-unseal-key", os.Getenv("UBIXVAULT_AUTO_UNSEAL_KEY"),
 		"hex-encoded 32-byte key-encryption key; enables auto-unseal (or set $UBIXVAULT_AUTO_UNSEAL_KEY)")
 	devNoTLS := fs.Bool("dev-no-tls", false, "allow serving plaintext HTTP on a non-loopback address (INSECURE)")
+	rateLimit := fs.Float64("rate-limit", 0, "per-client API requests/second (0 disables rate limiting)")
+	rateBurst := fs.Float64("rate-limit-burst", 0, "rate-limit burst size; defaults to -rate-limit when unset")
+	rateTrustFwd := fs.Bool("rate-limit-trust-forwarded", false,
+		"key rate limits by X-Forwarded-For (enable only behind a trusted proxy)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,6 +138,20 @@ func runServer(args []string) error {
 		log.Printf("audit logging to %s", *auditLog)
 	}
 
+	var limiter *ratelimit.Limiter
+	if *rateLimit > 0 {
+		burst := *rateBurst
+		if burst <= 0 {
+			burst = *rateLimit
+		}
+		limiter = ratelimit.New(*rateLimit, burst)
+		opts = append(opts, api.WithRateLimit(limiter))
+		if *rateTrustFwd {
+			opts = append(opts, api.WithTrustForwardedFor())
+		}
+		log.Printf("rate limiting: %.4g req/s per client (burst %.4g)", *rateLimit, burst)
+	}
+
 	handler := api.NewHandler(c, opts...)
 
 	srv := &http.Server{
@@ -146,6 +165,22 @@ func runServer(args []string) error {
 
 	// Revoke expired dynamic-database leases in the background.
 	go handler.RunLeaseSweeper(ctx, time.Minute)
+
+	// Periodically drop idle rate-limit buckets so memory stays bounded.
+	if limiter != nil {
+		go func() {
+			t := time.NewTicker(5 * time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					limiter.Sweep(10 * time.Minute)
+				}
+			}
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

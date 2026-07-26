@@ -20,6 +20,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/metrics"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
+	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/transit"
 )
@@ -37,18 +38,20 @@ const (
 // Handler serves the HTTP API over a Core and its mounted engines. It implements
 // [http.Handler].
 type Handler struct {
-	core       *core.Core
-	kv         *kv.Engine
-	transit    *transit.Engine
-	database   *database.Engine
-	kubernetes *kubeauth.Method
-	tokens     *token.Store
-	policies   *policy.Store
-	audit      *audit.Broker
-	metrics    *metrics.Metrics
-	version    string
-	startTime  time.Time
-	mux        *http.ServeMux
+	core           *core.Core
+	kv             *kv.Engine
+	transit        *transit.Engine
+	database       *database.Engine
+	kubernetes     *kubeauth.Method
+	tokens         *token.Store
+	policies       *policy.Store
+	audit          *audit.Broker
+	metrics        *metrics.Metrics
+	limiter        *ratelimit.Limiter // nil disables rate limiting
+	trustForwarded bool               // key rate limits by X-Forwarded-For
+	version        string
+	startTime      time.Time
+	mux            *http.ServeMux
 }
 
 // Option configures a Handler.
@@ -62,6 +65,19 @@ func WithAudit(b *audit.Broker) Option {
 // WithVersion sets the build version reported by the health endpoint.
 func WithVersion(v string) Option {
 	return func(h *Handler) { h.version = v }
+}
+
+// WithRateLimit throttles API requests through l, keyed by client. Health,
+// metrics, and the console are exempt.
+func WithRateLimit(l *ratelimit.Limiter) Option {
+	return func(h *Handler) { h.limiter = l }
+}
+
+// WithTrustForwardedFor keys rate limits by the leftmost X-Forwarded-For entry
+// instead of the direct peer. Enable only behind a trusted proxy, since clients
+// can otherwise spoof the header to evade limits.
+func WithTrustForwardedFor() Option {
+	return func(h *Handler) { h.trustForwarded = true }
 }
 
 // NewHandler returns a Handler backed by c, with the KV v2, transit, and dynamic
