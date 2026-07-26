@@ -40,7 +40,7 @@ function friendlyError(status, body) {
     case 0: return "Can't reach the vault.";
     case 401:
     case 403: return "Not authorized — check your token." + detail;
-    case 404: return "No secret at that path." + detail;
+    case 404: return "Not found." + detail;
     case 501: return "Vault is not initialized.";
     case 503: return "Vault is sealed." + detail;
     default: return "Request failed (" + status + ")" + detail;
@@ -94,6 +94,8 @@ async function refreshStatus() {
 const KV_DATA = (p) => "/v1/secret/data/" + p;
 const KV_META = (p) => "/v1/secret/metadata/" + p;
 const KV_UNDELETE = (p) => "/v1/secret/undelete/" + p;
+const KV_DELETE_V = (p) => "/v1/secret/delete/" + p;
+const KV_DESTROY = (p) => "/v1/secret/destroy/" + p;
 
 function cleanPath(raw) {
   let p = (raw || "").trim().replace(/^\/+/, "");
@@ -126,7 +128,16 @@ async function kvRead(path) {
   const p = cleanPath(path);
   if (!p) { outMsg("error", "Enter a secret path."); return; }
   const r = await api("GET", KV_DATA(p));
-  if (r.ok) { renderSecret(p, r.body); return; }
+  if (r.ok) {
+    const data = renderSecret(p, r.body);
+    const actions = document.createElement("div");
+    actions.className = "kv-actions";
+    actions.appendChild(actionButton("Edit", "", () => openEditor(p, data)));
+    actions.appendChild(actionButton("Delete (soft)", "btn-danger", () => kvDelete(p)));
+    actions.appendChild(actionButton("History", "", () => kvHistory(p)));
+    $("kv-out").appendChild(actions);
+    return;
+  }
   if (r.status === 404) {
     const meta = await api("GET", KV_META(p));
     if (meta.ok) { renderDeleted(p, meta.body); return; }
@@ -165,12 +176,7 @@ function renderSecret(p, body) {
     line.textContent = "version " + meta.version + (meta.created_time ? " · created " + meta.created_time : "");
     out.appendChild(line);
   }
-
-  const actions = document.createElement("div");
-  actions.className = "kv-actions";
-  actions.appendChild(actionButton("Edit", "", () => openEditor(p, data)));
-  actions.appendChild(actionButton("Delete (soft)", "btn-danger", () => kvDelete(p)));
-  out.appendChild(actions);
+  return data;
 }
 
 function renderDeleted(p, body) {
@@ -230,6 +236,79 @@ async function kvList(path) {
     ul.appendChild(li);
   }
   out.appendChild(ul);
+}
+
+// ---- version history ----
+// confirmThen swaps btn for an inline "question Yes/No", running onYes on Yes.
+function confirmThen(btn, question, onYes) {
+  const holder = document.createElement("span");
+  holder.className = "confirm";
+  const q = document.createElement("span"); q.className = "q"; q.textContent = question + " ";
+  const yes = actionButton("Yes", "btn-danger", onYes);
+  const no = actionButton("No", "", () => holder.replaceWith(btn));
+  holder.append(q, yes, no);
+  btn.replaceWith(holder);
+}
+
+async function kvHistory(path) {
+  const p = cleanPath(path);
+  if (!p) { outMsg("error", "Enter a secret path."); return; }
+  const r = await api("GET", KV_META(p));
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  renderHistory(p, r.body);
+}
+
+function renderHistory(p, body) {
+  const md = (body && body.data) || {};
+  const versions = md.versions || {};
+  const nums = Object.keys(versions).map(Number).sort((a, b) => b - a); // newest first
+  const out = $("kv-out");
+  out.replaceChildren();
+
+  const head = document.createElement("div");
+  head.className = "kv-metaline";
+  head.textContent = "“" + p + "” · current v" + md.current_version + " · " + nums.length + " version(s)";
+  out.appendChild(head);
+
+  const table = document.createElement("table");
+  table.className = "kv-table history";
+  for (const n of nums) {
+    const v = versions[String(n)] || {};
+    const state = v.destroyed ? "destroyed" : v.deleted ? "deleted" : "active";
+    const tr = document.createElement("tr");
+    const th = document.createElement("th"); th.textContent = "v" + n;
+    const td = document.createElement("td");
+    const meta = document.createElement("div"); meta.className = "vmeta";
+    meta.textContent = state + (v.created_time ? " · " + v.created_time : "");
+    const acts = document.createElement("div"); acts.className = "kv-actions";
+    if (!v.destroyed) acts.appendChild(actionButton("Read", "", () => kvReadVersion(p, n)));
+    if (!v.destroyed && !v.deleted) acts.appendChild(actionButton("Delete", "btn-danger", () => kvVersionOp(KV_DELETE_V(p), p, n)));
+    if (v.deleted && !v.destroyed) acts.appendChild(actionButton("Undelete", "", () => kvVersionOp(KV_UNDELETE(p), p, n)));
+    if (!v.destroyed) {
+      const d = actionButton("Destroy", "btn-danger", null);
+      d.addEventListener("click", () => confirmThen(d, "Destroy v" + n + " permanently?", () => kvVersionOp(KV_DESTROY(p), p, n)));
+      acts.appendChild(d);
+    }
+    td.append(meta, acts);
+    tr.append(th, td);
+    table.appendChild(tr);
+  }
+  out.appendChild(table);
+}
+
+async function kvVersionOp(url, p, n) {
+  const r = await api("POST", url, { versions: [n] });
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  kvHistory(p); // refresh the history view
+}
+
+async function kvReadVersion(p, n) {
+  const r = await api("GET", KV_DATA(p) + "?version=" + n);
+  if (!r.ok) { outMsg("error", friendlyError(r.status, r.body)); return; }
+  renderSecret(p, r.body);
+  const wrap = document.createElement("div"); wrap.className = "kv-actions";
+  wrap.appendChild(actionButton("← Back to history", "", () => kvHistory(p)));
+  $("kv-out").appendChild(wrap);
 }
 
 // ---- editor (write) ----
@@ -294,6 +373,108 @@ async function saveSecret() {
   kvRead(p); // show the new version
 }
 
+// ---- policies ----
+const POL = (n) => "/v1/sys/policies/acl/" + n;
+const POL_LIST = "/v1/sys/policies/acl";
+
+// apiRaw sends a raw (non-JSON-wrapped) body — policy documents are posted verbatim.
+async function apiRaw(method, path, text) {
+  const headers = {};
+  const tok = getToken();
+  if (tok) headers["X-Vault-Token"] = tok;
+  const res = await fetch(path, { method, headers, body: text });
+  let payload = null;
+  try { payload = await res.json(); } catch (_) { /* 204 / empty */ }
+  return { status: res.status, ok: res.ok, body: payload };
+}
+
+function panelMsg(id, cls, text) {
+  const out = $(id);
+  out.replaceChildren();
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  out.appendChild(d);
+}
+
+async function polList() {
+  const r = await api("LIST", POL_LIST);
+  if (!r.ok) { panelMsg("pol-out", "error", friendlyError(r.status, r.body)); return; }
+  const keys = (r.body && r.body.data && r.body.data.keys) || [];
+  if (!keys.length) { panelMsg("pol-out", "ok", "No policies defined."); return; }
+  const out = $("pol-out"); out.replaceChildren();
+  const ul = document.createElement("ul"); ul.className = "kv-keys";
+  for (const k of keys) {
+    const li = document.createElement("li");
+    li.appendChild(actionButton(k, "linklike", () => { $("pol-name").value = k; polRead(k); }));
+    ul.appendChild(li);
+  }
+  out.appendChild(ul);
+}
+
+async function polRead(name) {
+  const n = (name || "").trim();
+  if (!n) { panelMsg("pol-out", "error", "Enter a policy name."); return; }
+  const r = await api("GET", POL(n));
+  if (!r.ok) { panelMsg("pol-out", "error", friendlyError(r.status, r.body)); return; }
+  const doc = r.body && r.body.data && r.body.data.policy;
+  const text = JSON.stringify(doc, null, 2);
+  const out = $("pol-out"); out.replaceChildren();
+  const pre = document.createElement("pre"); pre.className = "policy-doc"; pre.textContent = text;
+  out.appendChild(pre);
+  const acts = document.createElement("div"); acts.className = "kv-actions";
+  acts.appendChild(actionButton("Edit", "", () => openPolEditor(n, text)));
+  out.appendChild(acts);
+}
+
+function openPolEditor(name, text) {
+  const n = (name || $("pol-name").value || "").trim();
+  if (!n) { panelMsg("pol-out", "error", "Enter a policy name first."); $("pol-name").focus(); return; }
+  $("pol-editor-name").textContent = n;
+  $("pol-editor").dataset.name = n;
+  $("pol-body").value = text || "";
+  $("pol-editor").hidden = false;
+}
+
+function closePolEditor() {
+  const e = $("pol-editor"); e.hidden = true; e.dataset.name = ""; $("pol-body").value = "";
+}
+
+async function polSave() {
+  const n = $("pol-editor").dataset.name;
+  const body = $("pol-body").value.trim();
+  if (!body) { panelMsg("pol-out", "error", "Policy document is empty."); return; }
+  const r = await apiRaw("PUT", POL(n), body);
+  if (!r.ok) { panelMsg("pol-out", "error", friendlyError(r.status, r.body)); return; }
+  closePolEditor(); $("pol-name").value = n; polRead(n);
+}
+
+async function polDelete(name) {
+  const n = (name || "").trim();
+  if (!n) { panelMsg("pol-out", "error", "Enter a policy name."); return; }
+  const r = await api("DELETE", POL(n));
+  if (!r.ok) { panelMsg("pol-out", "error", friendlyError(r.status, r.body)); return; }
+  panelMsg("pol-out", "ok", "Deleted policy “" + n + "”.");
+}
+
+// ---- create token ----
+async function tokCreate() {
+  const policies = $("tok-policies").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const ttl = $("tok-ttl").value.trim();
+  const body = { policies };
+  if (ttl) body.ttl = ttl;
+  const r = await api("POST", "/v1/auth/token/create", body);
+  if (!r.ok) { panelMsg("tok-out", "error", friendlyError(r.status, r.body)); return; }
+  const auth = (r.body && r.body.auth) || {};
+  const out = $("tok-out"); out.replaceChildren();
+  const reveal = document.createElement("div"); reveal.className = "token-reveal"; reveal.textContent = auth.client_token || "";
+  const meta = document.createElement("div"); meta.className = "kv-metaline";
+  meta.textContent = "policies: " + ((auth.policies || []).join(", ") || "(none)") +
+    (auth.lease_duration ? " · expires in ~" + auth.lease_duration + "s" : " · no expiry");
+  const note = document.createElement("div"); note.className = "kv-metaline"; note.textContent = "Copy it now — it is shown once.";
+  out.append(reveal, meta, note);
+}
+
 // ---- wire up ----
 document.addEventListener("DOMContentLoaded", () => {
   reflectToken();
@@ -309,9 +490,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("kv-form").addEventListener("submit", (e) => { e.preventDefault(); kvRead($("kv-path").value); });
   $("kv-list").addEventListener("click", () => kvList($("kv-path").value));
+  $("kv-history").addEventListener("click", () => kvHistory($("kv-path").value));
   $("kv-new").addEventListener("click", () => openEditor($("kv-path").value, null));
 
   $("editor-add").addEventListener("click", () => addFieldRow());
   $("editor-cancel").addEventListener("click", closeEditor);
   $("kv-editor").addEventListener("submit", (e) => { e.preventDefault(); saveSecret(); });
+
+  // Policies
+  $("pol-form").addEventListener("submit", (e) => { e.preventDefault(); polRead($("pol-name").value); });
+  $("pol-list").addEventListener("click", polList);
+  $("pol-new").addEventListener("click", () => openPolEditor($("pol-name").value, ""));
+  $("pol-delete").addEventListener("click", () => polDelete($("pol-name").value));
+  $("pol-cancel").addEventListener("click", closePolEditor);
+  $("pol-editor").addEventListener("submit", (e) => { e.preventDefault(); polSave(); });
+
+  // Tokens
+  $("tok-form").addEventListener("submit", (e) => { e.preventDefault(); tokCreate(); });
 });
