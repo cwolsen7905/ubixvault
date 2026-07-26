@@ -45,12 +45,28 @@
   </section>
 
   <section class="panel">
-    <h2>KV&nbsp;v2 secrets <span class="ro">read-only</span></h2>
+    <h2>KV&nbsp;v2 secrets</h2>
     <form class="row" id="kv-form">
       <input type="text" id="kv-path" placeholder="path, e.g. app/config" spellcheck="false" aria-label="secret path">
       <button type="submit">Read</button>
       <button type="button" id="kv-list" class="ghost">List</button>
+      <button type="button" id="kv-new" class="ghost">New / edit</button>
     </form>
+
+    <!-- Editor (hidden until New/edit) -->
+    <form class="editor" id="kv-editor" hidden>
+      <div class="editor-head">
+        <span id="editor-title">New secret</span>
+        <span class="editor-path" id="editor-path"></span>
+      </div>
+      <div id="editor-fields"></div>
+      <div class="row editor-actions">
+        <button type="button" id="editor-add" class="ghost">Add field</button>
+        <button type="submit" id="editor-save">Save version</button>
+        <button type="button" id="editor-cancel" class="ghost">Cancel</button>
+      </div>
+    </form>
+
     <div id="kv-out" class="out" aria-live="polite"></div>
   </section>
 </main>
