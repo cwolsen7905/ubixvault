@@ -50,6 +50,7 @@
       <input type="text" id="kv-path" placeholder="path, e.g. app/config" spellcheck="false" aria-label="secret path">
       <button type="submit">Read</button>
       <button type="button" id="kv-list" class="ghost">List</button>
+      <button type="button" id="kv-history" class="ghost">History</button>
       <button type="button" id="kv-new" class="ghost">New / edit</button>
     </form>
 
@@ -68,6 +69,38 @@
     </form>
 
     <div id="kv-out" class="out" aria-live="polite"></div>
+  </section>
+
+  <section class="panel">
+    <h2>ACL policies</h2>
+    <form class="row" id="pol-form">
+      <input type="text" id="pol-name" placeholder="policy name" spellcheck="false" aria-label="policy name">
+      <button type="submit">Read</button>
+      <button type="button" id="pol-list" class="ghost">List</button>
+      <button type="button" id="pol-new" class="ghost">New / edit</button>
+      <button type="button" id="pol-delete" class="ghost btn-danger">Delete</button>
+    </form>
+    <form class="editor" id="pol-editor" hidden>
+      <div class="editor-head"><span>Policy document</span><span class="editor-path" id="pol-editor-name"></span></div>
+      <textarea id="pol-body" rows="7" spellcheck="false"
+        placeholder='{"path":{"secret/data/app/*":{"capabilities":["read","list"]}}}'></textarea>
+      <div class="row editor-actions">
+        <button type="submit">Save policy</button>
+        <button type="button" id="pol-cancel" class="ghost">Cancel</button>
+      </div>
+    </form>
+    <div id="pol-out" class="out" aria-live="polite"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Create token</h2>
+    <p class="hint">Mint a child token scoped to one or more policies. The token is shown once.</p>
+    <form class="row" id="tok-form">
+      <input type="text" id="tok-policies" placeholder="policies (comma-separated)" spellcheck="false" aria-label="policies">
+      <input type="text" id="tok-ttl" class="ttl" placeholder="ttl, e.g. 1h (optional)" spellcheck="false" aria-label="ttl">
+      <button type="submit">Create</button>
+    </form>
+    <div id="tok-out" class="out" aria-live="polite"></div>
   </section>
 </main>
 

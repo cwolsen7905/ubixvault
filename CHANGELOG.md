@@ -8,11 +8,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
-- **Web console — write operations** — the `/ui/` console can now create and edit
-  KV v2 secrets (key/value editor, saves a new version), soft-delete the latest
-  version, and undelete it. Still token-in-header, strict-CSP, and every write
-  goes through the audited `/v1` API. (Destroy, version history, and policy/token
-  management remain for a later phase.)
+- **Web console — write operations & management** — the `/ui/` console now goes
+  well beyond read-only:
+  - **KV v2:** create/edit secrets (key/value editor → new version), version
+    **history**, read a specific version, and per-version soft-delete / undelete
+    / **destroy** (with an inline confirm).
+  - **ACL policies:** list, read, create/edit (JSON or HCL), and delete.
+  - **Tokens:** mint a child token scoped to policies with an optional TTL.
+
+  Still token-in-header (no cookies/CSRF), strict-CSP, secret values rendered via
+  `textContent`, and every write is an audited `/v1` call requiring the token's
+  capabilities.
 
 ## [0.2.0-beta.2] — 2026-07-25
 
