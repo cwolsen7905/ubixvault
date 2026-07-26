@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.3] — 2026-07-25
+
+Third beta: the web console gains full read/write management.
 
 ### Added
 
@@ -19,6 +21,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   Still token-in-header (no cookies/CSRF), strict-CSP, secret values rendered via
   `textContent`, and every write is an audited `/v1` call requiring the token's
   capabilities.
+
+[0.2.0-beta.3]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.3
 
 ## [0.2.0-beta.2] — 2026-07-25
 
