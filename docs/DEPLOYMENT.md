@@ -215,3 +215,7 @@ let auto-unseal run). Take a snapshot first.
   token for routine work.
 - Enable **audit logging** (`-audit-log`) and monitor it; note that a full or
   unavailable audit sink is fail-closed and will stop the vault from serving.
+- Consider **rate limiting** (`-rate-limit <req/s>`) to blunt brute-force against
+  unseal shares and tokens. Behind a proxy, add `-rate-limit-trust-forwarded`
+  (chart: `rateLimit.trustForwarded`) so limits key on the real client rather
+  than the proxy IP. Health, metrics, and the console are exempt.

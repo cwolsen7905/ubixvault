@@ -65,6 +65,15 @@ spec:
             - -audit-log
             - {{ .Values.audit.path | quote }}
             {{- end }}
+            {{- if .Values.rateLimit.enabled }}
+            - -rate-limit
+            - {{ .Values.rateLimit.perSecond | quote }}
+            - -rate-limit-burst
+            - {{ .Values.rateLimit.burst | quote }}
+            {{- if .Values.rateLimit.trustForwarded }}
+            - -rate-limit-trust-forwarded
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

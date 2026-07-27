@@ -4,6 +4,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Rate limiting** — optional per-client token-bucket throttling of the API
+  (`-rate-limit`, `-rate-limit-burst`, `-rate-limit-trust-forwarded`), in-house
+  with no new dependency. Keyed by client IP (or `X-Forwarded-For` behind a
+  trusted proxy); health, metrics, and the console are exempt; over-limit
+  requests get `429` with `Retry-After`. Exposed in the Helm chart via
+  `rateLimit.*`.
+
 ## [0.2.0-beta.3] — 2026-07-25
 
 Third beta: the web console gains full read/write management.

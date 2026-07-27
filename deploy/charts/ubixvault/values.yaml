@@ -117,6 +117,17 @@ audit:
     # storageClass: ""
     mountPath: /var/log/ubixvault
 
+# --- Rate limiting ---------------------------------------------------------
+# Per-client API request throttling (in-house token bucket). Health, metrics,
+# and the console are exempt. Off by default. Behind an ingress, keep
+# trustForwarded on so limits key on the real client (X-Forwarded-For), not the
+# ingress IP (which would throttle all clients together).
+rateLimit:
+  enabled: false
+  perSecond: 20
+  burst: 40
+  trustForwarded: true
+
 # --- Kubernetes auth method ------------------------------------------------
 # The vault validates pod ServiceAccount tokens via the TokenReview API, which
 # requires the vault's own ServiceAccount to be bound to system:auth-delegator.
