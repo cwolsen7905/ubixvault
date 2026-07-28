@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cwolsen7905/ubixvault/internal/approle"
 	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/database"
@@ -43,6 +44,7 @@ type Handler struct {
 	transit        *transit.Engine
 	database       *database.Engine
 	kubernetes     *kubeauth.Method
+	approle        *approle.Method
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
@@ -90,6 +92,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		transit:    transit.New(c.Barrier(), transitMountPrefix),
 		database:   database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
+		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
 		metrics:    metrics.New(),
@@ -175,6 +178,17 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/auth/kubernetes/role", h.authenticate(h.k8sListRoles))
 	mux.HandleFunc("DELETE /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sDeleteRole))
 	mux.HandleFunc("POST /v1/auth/kubernetes/login", h.k8sLogin)
+
+	// AppRole auth method. login is unauthenticated (role_id + secret_id are the
+	// credential); role and secret-id management require authentication.
+	mux.HandleFunc("POST /v1/auth/approle/role/{name}", h.authenticate(h.approleWriteRole))
+	mux.HandleFunc("PUT /v1/auth/approle/role/{name}", h.authenticate(h.approleWriteRole))
+	mux.HandleFunc("GET /v1/auth/approle/role/{name}", h.authenticate(h.approleReadRole))
+	mux.HandleFunc("LIST /v1/auth/approle/role", h.authenticate(h.approleListRoles))
+	mux.HandleFunc("DELETE /v1/auth/approle/role/{name}", h.authenticate(h.approleDeleteRole))
+	mux.HandleFunc("GET /v1/auth/approle/role/{name}/role-id", h.authenticate(h.approleReadRoleID))
+	mux.HandleFunc("POST /v1/auth/approle/role/{name}/secret-id", h.authenticate(h.approleGenerateSecretID))
+	mux.HandleFunc("POST /v1/auth/approle/login", h.approleLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
