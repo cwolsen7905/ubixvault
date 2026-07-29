@@ -235,3 +235,8 @@ let auto-unseal run). Take a snapshot first.
   unseal shares and tokens. Behind a proxy, add `-rate-limit-trust-forwarded`
   (chart: `rateLimit.trustForwarded`) so limits key on the real client rather
   than the proxy IP. Health, metrics, and the console are exempt.
+- **Pass secrets by environment, not flags.** The auto-unseal KEK and the
+  transit-seal token accept flags for convenience, but a value on the command
+  line is visible in the process list (`ps`). Prefer the environment variables
+  (`UBIXVAULT_AUTO_UNSEAL_KEY`, `UBIXVAULT_SEAL_TRANSIT_TOKEN`) — which is what
+  the Helm chart uses (sourced from Secrets).

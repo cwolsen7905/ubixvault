@@ -39,7 +39,7 @@ func (h *Handler) policyRead(w http.ResponseWriter, r *http.Request) {
 	}
 	doc, err := p.Document()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	writeData(w, map[string]any{"name": name, "policy": json.RawMessage(doc)})
@@ -87,7 +87,7 @@ func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 		tok, err = h.tokens.Create(r.Context(), req.Policies)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, tokenAuthResponse(tok))
@@ -117,7 +117,7 @@ func (h *Handler) renewSelf(w http.ResponseWriter, r *http.Request) {
 	}
 	renewed, err := h.tokens.Renew(r.Context(), tok.ID, ttl)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, tokenAuthResponse(renewed))
@@ -158,6 +158,6 @@ func writePolicyError(w http.ResponseWriter, err error) {
 	case errors.Is(err, policy.ErrInvalidName):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }

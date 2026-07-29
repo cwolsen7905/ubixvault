@@ -136,6 +136,6 @@ func writeKubeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, kubeauth.ErrNotConfigured), errors.Is(err, kubeauth.ErrInvalidName):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }

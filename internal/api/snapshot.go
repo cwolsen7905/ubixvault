@@ -10,7 +10,7 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	if err := h.core.Snapshot(r.Context(), w); err != nil {
 		// Headers may already be sent; log-and-truncate is the best we can do.
 		// A well-behaved client detects truncation via the missing trailing data.
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 }

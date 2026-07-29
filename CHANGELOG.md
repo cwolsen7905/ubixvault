@@ -6,6 +6,16 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- Internal security-review pass. **Hardened:** `500` responses now return a
+  generic message and log the detail server-side, instead of echoing internal
+  error strings to clients. Documented that seal secrets should be passed by
+  environment variable rather than a CLI flag (visible in `ps`). Verified no ACL
+  bypass via path traversal, no weak randomness, path-bound AEAD with random
+  nonces, constant-time recovery-key checks, hash-indexed tokens, and
+  fail-closed audit.
+
 ### Added
 
 - **Transit auto-unseal seal** — unseal by wrapping the master key via another

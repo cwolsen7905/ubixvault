@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -248,7 +249,7 @@ type errorResponse struct {
 func (h *Handler) sealStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := h.core.Status(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	writeStatus(w, st)
@@ -353,4 +354,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msgs ...string) {
 	writeJSON(w, status, errorResponse{Errors: msgs})
+}
+
+// writeInternal handles an unexpected server-side error: it logs the detail for
+// the operator but returns only a generic message to the client, so internal
+// error strings (storage paths, wrapped chains) are not disclosed.
+func writeInternal(w http.ResponseWriter, err error) {
+	log.Printf("api: internal error: %v", err)
+	writeError(w, http.StatusInternalServerError, "internal error")
 }

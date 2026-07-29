@@ -101,6 +101,6 @@ func writeTransitError(w http.ResponseWriter, err error) {
 		errors.Is(err, transit.ErrInvalidCiphertext):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }
