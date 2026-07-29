@@ -8,6 +8,12 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **AppRole auth method** — machine clients present a stable `role_id` and a
+  `secret_id` (password-equivalent, stored only as a hash) to
+  `POST /v1/auth/approle/login` and receive a token carrying the role's policies.
+  Roles set policies, token TTL, and an optional secret-id TTL; role/secret-id
+  management is authenticated, login is not. Vault-compatible paths under
+  `/v1/auth/approle/*`.
 - **Rate limiting** — optional per-client token-bucket throttling of the API
   (`-rate-limit`, `-rate-limit-burst`, `-rate-limit-trust-forwarded`), in-house
   with no new dependency. Keyed by client IP (or `X-Forwarded-For` behind a
