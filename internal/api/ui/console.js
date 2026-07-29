@@ -475,6 +475,138 @@ async function tokCreate() {
   out.append(reveal, meta, note);
 }
 
+// ---- PKI ----
+const PKI_ROOT = "/v1/pki/root/generate/internal";
+const PKI_CA = "/v1/pki/ca";
+const PKI_ROLES = "/v1/pki/roles";
+const PKI_ROLE = (n) => "/v1/pki/roles/" + n;
+const PKI_ISSUE = (r) => "/v1/pki/issue/" + r;
+
+// pemBlock renders a labeled PEM with a Copy button into out.
+function pemBlock(out, label, pem) {
+  const wrap = document.createElement("div"); wrap.className = "pem";
+  const head = document.createElement("div"); head.className = "pem-head";
+  const name = document.createElement("span"); name.textContent = label;
+  const copy = actionButton("Copy", "ghost", () => { if (navigator.clipboard) navigator.clipboard.writeText(pem); });
+  head.append(name, copy);
+  const pre = document.createElement("pre"); pre.className = "policy-doc"; pre.textContent = pem;
+  wrap.append(head, pre);
+  out.appendChild(wrap);
+}
+
+async function pkiGenerateRoot() {
+  const cn = $("pki-ca-cn").value.trim();
+  if (!cn) { panelMsg("pki-ca-out", "error", "Enter a common name for the root CA."); return; }
+  const r = await api("POST", PKI_ROOT, { common_name: cn, key_type: "ec" });
+  if (!r.ok) { panelMsg("pki-ca-out", "error", friendlyError(r.status, r.body)); return; }
+  const out = $("pki-ca-out"); out.replaceChildren();
+  pemBlock(out, "root CA certificate", (r.body && r.body.data && r.body.data.certificate) || "");
+}
+
+async function pkiViewCA() {
+  const r = await api("GET", PKI_CA);
+  if (!r.ok) { panelMsg("pki-ca-out", "error", friendlyError(r.status, r.body)); return; }
+  const out = $("pki-ca-out"); out.replaceChildren();
+  pemBlock(out, "CA certificate", (r.body && r.body.data && r.body.data.certificate) || "");
+}
+
+async function pkiRoleList() {
+  const r = await api("LIST", PKI_ROLES);
+  if (!r.ok) { panelMsg("pki-role-out", "error", friendlyError(r.status, r.body)); return; }
+  const keys = (r.body && r.body.data && r.body.data.keys) || [];
+  if (!keys.length) { panelMsg("pki-role-out", "ok", "No roles defined."); return; }
+  const out = $("pki-role-out"); out.replaceChildren();
+  const ul = document.createElement("ul"); ul.className = "kv-keys";
+  for (const k of keys) {
+    const li = document.createElement("li");
+    li.appendChild(actionButton(k, "linklike", () => { $("pki-role-name").value = k; pkiRoleRead(k); }));
+    ul.appendChild(li);
+  }
+  out.appendChild(ul);
+}
+
+async function pkiRoleRead(name) {
+  const n = (name || "").trim();
+  if (!n) { panelMsg("pki-role-out", "error", "Enter a role name."); return; }
+  const r = await api("GET", PKI_ROLE(n));
+  if (!r.ok) { panelMsg("pki-role-out", "error", friendlyError(r.status, r.body)); return; }
+  const d = (r.body && r.body.data) || {};
+  const out = $("pki-role-out"); out.replaceChildren();
+  const t = document.createElement("table"); t.className = "kv-table";
+  const rows = [
+    ["allowed_domains", (d.allowed_domains || []).join(", ")],
+    ["allow_subdomains", String(!!d.allow_subdomains)],
+    ["max_ttl", d.max_ttl || "—"],
+    ["key_type", d.key_type || "ec"],
+  ];
+  for (const [k, v] of rows) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th"); th.textContent = k;
+    const td = document.createElement("td"); td.textContent = v;
+    tr.append(th, td); t.appendChild(tr);
+  }
+  out.appendChild(t);
+  const acts = document.createElement("div"); acts.className = "kv-actions";
+  acts.appendChild(actionButton("Edit", "", () => pkiOpenRoleEditor(n, d)));
+  out.appendChild(acts);
+}
+
+function pkiOpenRoleEditor(name, existing) {
+  const n = (name || $("pki-role-name").value || "").trim();
+  if (!n) { panelMsg("pki-role-out", "error", "Enter a role name first."); $("pki-role-name").focus(); return; }
+  const ed = $("pki-role-editor");
+  ed.dataset.name = n;
+  $("pki-role-editor-name").textContent = n;
+  const d = existing || {};
+  $("pki-role-domains").value = (d.allowed_domains || []).join(", ");
+  $("pki-role-subdomains").checked = !!d.allow_subdomains;
+  $("pki-role-ttl").value = d.max_ttl && d.max_ttl !== "0s" ? d.max_ttl : "";
+  $("pki-role-keytype").value = d.key_type === "rsa" ? "rsa" : "ec";
+  ed.hidden = false;
+}
+
+async function pkiRoleSave() {
+  const n = $("pki-role-editor").dataset.name;
+  if (!n) return;
+  const domains = $("pki-role-domains").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const body = {
+    allowed_domains: domains,
+    allow_subdomains: $("pki-role-subdomains").checked,
+    key_type: $("pki-role-keytype").value,
+  };
+  const ttl = $("pki-role-ttl").value.trim();
+  if (ttl) body.max_ttl = ttl;
+  const r = await api("POST", PKI_ROLE(n), body);
+  if (!r.ok) { panelMsg("pki-role-out", "error", friendlyError(r.status, r.body)); return; }
+  $("pki-role-editor").hidden = true;
+  $("pki-role-name").value = n;
+  pkiRoleRead(n);
+}
+
+async function pkiIssue() {
+  const role = $("pki-issue-role").value.trim();
+  const cn = $("pki-issue-cn").value.trim();
+  if (!role || !cn) { panelMsg("pki-issue-out", "error", "Role and common name are required."); return; }
+  const alt = $("pki-issue-alt").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const ttl = $("pki-issue-ttl").value.trim();
+  const body = { common_name: cn };
+  if (alt.length) body.alt_names = alt;
+  if (ttl) body.ttl = ttl;
+  const r = await api("POST", PKI_ISSUE(role), body);
+  if (!r.ok) { panelMsg("pki-issue-out", "error", friendlyError(r.status, r.body)); return; }
+  const d = (r.body && r.body.data) || {};
+  const out = $("pki-issue-out"); out.replaceChildren();
+  const meta = document.createElement("div"); meta.className = "kv-metaline";
+  meta.textContent = "serial " + (d.serial_number || "") + (d.expiration ? " · expires " + d.expiration : "");
+  out.appendChild(meta);
+  pemBlock(out, "certificate", d.certificate || "");
+  pemBlock(out, "private key", d.private_key || "");
+  pemBlock(out, "issuing CA", d.issuing_ca || "");
+  const warn = document.createElement("div"); warn.className = "warn";
+  warn.textContent = "Copy the private key now — it is shown only once.";
+  out.appendChild(warn);
+}
+
 // ---- wire up ----
 document.addEventListener("DOMContentLoaded", () => {
   reflectToken();
@@ -507,4 +639,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Tokens
   $("tok-form").addEventListener("submit", (e) => { e.preventDefault(); tokCreate(); });
+
+  // PKI
+  $("pki-ca-form").addEventListener("submit", (e) => { e.preventDefault(); pkiGenerateRoot(); });
+  $("pki-ca-view").addEventListener("click", pkiViewCA);
+  $("pki-role-form").addEventListener("submit", (e) => { e.preventDefault(); pkiRoleRead($("pki-role-name").value); });
+  $("pki-role-list").addEventListener("click", pkiRoleList);
+  $("pki-role-new").addEventListener("click", () => pkiOpenRoleEditor($("pki-role-name").value, null));
+  $("pki-role-cancel").addEventListener("click", () => { $("pki-role-editor").hidden = true; });
+  $("pki-role-editor").addEventListener("submit", (e) => { e.preventDefault(); pkiRoleSave(); });
+  $("pki-issue-form").addEventListener("submit", (e) => { e.preventDefault(); pkiIssue(); });
 });

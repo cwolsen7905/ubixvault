@@ -4,6 +4,15 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **PKI in the web console** — the `/ui/` console gains a PKI panel: generate or
+  view the root CA, manage roles (allowed domains, subdomains, max TTL, key
+  type), and issue certificates. Issued cert/key/CA render as copy-able PEM
+  blocks, with a "shown once" warning on the private key.
+
 ## [0.2.0-beta.5] — 2026-07-29
 
 Fifth beta: an internal certificate authority (PKI), self-hosted transit
