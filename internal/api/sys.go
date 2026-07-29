@@ -21,6 +21,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/metrics"
+	"github.com/cwolsen7905/ubixvault/internal/pki"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/token"
@@ -44,6 +45,7 @@ type Handler struct {
 	kv             *kv.Engine
 	transit        *transit.Engine
 	database       *database.Engine
+	pki            *pki.Engine
 	kubernetes     *kubeauth.Method
 	approle        *approle.Method
 	tokens         *token.Store
@@ -92,6 +94,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		kv:         kv.New(c.Barrier(), kvMountPrefix),
 		transit:    transit.New(c.Barrier(), transitMountPrefix),
 		database:   database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
+		pki:        pki.New(c.Barrier(), "pki"),
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
 		tokens:     c.Tokens(),
@@ -162,6 +165,16 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/database/roles", h.authenticate(h.dbListRoles))
 	mux.HandleFunc("DELETE /v1/database/roles/{name}", h.authenticate(h.dbDeleteRole))
 	mux.HandleFunc("GET /v1/database/creds/{name}", h.authenticate(h.dbCredentials))
+
+	// PKI secrets engine — internal CA and short-lived certificate issuance.
+	mux.HandleFunc("POST /v1/pki/root/generate/internal", h.authenticate(h.pkiGenerateRoot))
+	mux.HandleFunc("GET /v1/pki/ca", h.authenticate(h.pkiReadCA))
+	mux.HandleFunc("POST /v1/pki/roles/{name}", h.authenticate(h.pkiWriteRole))
+	mux.HandleFunc("PUT /v1/pki/roles/{name}", h.authenticate(h.pkiWriteRole))
+	mux.HandleFunc("GET /v1/pki/roles/{name}", h.authenticate(h.pkiReadRole))
+	mux.HandleFunc("LIST /v1/pki/roles", h.authenticate(h.pkiListRoles))
+	mux.HandleFunc("DELETE /v1/pki/roles/{name}", h.authenticate(h.pkiDeleteRole))
+	mux.HandleFunc("POST /v1/pki/issue/{role}", h.authenticate(h.pkiIssue))
 
 	// Lease management (currently database leases only).
 	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
