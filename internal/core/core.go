@@ -17,8 +17,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -31,6 +29,7 @@ import (
 	"io"
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
+	"github.com/cwolsen7905/ubixvault/internal/seal"
 	"github.com/cwolsen7905/ubixvault/internal/shamir"
 	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -49,9 +48,14 @@ const (
 
 // Seal types recorded in the seal config.
 const (
-	SealTypeShamir = "shamir"
-	SealTypeAuto   = "auto"
+	SealTypeShamir  = "shamir"
+	SealTypeAuto    = "auto"    // auto-unseal with a locally-held KEK
+	SealTypeTransit = "transit" // auto-unseal via a remote Transit engine
 )
+
+// isAutoSeal reports whether a seal type is one of the auto-unseal modes (which
+// share the recovery-key and root-regeneration behaviour), as opposed to Shamir.
+func isAutoSeal(t string) bool { return t == SealTypeAuto || t == SealTypeTransit }
 
 // Errors returned by Core.
 var (
@@ -132,7 +136,7 @@ type Core struct {
 	phys    storage.Backend
 	barrier *barrier.Barrier
 	tokens  *token.Store
-	autoKEK []byte // key-encryption key for auto-unseal; nil means Shamir mode
+	seal    seal.Seal // auto-unseal seal; nil means Shamir mode
 
 	mu          sync.Mutex
 	progress    [][]byte // unseal shares gathered so far (in-memory only)
@@ -142,11 +146,16 @@ type Core struct {
 // Option configures a Core.
 type Option func(*Core)
 
-// WithAutoUnsealKey enables auto-unseal, protecting the master key with the
-// given 32-byte key-encryption key instead of Shamir shares. In production this
-// key comes from a KMS/HSM; here it is supplied directly.
+// WithSeal enables auto-unseal, using s to wrap and unwrap the master key
+// instead of Shamir shares.
+func WithSeal(s seal.Seal) Option {
+	return func(c *Core) { c.seal = s }
+}
+
+// WithAutoUnsealKey enables auto-unseal with a locally-held 32-byte KEK — a
+// convenience for WithSeal(seal.NewStaticKEK(kek)).
 func WithAutoUnsealKey(kek []byte) Option {
-	return func(c *Core) { c.autoKEK = kek }
+	return WithSeal(seal.NewStaticKEK(kek))
 }
 
 // New returns a Core over phys.
@@ -160,7 +169,7 @@ func New(phys storage.Backend, opts ...Option) *Core {
 }
 
 // AutoUnsealEnabled reports whether the core is configured for auto-unseal.
-func (c *Core) AutoUnsealEnabled() bool { return c.autoKEK != nil }
+func (c *Core) AutoUnsealEnabled() bool { return c.seal != nil }
 
 // Barrier returns the underlying barrier, for use by upper layers once unsealed.
 func (c *Core) Barrier() *barrier.Barrier { return c.barrier }
@@ -187,7 +196,7 @@ func (c *Core) Initialized(ctx context.Context) (bool, error) {
 func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, error) {
 	// In auto-unseal mode the shares configure the *recovery* keys; default to
 	// 5-of-3 when unspecified so callers that don't care still get recovery keys.
-	if c.autoKEK != nil && cfg.SecretShares == 0 && cfg.SecretThreshold == 0 {
+	if c.seal != nil && cfg.SecretShares == 0 && cfg.SecretThreshold == 0 {
 		cfg.SecretShares, cfg.SecretThreshold = 5, 3
 	}
 	// Both modes need a valid k-of-n configuration (unseal shares for Shamir,
@@ -230,10 +239,10 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		return nil, fmt.Errorf("core: create root token: %w", err)
 	}
 
-	if c.autoKEK != nil {
-		// Auto-unseal: wrap the master key under the KEK and store it, leaving
+	if c.seal != nil {
+		// Auto-unseal: wrap the master key with the seal and store it, leaving
 		// the barrier unsealed.
-		wrapped, err := wrapKey(c.autoKEK, masterKey)
+		wrapped, err := c.seal.Wrap(ctx, masterKey)
 		if err != nil {
 			c.barrier.Seal()
 			return nil, err
@@ -260,7 +269,7 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		}
 		hash := sha256.Sum256(recoveryKey)
 		if err := c.writeSealConfig(ctx, sealConfig{
-			Type:         SealTypeAuto,
+			Type:         c.seal.Type(),
 			Shares:       cfg.SecretShares,
 			Threshold:    cfg.SecretThreshold,
 			RecoveryHash: hash[:],
@@ -285,7 +294,7 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 // AutoUnseal unseals the barrier using the configured KEK, without operator
 // interaction. It is a no-op if already unsealed.
 func (c *Core) AutoUnseal(ctx context.Context) error {
-	if c.autoKEK == nil {
+	if c.seal == nil {
 		return ErrAutoUnsealNotConfigured
 	}
 
@@ -299,7 +308,7 @@ func (c *Core) AutoUnseal(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Type != SealTypeAuto {
+	if !isAutoSeal(cfg.Type) {
 		return ErrNotAutoUnseal
 	}
 
@@ -310,7 +319,7 @@ func (c *Core) AutoUnseal(ctx context.Context) error {
 	if entry == nil {
 		return fmt.Errorf("core: wrapped master key missing")
 	}
-	masterKey, err := unwrapKey(c.autoKEK, entry.Value)
+	masterKey, err := c.seal.Unwrap(ctx, entry.Value)
 	if err != nil {
 		return err
 	}
@@ -338,7 +347,7 @@ func (c *Core) Unseal(ctx context.Context, share []byte) (*SealStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Type == SealTypeAuto {
+	if isAutoSeal(cfg.Type) {
 		return nil, ErrAutoUnsealShamir
 	}
 
@@ -391,7 +400,7 @@ func (c *Core) GenerateRootInit(ctx context.Context) (*RootGenStatus, error) {
 	}
 	// Shamir vaults verify against the master key; auto-unseal vaults verify
 	// against the recovery keys generated at init.
-	if cfg.Type == SealTypeAuto && len(cfg.RecoveryHash) == 0 {
+	if isAutoSeal(cfg.Type) && len(cfg.RecoveryHash) == 0 {
 		return nil, ErrRootGenNoRecovery
 	}
 	if c.barrier.Sealed() {
@@ -445,7 +454,7 @@ func (c *Core) GenerateRootUpdate(ctx context.Context, nonce string, share []byt
 	// Shamir: the combined value is the master key, verified against the barrier.
 	// Auto-unseal: it is the recovery key, verified against its stored hash.
 	var ok bool
-	if cfg.Type == SealTypeAuto {
+	if isAutoSeal(cfg.Type) {
 		got := sha256.Sum256(combined)
 		ok = subtle.ConstantTimeCompare(got[:], cfg.RecoveryHash) == 1
 	} else {
@@ -590,47 +599,4 @@ func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
-}
-
-// wrapKey encrypts the master key under the auto-unseal KEK (AES-256-GCM). The
-// output is nonce || ciphertext+tag.
-func wrapKey(kek, masterKey []byte) ([]byte, error) {
-	aead, err := newAEAD(kek)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("core: wrap nonce: %w", err)
-	}
-	return aead.Seal(nonce, nonce, masterKey, nil), nil
-}
-
-// unwrapKey reverses wrapKey. A wrong KEK fails the GCM authentication.
-func unwrapKey(kek, wrapped []byte) ([]byte, error) {
-	aead, err := newAEAD(kek)
-	if err != nil {
-		return nil, err
-	}
-	if len(wrapped) < aead.NonceSize() {
-		return nil, fmt.Errorf("core: wrapped master key malformed")
-	}
-	nonce, ct := wrapped[:aead.NonceSize()], wrapped[aead.NonceSize():]
-	master, err := aead.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return nil, fmt.Errorf("core: auto-unseal key incorrect: %w", err)
-	}
-	return master, nil
-}
-
-// newAEAD builds an AES-256-GCM AEAD from a 32-byte key.
-func newAEAD(key []byte) (cipher.AEAD, error) {
-	if len(key) != masterKeySize {
-		return nil, fmt.Errorf("core: auto-unseal key must be %d bytes", masterKeySize)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("core: cipher: %w", err)
-	}
-	return cipher.NewGCM(block)
 }

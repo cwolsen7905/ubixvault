@@ -75,6 +75,17 @@ autoUnseal:
   create: false
   key: ""                  # 64 hex chars (32 bytes); only used when create=true
 
+# --- Transit auto-unseal (alternative to autoUnseal above) -----------------
+# Unseal by wrapping the master key via another Vault-compatible Transit engine,
+# so no KEK lives on this host. Mutually exclusive with autoUnseal.
+sealTransit:
+  enabled: false
+  address: ""              # e.g. https://seal-vault.infra:8200
+  key: ""                  # transit key name
+  existingSecret: ""       # Secret holding the transit token
+  secretKey: token
+  tlsSkipVerify: false
+
 # --- TLS -------------------------------------------------------------------
 # Serve HTTPS. Without TLS the server refuses to serve on a non-loopback address
 # unless devNoTLS is set (INSECURE — trusted networks / testing only).

@@ -25,6 +25,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/client"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
+	"github.com/cwolsen7905/ubixvault/internal/seal"
 	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
@@ -84,6 +85,15 @@ func runServer(args []string) error {
 	autoUnsealKey := fs.String("auto-unseal-key", os.Getenv("UBIXVAULT_AUTO_UNSEAL_KEY"),
 		"hex-encoded 32-byte key-encryption key; enables auto-unseal (or set $UBIXVAULT_AUTO_UNSEAL_KEY)")
 	devNoTLS := fs.Bool("dev-no-tls", false, "allow serving plaintext HTTP on a non-loopback address (INSECURE)")
+	sealTransitAddr := fs.String("seal-transit-address", os.Getenv("UBIXVAULT_SEAL_TRANSIT_ADDRESS"),
+		"remote Transit-engine address for transit auto-unseal (or $UBIXVAULT_SEAL_TRANSIT_ADDRESS)")
+	sealTransitToken := fs.String("seal-transit-token", os.Getenv("UBIXVAULT_SEAL_TRANSIT_TOKEN"),
+		"token for the transit seal vault (or $UBIXVAULT_SEAL_TRANSIT_TOKEN)")
+	sealTransitKey := fs.String("seal-transit-key", os.Getenv("UBIXVAULT_SEAL_TRANSIT_KEY"),
+		"transit key name to wrap the master key with (or $UBIXVAULT_SEAL_TRANSIT_KEY)")
+	sealTransitCACert := fs.String("seal-transit-ca-cert", "", "PEM CA bundle to trust for the transit seal vault")
+	sealTransitSkipVerify := fs.Bool("seal-transit-tls-skip-verify", false,
+		"skip TLS verification to the transit seal vault (INSECURE)")
 	rateLimit := fs.Float64("rate-limit", 0, "per-client API requests/second (0 disables rate limiting)")
 	rateBurst := fs.Float64("rate-limit-burst", 0, "rate-limit burst size; defaults to -rate-limit when unset")
 	rateTrustFwd := fs.Bool("rate-limit-trust-forwarded", false,
@@ -105,7 +115,31 @@ func runServer(args []string) error {
 	}
 
 	var coreOpts []core.Option
-	if *autoUnsealKey != "" {
+	switch {
+	case *sealTransitAddr != "":
+		if *autoUnsealKey != "" {
+			return fmt.Errorf("use either -auto-unseal-key or -seal-transit-*, not both")
+		}
+		var caPEM []byte
+		if *sealTransitCACert != "" {
+			b, err := os.ReadFile(*sealTransitCACert)
+			if err != nil {
+				return fmt.Errorf("read seal-transit-ca-cert: %w", err)
+			}
+			caPEM = b
+		}
+		ts, err := seal.NewTransit(seal.TransitConfig{
+			Address:    *sealTransitAddr,
+			Token:      *sealTransitToken,
+			Key:        *sealTransitKey,
+			CACertPEM:  caPEM,
+			SkipVerify: *sealTransitSkipVerify,
+		})
+		if err != nil {
+			return err
+		}
+		coreOpts = append(coreOpts, core.WithSeal(ts))
+	case *autoUnsealKey != "":
 		kek, err := hex.DecodeString(*autoUnsealKey)
 		if err != nil || len(kek) != 32 {
 			return fmt.Errorf("auto-unseal-key must be 64 hex characters (32 bytes)")

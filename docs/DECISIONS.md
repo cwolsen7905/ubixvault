@@ -233,3 +233,29 @@ like `/v1/sys/health`; restrict it at the network layer as usual for `/metrics`.
 no Go runtime/process collectors that `client_golang` provides for free. If those
 are wanted later, adding `client_golang` would be its own ADR; it is Apache-2.0,
 which as a dependency does not affect this project's BSD-3-Clause license.
+
+## D-013 — A seal interface, with a self-hosted Transit auto-unseal seal
+
+**Status:** Accepted · 2026-07-29
+
+**Decision:** abstract auto-unseal behind a small `Seal` interface
+(`internal/seal`) with two implementations — a static-KEK seal (the existing
+`-auto-unseal-key`) and a **Transit** seal that wraps the master key via a remote
+Vault-compatible Transit engine — rather than only supporting a locally-supplied
+KEK. The core stores the opaque wrapped key and calls `Wrap`/`Unwrap`; the seal
+type (`auto`, `transit`) is recorded in the seal config, and both share the
+recovery-key / root-regeneration path.
+
+**Why:** the known-limitations list called out that "the KEK is supplied
+directly." The Transit seal removes that: the wrapping key lives in another vault
+and never reaches this host, which only holds a token authorized to
+encrypt/decrypt with it. It is **self-hosted and dependency-free** — the Transit
+paths are Vault-compatible, so the seal vault can be another uBix Vault or a
+HashiCorp Vault — consistent with the minimal-dependency posture (no cloud-KMS
+SDK). The interface also leaves a clean seam for a future cloud-KMS/HSM seal.
+
+**Trade-off / follow-up:** the Transit seal introduces a runtime dependency on
+the seal vault at startup (unreachable → stays sealed, fail-safe). A pluggable
+cloud-KMS/HSM seal (AWS/GCP/Azure) would be its own implementation behind the
+same interface, added only if wanted, and would be its own ADR (with its
+dependency recorded there).
