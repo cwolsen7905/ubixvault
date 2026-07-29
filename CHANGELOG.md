@@ -4,6 +4,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Transit auto-unseal seal** — unseal by wrapping the master key via another
+  Vault-compatible Transit engine (`-seal-transit-address/-key/-token`), so no
+  KEK lives on this host. Introduces a `Seal` interface (`internal/seal`) with
+  static-KEK and Transit implementations (ADR D-013); recovery keys work in both
+  modes. Chart: `sealTransit.*` (mutually exclusive with `autoUnseal`). No new
+  dependency — the Transit paths are Vault-compatible.
+
 ## [0.2.0-beta.4] — 2026-07-29
 
 Fourth beta: machine authentication and API hardening.

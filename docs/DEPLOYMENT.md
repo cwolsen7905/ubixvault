@@ -55,8 +55,24 @@ ubixvault server -data /var/lib/ubixvault -auto-unseal-key "$UBIXVAULT_AUTO_UNSE
 ```
 
 The KEK protects the entire vault — store it in a secrets manager or KMS, not on
-the same disk as the data. (A pluggable cloud-KMS seal is on the roadmap; today
-the KEK is supplied directly.)
+the same disk as the data.
+
+**Transit auto-unseal.** Instead of holding a KEK locally, unseal by wrapping the
+master key via another Vault-compatible **Transit** engine (uBix Vault or
+HashiCorp Vault). The wrapping key lives in that vault and never reaches this
+host, which only needs a token authorized to encrypt/decrypt with the key:
+
+```sh
+ubixvault server -data /var/lib/ubixvault \
+  -seal-transit-address https://seal-vault:8200 \
+  -seal-transit-key unseal \
+  -seal-transit-token "$UBIXVAULT_SEAL_TRANSIT_TOKEN"   # or the env var
+```
+
+On restart the server calls the seal vault's `transit/decrypt` to recover the
+master key. If the seal vault is unreachable it stays sealed (fail-safe). Like
+KEK auto-unseal, `init` returns recovery keys for root-token regeneration. In the
+chart, set `sealTransit.*` (mutually exclusive with `autoUnseal`).
 
 Auto-unseal `init` also returns **recovery keys** (k-of-n, like Shamir shares).
 The vault unseals itself with the KEK, so you never enter them to unseal — but a

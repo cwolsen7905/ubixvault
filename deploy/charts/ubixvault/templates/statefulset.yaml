@@ -4,7 +4,10 @@
 {{- if and .Values.tls.enabled (not .Values.tls.certManager.enabled) (not .Values.tls.existingSecret) -}}
 {{- fail "tls.enabled is true: set tls.existingSecret (a kubernetes.io/tls Secret) or enable tls.certManager" -}}
 {{- end -}}
-{{- if and .Values.autoUnseal.enabled (not .Values.autoUnseal.existingSecret) (not .Values.autoUnseal.create) -}}
+{{- if and .Values.autoUnseal.enabled .Values.sealTransit.enabled -}}
+{{- fail "set either autoUnseal.enabled or sealTransit.enabled, not both" -}}
+{{- end -}}
+{{- if and .Values.autoUnseal.enabled (not .Values.sealTransit.enabled) (not .Values.autoUnseal.existingSecret) (not .Values.autoUnseal.create) -}}
 {{- fail "autoUnseal.enabled is true: set autoUnseal.existingSecret, or autoUnseal.create with autoUnseal.key" -}}
 {{- end -}}
 {{- $tlsSecret := "" -}}
@@ -74,6 +77,15 @@ spec:
             - -rate-limit-trust-forwarded
             {{- end }}
             {{- end }}
+            {{- if .Values.sealTransit.enabled }}
+            - -seal-transit-address
+            - {{ .Values.sealTransit.address | quote }}
+            - -seal-transit-key
+            - {{ .Values.sealTransit.key | quote }}
+            {{- if .Values.sealTransit.tlsSkipVerify }}
+            - -seal-transit-tls-skip-verify
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -84,6 +96,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "ubixvault.autoUnsealSecretName" . }}
                   key: {{ .Values.autoUnseal.secretKey }}
+            {{- end }}
+            {{- if .Values.sealTransit.enabled }}
+            - name: UBIXVAULT_SEAL_TRANSIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sealTransit.enabled requires sealTransit.existingSecret" .Values.sealTransit.existingSecret }}
+                  key: {{ .Values.sealTransit.secretKey }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
