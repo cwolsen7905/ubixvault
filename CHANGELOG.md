@@ -8,6 +8,12 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **userpass auth method** — human login with a username and password
+  (`POST /v1/auth/userpass/login/{username}`) returning a token with the user's
+  policies. Passwords are stored only as a PBKDF2-HMAC-SHA256 hash (600k
+  iterations, per-user salt) via the Go 1.24 stdlib `crypto/pbkdf2` — no new
+  dependency; login compares in constant time and equalizes timing for unknown
+  users. User management under `/v1/auth/userpass/users/*`.
 - **PKI in the web console** — the `/ui/` console gains a PKI panel: generate or
   view the root CA, manage roles (allowed domains, subdomains, max TTL, key
   type), and issue certificates. Issued cert/key/CA render as copy-able PEM
