@@ -102,6 +102,48 @@
     </form>
     <div id="tok-out" class="out" aria-live="polite"></div>
   </section>
+
+  <section class="panel">
+    <h2>PKI — certificates</h2>
+
+    <h3 class="sub">Certificate authority</h3>
+    <form class="row" id="pki-ca-form">
+      <input type="text" id="pki-ca-cn" placeholder="root CA common name, e.g. uBix Root CA" spellcheck="false">
+      <button type="submit">Generate root</button>
+      <button type="button" id="pki-ca-view" class="ghost">View CA</button>
+    </form>
+    <div id="pki-ca-out" class="out" aria-live="polite"></div>
+
+    <h3 class="sub">Roles</h3>
+    <form class="row" id="pki-role-form">
+      <input type="text" id="pki-role-name" placeholder="role name" spellcheck="false">
+      <button type="submit">Read</button>
+      <button type="button" id="pki-role-list" class="ghost">List</button>
+      <button type="button" id="pki-role-new" class="ghost">New / edit</button>
+    </form>
+    <form class="editor" id="pki-role-editor" hidden>
+      <div class="editor-head"><span>Role</span><span class="editor-path" id="pki-role-editor-name"></span></div>
+      <div class="field"><label for="pki-role-domains">Allowed domains (comma-separated)</label>
+        <input type="text" id="pki-role-domains" placeholder="example.com, internal.test" spellcheck="false"></div>
+      <div class="field"><label><input type="checkbox" id="pki-role-subdomains"> Allow subdomains</label></div>
+      <div class="field"><label for="pki-role-ttl">Max TTL</label>
+        <input type="text" id="pki-role-ttl" placeholder="e.g. 72h" spellcheck="false"></div>
+      <div class="field"><label for="pki-role-keytype">Key type</label>
+        <select id="pki-role-keytype"><option value="ec">ec (P-256)</option><option value="rsa">rsa (2048)</option></select></div>
+      <div class="row editor-actions"><button type="submit">Save role</button><button type="button" id="pki-role-cancel" class="ghost">Cancel</button></div>
+    </form>
+    <div id="pki-role-out" class="out" aria-live="polite"></div>
+
+    <h3 class="sub">Issue a certificate</h3>
+    <form class="row" id="pki-issue-form">
+      <input type="text" id="pki-issue-role" placeholder="role" spellcheck="false">
+      <input type="text" id="pki-issue-cn" placeholder="common name, e.g. app.example.com" spellcheck="false">
+      <input type="text" id="pki-issue-alt" placeholder="alt names (comma-separated, optional)" spellcheck="false">
+      <input type="text" id="pki-issue-ttl" class="ttl" placeholder="ttl (optional)" spellcheck="false">
+      <button type="submit">Issue</button>
+    </form>
+    <div id="pki-issue-out" class="out" aria-live="polite"></div>
+  </section>
 </main>
 
 <footer>
