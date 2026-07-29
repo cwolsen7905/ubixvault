@@ -23,7 +23,7 @@ type healthResponse struct {
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	st, err := h.core.Status(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 

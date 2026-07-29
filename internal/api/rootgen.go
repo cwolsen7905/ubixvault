@@ -85,6 +85,6 @@ func writeRootGenError(w http.ResponseWriter, err error) {
 		errors.Is(err, core.ErrUnsealFailed):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }

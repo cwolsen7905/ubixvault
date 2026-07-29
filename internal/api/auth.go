@@ -40,13 +40,13 @@ func (h *Handler) authenticate(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "permission denied")
 			return
 		case err != nil:
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternal(w, err)
 			return
 		}
 
 		allowed, err := h.authorize(r.Context(), tok, r.Method, apiPath(r))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternal(w, err)
 			return
 		}
 		if !allowed {

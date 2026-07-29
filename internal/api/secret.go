@@ -133,6 +133,6 @@ func writeKVError(w http.ResponseWriter, err error) {
 	case errors.Is(err, kv.ErrInvalidPath):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }

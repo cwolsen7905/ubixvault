@@ -128,6 +128,6 @@ func writeAppRoleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, approle.ErrInvalidName), errors.Is(err, approle.ErrInvalidConfig):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }

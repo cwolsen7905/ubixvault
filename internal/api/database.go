@@ -178,11 +178,11 @@ func (h *Handler) tokenRevokeSelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.database.RevokeByToken(r.Context(), tok.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	if err := h.tokens.Revoke(r.Context(), tok.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -197,6 +197,6 @@ func writeDatabaseError(w http.ResponseWriter, err error) {
 	case errors.Is(err, database.ErrNotConfigured), errors.Is(err, database.ErrInvalidName):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternal(w, err)
 	}
 }
