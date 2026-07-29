@@ -4,7 +4,10 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.5] — 2026-07-29
+
+Fifth beta: an internal certificate authority (PKI), self-hosted transit
+auto-unseal, and security hardening.
 
 ### Security
 
@@ -30,6 +33,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   static-KEK and Transit implementations (ADR D-013); recovery keys work in both
   modes. Chart: `sealTransit.*` (mutually exclusive with `autoUnseal`). No new
   dependency — the Transit paths are Vault-compatible.
+
+[0.2.0-beta.5]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.5
 
 ## [0.2.0-beta.4] — 2026-07-29
 
