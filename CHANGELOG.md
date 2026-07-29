@@ -18,6 +18,12 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **PKI secrets engine** — an internal certificate authority: generate a
+  self-signed root CA (its key never leaves the vault), define roles that
+  constrain issuance (allowed domains, subdomains, max TTL, key type), and issue
+  short-lived leaf certificates. Vault-compatible paths under `/v1/pki/*`
+  (`root/generate/internal`, `roles/{name}`, `issue/{role}`, `ca`). Built on
+  `crypto/x509`; no new dependency. (Intermediate CAs and CRL are future work.)
 - **Transit auto-unseal seal** — unseal by wrapping the master key via another
   Vault-compatible Transit engine (`-seal-transit-address/-key/-token`), so no
   KEK lives on this host. Introduces a `Seal` interface (`internal/seal`) with
