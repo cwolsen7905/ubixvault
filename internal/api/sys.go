@@ -26,6 +26,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/transit"
+	"github.com/cwolsen7905/ubixvault/internal/userpass"
 )
 
 // maxBodyBytes caps request bodies to guard against oversized payloads.
@@ -48,6 +49,7 @@ type Handler struct {
 	pki            *pki.Engine
 	kubernetes     *kubeauth.Method
 	approle        *approle.Method
+	userpass       *userpass.Method
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
@@ -97,6 +99,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		pki:        pki.New(c.Barrier(), "pki"),
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
+		userpass:   userpass.New(c.Barrier(), c.Tokens(), "auth/userpass"),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
 		metrics:    metrics.New(),
@@ -203,6 +206,15 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("GET /v1/auth/approle/role/{name}/role-id", h.authenticate(h.approleReadRoleID))
 	mux.HandleFunc("POST /v1/auth/approle/role/{name}/secret-id", h.authenticate(h.approleGenerateSecretID))
 	mux.HandleFunc("POST /v1/auth/approle/login", h.approleLogin)
+
+	// Userpass auth method. login is unauthenticated (the password is the
+	// credential); user management requires authentication.
+	mux.HandleFunc("POST /v1/auth/userpass/users/{username}", h.authenticate(h.userpassWriteUser))
+	mux.HandleFunc("PUT /v1/auth/userpass/users/{username}", h.authenticate(h.userpassWriteUser))
+	mux.HandleFunc("GET /v1/auth/userpass/users/{username}", h.authenticate(h.userpassReadUser))
+	mux.HandleFunc("LIST /v1/auth/userpass/users", h.authenticate(h.userpassListUsers))
+	mux.HandleFunc("DELETE /v1/auth/userpass/users/{username}", h.authenticate(h.userpassDeleteUser))
+	mux.HandleFunc("POST /v1/auth/userpass/login/{username}", h.userpassLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
