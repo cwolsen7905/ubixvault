@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.7] — 2026-07-30
+
+Seventh beta: JWT/OIDC login, completing the auth-method set.
 
 ### Added
 
@@ -16,6 +18,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   define roles under `/v1/auth/jwt/role/{name}` that bind audiences and claims to
   a policy set and token TTL. Login validates `exp`/`nbf`, the bound issuer,
   audiences, and per-claim bindings before issuing the token.
+
+[0.2.0-beta.7]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.7
 
 ## [0.2.0-beta.6] — 2026-07-30
 
