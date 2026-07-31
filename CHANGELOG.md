@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.6] — 2026-07-30
+
+Sixth beta: human login (userpass) and certificate management from the console.
 
 ### Added
 
@@ -18,6 +20,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   view the root CA, manage roles (allowed domains, subdomains, max TTL, key
   type), and issue certificates. Issued cert/key/CA render as copy-able PEM
   blocks, with a "shown once" warning on the private key.
+
+[0.2.0-beta.6]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.6
 
 ## [0.2.0-beta.5] — 2026-07-29
 
