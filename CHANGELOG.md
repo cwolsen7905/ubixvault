@@ -4,6 +4,19 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **JWT/OIDC auth method** — exchange a signed JWT for a token
+  (`POST /v1/auth/jwt/login`). Signatures are verified with the standard library
+  (RS256/384/512 and ES256/384/512) against static PEM public keys and/or a
+  fetched JWKS — no new dependency. Configure validation under
+  `/v1/auth/jwt/config` (JWKS URL, validation public keys, bound issuer) and
+  define roles under `/v1/auth/jwt/role/{name}` that bind audiences and claims to
+  a policy set and token TTL. Login validates `exp`/`nbf`, the bound issuer,
+  audiences, and per-claim bindings before issuing the token.
+
 ## [0.2.0-beta.6] — 2026-07-30
 
 Sixth beta: human login (userpass) and certificate management from the console.

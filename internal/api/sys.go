@@ -18,6 +18,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
+	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
 	"github.com/cwolsen7905/ubixvault/internal/metrics"
@@ -50,6 +51,7 @@ type Handler struct {
 	kubernetes     *kubeauth.Method
 	approle        *approle.Method
 	userpass       *userpass.Method
+	jwtauth        *jwtauth.Method
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
@@ -100,6 +102,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
 		userpass:   userpass.New(c.Barrier(), c.Tokens(), "auth/userpass"),
+		jwtauth:    jwtauth.New(c.Barrier(), c.Tokens(), "auth/jwt"),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
 		metrics:    metrics.New(),
@@ -215,6 +218,17 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/auth/userpass/users", h.authenticate(h.userpassListUsers))
 	mux.HandleFunc("DELETE /v1/auth/userpass/users/{username}", h.authenticate(h.userpassDeleteUser))
 	mux.HandleFunc("POST /v1/auth/userpass/login/{username}", h.userpassLogin)
+
+	// JWT/OIDC auth: configure signature validation and roles (authenticated),
+	// then exchange a signed JWT for a token (unauthenticated).
+	mux.HandleFunc("POST /v1/auth/jwt/config", h.authenticate(h.jwtConfigure))
+	mux.HandleFunc("PUT /v1/auth/jwt/config", h.authenticate(h.jwtConfigure))
+	mux.HandleFunc("POST /v1/auth/jwt/role/{name}", h.authenticate(h.jwtWriteRole))
+	mux.HandleFunc("PUT /v1/auth/jwt/role/{name}", h.authenticate(h.jwtWriteRole))
+	mux.HandleFunc("GET /v1/auth/jwt/role/{name}", h.authenticate(h.jwtReadRole))
+	mux.HandleFunc("LIST /v1/auth/jwt/role", h.authenticate(h.jwtListRoles))
+	mux.HandleFunc("DELETE /v1/auth/jwt/role/{name}", h.authenticate(h.jwtDeleteRole))
+	mux.HandleFunc("POST /v1/auth/jwt/login", h.jwtLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
