@@ -97,12 +97,64 @@ See [`values.yaml`](values.yaml) for the full list.
 
 ## Backups
 
-Snapshots are encrypted and safe to store at rest:
+Snapshots are encrypted ciphertext and safe to store at rest; a restore still
+requires the unseal shares or the KEK.
+
+### Manual snapshot
 
 ```sh
 kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
   ubixvault operator snapshot save /var/lib/ubixvault/backup.snapshot
 ```
 
-Restoring still requires the unseal shares or the KEK. See the top-level
-[`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md).
+### Scheduled off-node backups (`backup.enabled`)
+
+A CronJob runs `operator snapshot save` against the running vault on a schedule
+and writes the snapshot to a **separate PVC** — put it on a network-backed
+`storageClass` so the backup survives loss of the vault's node. This keeps the
+latest snapshot (timestamped history + object-storage upload are a planned
+follow-up).
+
+It needs a token authorized for `sys/snapshot`. Create a least-privilege policy
+and token, then a Secret:
+
+```sh
+# 1. A policy that allows only taking a snapshot.
+cat > backup.json <<'EOF'
+{"path": {"sys/snapshot": {"capabilities": ["create", "update"]}}}
+EOF
+curl -sf -H "X-Vault-Token: $ROOT" -X PUT \
+  "$VAULT/v1/sys/policies/acl/backup" --data @backup.json
+
+# 2. A token bound to that policy.
+TOKEN=$(curl -sf -H "X-Vault-Token: $ROOT" -X POST \
+  "$VAULT/v1/auth/token/create" -d '{"policies":["backup"]}' \
+  | jq -r .auth.client_token)
+
+# 3. A Secret the CronJob reads.
+kubectl -n ubixvault create secret generic uv-backup-token \
+  --from-literal=token="$TOKEN"
+```
+
+Then enable it:
+
+```sh
+helm upgrade vault ./deploy/charts/ubixvault \
+  --reuse-values \
+  --set backup.enabled=true \
+  --set backup.tokenSecret=uv-backup-token \
+  --set backup.schedule="0 */6 * * *" \
+  --set backup.persistence.storageClass=<network-backed-class>
+```
+
+### Restoring (test this before you need it)
+
+Restore is offline — the server must not be running against the target
+directory. Copy the snapshot out of the backup PVC, then:
+
+```sh
+ubixvault operator snapshot restore -data ./restored /path/to/ubixvault.snapshot
+# start the server on ./restored and unseal as usual
+```
+
+See the top-level [`docs/DEPLOYMENT.md`](../../../docs/DEPLOYMENT.md).

@@ -128,6 +128,42 @@ audit:
     # storageClass: ""
     mountPath: /var/log/ubixvault
 
+# --- Backups ---------------------------------------------------------------
+# Scheduled off-node snapshots of the encrypted store. A CronJob runs
+# `operator snapshot save` against the running vault using a token you supply
+# (least privilege: a policy allowing POST sys/snapshot — see the chart README).
+# Snapshots are ciphertext, so they are safe at rest, but a restore still needs
+# the unseal shares / KEK. Point persistence.storageClass at a network-backed
+# class so the backup survives loss of the vault's node.
+#
+# This keeps the LATEST snapshot (fixed filename). Timestamped history, retention,
+# and upload to object storage are a planned follow-up (they need an uploader
+# image alongside the shell-less distroless vault image).
+backup:
+  enabled: false
+  schedule: "0 */6 * * *"          # every 6 hours (cron syntax, UTC)
+  tokenSecret: ""                  # REQUIRED when enabled: Secret holding a sys/snapshot token
+  tokenSecretKey: token
+  # The vault's in-cluster TLS cert may not cover the Service DNS name; the
+  # backup client stays inside the cluster, so verification is skipped by default.
+  tlsSkipVerify: true
+  mountPath: /backup
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 2
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessModes:
+      - ReadWriteOnce
+    # storageClass: ""             # prefer a network / off-node class
+    existingClaim: ""
+  resources: {}
+  nodeSelector: {}
+  podAnnotations: {}
+  extraEnv: []
+
 # --- Rate limiting ---------------------------------------------------------
 # Per-client API request throttling (in-house token bucket). Health, metrics,
 # and the console are exempt. Off by default. Behind an ingress, keep

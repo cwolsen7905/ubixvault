@@ -16,6 +16,11 @@ All notable changes to uBix Vault are documented here. The format is based on
   barrier keyring re-wrapped under it — the barrier key and all data are
   untouched, so the vault keeps serving throughout. Shamir-unseal vaults only.
   Driveable from the CLI: `ubixvault operator rekey init | update | status | cancel`.
+- **Scheduled backups (Helm chart)** — an opt-in `backup.enabled` CronJob runs
+  `operator snapshot save` against the running vault on a schedule and writes the
+  snapshot to a separate PVC (put it on network-backed storage for off-node
+  durability), using a least-privilege `sys/snapshot` token. Chart bumped to
+  0.1.9; the README documents the token/policy setup and the restore procedure.
 
 ## [0.2.0-beta.8] — 2026-08-06
 
