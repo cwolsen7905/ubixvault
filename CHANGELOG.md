@@ -15,6 +15,7 @@ All notable changes to uBix Vault are documented here. The format is based on
   old shares stop working. Internally the master key is regenerated and the
   barrier keyring re-wrapped under it — the barrier key and all data are
   untouched, so the vault keeps serving throughout. Shamir-unseal vaults only.
+  Driveable from the CLI: `ubixvault operator rekey init | update | status | cancel`.
 
 ## [0.2.0-beta.8] — 2026-08-06
 
