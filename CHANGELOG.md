@@ -4,6 +4,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Transit rewrap & data keys** — `POST /v1/transit/rewrap/{name}` re-encrypts a
+  ciphertext under a key's latest version without exposing the plaintext, so old
+  key versions can be retired after a rotation. `POST /v1/transit/datakey/{plaintext|wrapped}/{name}`
+  generates a random 128/256/512-bit data key wrapped under the named key — for
+  envelope encryption where the caller encrypts bulk data locally and stores only
+  the wrapped key.
+
 ## [0.2.0-beta.7] — 2026-07-30
 
 Seventh beta: JWT/OIDC login, completing the auth-method set.

@@ -90,6 +90,52 @@ func (h *Handler) transitDecrypt(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"plaintext": base64.StdEncoding.EncodeToString(plaintext)})
 }
 
+// transitRewrap re-encrypts a ciphertext under the key's latest version.
+func (h *Handler) transitRewrap(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Ciphertext string `json:"ciphertext"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	ciphertext, err := h.transit.Rewrap(r.Context(), r.PathValue("name"), req.Ciphertext)
+	if err != nil {
+		writeTransitError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"ciphertext": ciphertext})
+}
+
+// transitDataKey generates a random data key wrapped under the named key. The
+// {mode} path segment is "plaintext" (return the key and its wrapped form) or
+// "wrapped" (return only the wrapped form). An optional {"bits":N} body selects
+// the key size (128/256/512; default 256).
+func (h *Handler) transitDataKey(w http.ResponseWriter, r *http.Request) {
+	mode := r.PathValue("mode")
+	if mode != "plaintext" && mode != "wrapped" {
+		writeError(w, http.StatusBadRequest, "mode must be plaintext or wrapped")
+		return
+	}
+	req := struct {
+		Bits int `json:"bits"`
+	}{Bits: 256}
+	if r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	plaintext, wrapped, err := h.transit.GenerateDataKey(r.Context(), r.PathValue("name"), req.Bits)
+	if err != nil {
+		writeTransitError(w, err)
+		return
+	}
+	out := map[string]any{"ciphertext": wrapped}
+	if mode == "plaintext" {
+		out["plaintext"] = base64.StdEncoding.EncodeToString(plaintext)
+	}
+	writeData(w, out)
+}
+
 func writeTransitError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, barrier.ErrSealed):
@@ -98,7 +144,8 @@ func writeTransitError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, transit.ErrKeyExists),
 		errors.Is(err, transit.ErrInvalidName),
-		errors.Is(err, transit.ErrInvalidCiphertext):
+		errors.Is(err, transit.ErrInvalidCiphertext),
+		errors.Is(err, transit.ErrInvalidDataKeyBits):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)
