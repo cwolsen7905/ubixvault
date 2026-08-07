@@ -164,6 +164,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("POST /v1/transit/rewrap/{name}", h.authenticate(h.transitRewrap))
 	mux.HandleFunc("POST /v1/transit/datakey/{mode}/{name}", h.authenticate(h.transitDataKey))
 	mux.HandleFunc("POST /v1/transit/hmac/{name}", h.authenticate(h.transitHMAC))
+	mux.HandleFunc("POST /v1/transit/sign/{name}", h.authenticate(h.transitSign))
 	mux.HandleFunc("POST /v1/transit/verify/{name}", h.authenticate(h.transitVerify))
 
 	// Dynamic database secrets engine.

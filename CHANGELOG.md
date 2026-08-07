@@ -18,6 +18,13 @@ All notable changes to uBix Vault are documented here. The format is based on
   input using the key's latest version (sha2-256/384/512; default sha2-256), and
   `POST /v1/transit/verify/{name}` checks one in constant time. The MAC is
   version-tagged so it keeps verifying across key rotations.
+- **Transit signing keys** — Transit keys can now be asymmetric signing keys
+  (`ecdsa-p256/384/521`, `ed25519`), selected with `{"type":...}` at creation.
+  `POST /v1/transit/sign/{name}` signs input (ECDSA hashes with `sha2-256/384/512`;
+  Ed25519 signs directly) and `POST /v1/transit/verify/{name}` checks a
+  `signature` (or an `hmac`). A key's PEM public keys are returned per version so
+  signatures can be verified without the vault. Symmetric-only operations
+  (encrypt/decrypt/hmac) reject signing keys and vice versa.
 
 ## [0.2.0-beta.7] — 2026-07-30
 
