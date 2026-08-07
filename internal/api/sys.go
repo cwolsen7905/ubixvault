@@ -28,6 +28,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/transit"
 	"github.com/cwolsen7905/ubixvault/internal/userpass"
+	"github.com/cwolsen7905/ubixvault/internal/wrapping"
 )
 
 // maxBodyBytes caps request bodies to guard against oversized payloads.
@@ -52,6 +53,7 @@ type Handler struct {
 	approle        *approle.Method
 	userpass       *userpass.Method
 	jwtauth        *jwtauth.Method
+	wrapping       *wrapping.Store
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
@@ -103,6 +105,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
 		userpass:   userpass.New(c.Barrier(), c.Tokens(), "auth/userpass"),
 		jwtauth:    jwtauth.New(c.Barrier(), c.Tokens(), "auth/jwt"),
+		wrapping:   wrapping.NewStore(c.Barrier()),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
 		metrics:    metrics.New(),
@@ -152,6 +155,12 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
 	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
 	mux.HandleFunc("POST /v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
+
+	// Response wrapping: wrap a payload in a single-use, TTL'd token, and unwrap
+	// it exactly once. Both require a token; the wrapping token is passed in the
+	// unwrap body.
+	mux.HandleFunc("POST /v1/sys/wrapping/wrap", h.authenticate(h.sysWrappingWrap))
+	mux.HandleFunc("POST /v1/sys/wrapping/unwrap", h.authenticate(h.sysWrappingUnwrap))
 
 	// Transit engine (encryption-as-a-service).
 	mux.HandleFunc("POST /v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))
