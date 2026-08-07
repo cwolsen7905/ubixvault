@@ -1,95 +1,122 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-07-19
+> **Status:** Active · Last updated 2026-08-06 · Current release `v0.2.0-beta.8`
 
-The project's deliverable is a **single-node secrets manager with a small, complete,
-deeply-implemented core** — not feature parity with HashiCorp Vault. The goal is a
-finished, polished, tested system that gets the hard parts of a real secrets manager
-(encryption barrier, seal/unseal, dynamic secret lifecycle) right end-to-end.
+uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
+minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
+barrier, Shamir seal/unseal, all cryptography — is standard-library Go written and tested
+in-house, so the entire trust path can be read in an afternoon. It speaks a
+Vault-compatible HTTP API so existing clients work unchanged.
 
-Everything below the core is an **optional extension**, recorded for context and to show
-the shape of the full problem space — explicitly *not* committed scope.
+The **feature core is essentially complete** (see below). The remaining work to a real
+`1.0` is not more features — it is the three things that gate running a secrets manager in
+production: **durable storage**, **hardened correctness**, and **external review**. This
+roadmap is sequenced around that reality.
 
----
+## Honest positioning (read before deploying)
 
-## The project — v1.0 core
+uBix Vault matches HashiCorp Vault's *core feature surface* but **not** its *assurance*.
+Until the items in "Path to production 1.0" below are done — in particular an external
+security review — it is suitable for sandbox, dev, and internal/low-blast-radius use, not
+as a drop-in replacement for an audited secrets manager holding critical secrets.
 
-Goal: an initialize → unseal → authenticate → use → audit flow that works end-to-end and
-includes the two signature capabilities of a real secrets manager (encryption-as-a-service
-and dynamic secrets). Every item here ships **finished, tested, and documented**.
-
-- [x] Project scaffolding: Go module, CLI/server split, config loading, TLS listener.
-- [x] **Storage backend interface** + file backend + in-memory (test) backend.
-- [x] **Barrier**: AES-256-GCM encryption at rest, barrier key hierarchy.
-- [x] **Seal / unseal**: Shamir k-of-n, init, unseal, seal status.
-- [x] **Token auth** + root token bootstrap + child token creation.
-- [~] **Lease manager**: dynamic-secret leases with TTLs, revoke, and an expiry sweep. *(General renew / cascading revocation across all secret types is a post-MVP refinement.)*
-- [x] **Policy (ACL) engine**: JSON *and* HCL policies, default-deny, capability checks.
-- [x] **KV v2** secrets engine (versioned static secrets).
-- [x] **Transit** secrets engine (encrypt/decrypt; key never leaves). *(sign/HMAC endpoints are a follow-up.)*
-- [x] **`DatabasePlugin` interface** + **Database dynamic** engine — **MariaDB** reference plugin, short-lived credentials, auto-revoke (PostgreSQL/MySQL as follow-on plugins).
-- [x] **Audit device**: file backend, HMAC'd sensitive fields, fail-closed.
-- [x] **HTTP API** (Vault-path-compatible for implemented subsystems) + **`ubixvault server`**. *(A thin `operator` CLI over the API is a follow-up.)*
-
-**Quality bar (part of done, not optional polish):**
-- [x] Real test coverage, especially the crypto core and the seal/unseal state machine.
-- [x] CI (build, test, lint, govulncheck, MariaDB integration) green on every commit.
-- [x] Quickstart (README) + the design docs in `docs/`. *(A generated API reference is a follow-up.)*
-- [ ] A short screencast demonstrating the end-to-end flow.
-
-**Definition of done:** see `docs/DESIGN.md` §6. The MVP core is complete; remaining
-unchecked/partial items are refinements, not blockers.
+**Recommended adoption path** for anyone (including the maintainer) moving real workloads
+onto it:
+1. Run it **alongside** an existing audited secrets manager, not as a big-bang cutover.
+2. Start with **low-blast-radius** secrets (a dev environment, one non-critical service).
+3. Keep the incumbent for anything whose loss or compromise is serious until durable
+   storage **and** an external review are in place.
+4. Make the risk **visible** to whoever owns security — a solo, unreviewed system in the
+   secrets path is a shared-risk decision.
 
 ---
 
-## Possible extensions (NOT committed scope)
+## Where it is now (through `v0.2.0-beta.8`)
 
-Recorded to show the full problem space. These are undertaken only after the v1.0 core is
-complete, and only where they add value — never at the expense of finishing the core.
+Core — complete, tested, documented:
 
-**Likely next step — Kubernetes integration**
-
-The natural first extension for a uBixCore deployment. Note the deliberately minimal shape:
-
-- **Kubernetes auth method** (server side) — pods authenticate using their ServiceAccount
-  token; the vault validates it and issues a policy-scoped token. *This alone is enough:*
-  a pod's app can then call the vault API directly at startup and read its secrets into
-  memory — no injection layer, no secrets on disk or in etcd. This is the recommended
-  pattern for apps you control (i.e. uBixCore's own workloads).
-- **Web UI** — a browser interface to manage secrets/policies/tokens. It is just another
-  client of the HTTP API, so it comes *after* the API is stable, not before.
-- **uBix Vault Operator** *(only if needed)* — syncs secrets into native Kubernetes
-  `Secret` objects for `envFrom` injection. Build this **only** for third-party apps you
-  cannot modify to call the API. It trades security for convenience (secrets land in etcd,
-  base64-only; requires etcd encryption-at-rest + tight RBAC) and cannot deliver rotating
-  dynamic secrets to env vars. Prefer the direct-API pattern above wherever possible.
-  See `docs/DECISIONS.md` (D-008).
-
-**Toward Community-level breadth**
-- Integrated Storage (Raft) — HA cluster, no external dependency.
-- Auto-unseal via cloud KMS (AWS/GCP/Azure) behind the seal interface.
-- More auth methods: AppRole, JWT/OIDC, TLS cert, userpass, LDAP.
-- PKI secrets engine (certificate authority, short-lived TLS certs).
-- Cloud dynamic secrets (AWS/GCP/Azure IAM); more DB plugins (PostgreSQL, MySQL, Mongo, MSSQL).
-- Identity (entities + groups), response wrapping, cubbyhole, SSH, TOTP.
-- Metrics (Prometheus), syslog/socket audit devices.
-
-**Advanced (multi-tenancy, HA replication, and approval workflows)**
-- Namespaces — in-vault multi-tenancy (administratively isolated policy/mount/auth trees
-  within a single instance). Distinct from Kubernetes namespaces, and **not** required to
-  share a secret across apps in different Kubernetes namespaces — that is handled by ACL
-  policies plus the Kubernetes auth method (see above).
-- Replication (multi-DC HA/DR), control groups (M-of-N approval).
-- Policy-as-code / ABAC (OPA/Rego), login-enforced MFA, seal-wrap.
-
-**Hard compliance**
-- HSM/PKCS#11 auto-unseal & seal-wrap, FIPS 140-3 validated crypto build, KMIP engine,
-  transform/tokenization/FPE.
+- [x] Storage backend interface + **file** and **in-memory** backends.
+- [x] **Barrier** — AES-256-GCM at rest, path-bound AAD, barrier-key hierarchy.
+- [x] **Seal / unseal** — in-house Shamir k-of-n; init, unseal, seal-status.
+- [x] **Root regeneration** (`generate-root`) + **recovery keys** for auto-unseal mode.
+- [x] **Tokens** (TTL/expiry, renew-self, revoke-self) + **ACL policies** (JSON *and* HCL, default-deny).
+- [x] **KV v2** (versioned secrets).
+- [x] **Transit** — full crypto-as-a-service: encrypt/decrypt, rotate, **rewrap**, **data keys**, **HMAC**, **sign/verify** (ECDSA + Ed25519).
+- [x] **Dynamic database credentials** — `DatabasePlugin` interface + MariaDB plugin, lease-scoped, auto-revoked.
+- [x] **PKI** — internal CA, role-constrained short-lived certificate issuance.
+- [x] **Auth methods** — token, AppRole, Kubernetes, userpass, JWT/OIDC.
+- [x] **Seals** — Shamir, static KEK, and transit seal (unwrap via another vault).
+- [x] **Response wrapping** — single-use, TTL'd secure-introduction tokens.
+- [x] **Audit** — fail-closed file device, HMAC'd sensitive fields.
+- [x] **Leases** — renew/lookup + cascading revocation.
+- [x] **Web console** (`/ui/`) — KV, policies, tokens, PKI.
+- [x] **Operations** — Prometheus metrics, rate limiting, health/readiness, encrypted snapshot/restore.
+- [x] **Delivery** — `ubixvault server` + `operator` CLI, single-node Helm chart, multi-arch GHCR images, CI (build/test/lint/govulncheck/MariaDB integration).
 
 ---
 
-## Sequencing notes
+## Path to production 1.0
 
-- Interfaces first (storage, seal, auth, engine, audit) so extensions are additive, never rewrites.
-- The barrier + Shamir seal/unseal is the highest-value, most-differentiating work — build it first and make it excellent.
-- API paths mirror HashiCorp Vault's per subsystem; validating against real Vault client libraries in CI is a follow-up.
+Ordered by what actually makes it safe to run, not by what is most fun to build. The
+guiding rule: **durability without correctness is a trap** — HA on top of un-hardened
+crypto is just a reliable way to lose or leak secrets — so the hardening work runs
+*alongside* the storage work, not after it.
+
+### Tier 0 — production safety (do first; small)
+- [ ] **Automated, tested, off-node backups.** Wire `snapshot save` to a scheduled job →
+      object storage, and prove a restore. Converts "single disk dies = total loss" into
+      "lose minutes." (Chart CronJob + a snapshot-to-object-store target.)
+- [ ] **Rekey** — operator flow to re-split the master key into fresh Shamir shares (and
+      change threshold/count), for when a share-holder leaves. Mirrors `generate-root`.
+
+### Tier 1 — durable storage (the real production unlock)
+- [ ] **SQL storage backend** over the existing MySQL/MariaDB driver (no new dependency).
+      Turns "single node + local disk" into "**replaceable node over managed, replicated
+      storage**": the node can die and reschedule pointing at the same durable database,
+      and the database's own HA handles durability. For most single-org production this is
+      *sufficient HA*; it also de-risks any future Raft work.
+
+### Continuous — trust & correctness (rides alongside Tier 0–1)
+- [ ] **Fuzz** the parsers — HCL policy, JWT/JWS, transit ciphertext, snapshot format.
+- [ ] **Property tests** for Shamir (split/combine round-trips, threshold behavior) and the barrier.
+- [ ] **Race / chaos tests** — concurrent access; kill mid-write and verify recovery.
+- [ ] **Supply-chain hygiene** — signed, reproducible release images (cosign), SBOM.
+
+### Tier 2 — pre-production trust gates (before real secrets land)
+- [ ] **Pluggable cloud-KMS/HSM seal** behind the existing seal interface (kept zero-dep by
+      staying over-the-wire / pluggable, like the transit seal), so the KEK is never on the host.
+- [ ] **`SECURITY.md`** + coordinated-disclosure policy; threat-model refresh (`docs/DESIGN.md`).
+- [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
+      Cure53) when feasible; at minimum a scoped external look + the hardening above first.
+
+### Optional — only if a single durable node isn't enough
+- [ ] **Integrated Storage (Raft)** — multi-writer HA with no external dependency. Deliberately
+      **last**: the SQL backend already gives durability and a replaceable node, so Raft is a
+      step this project may never need. If pursued, starts with a design doc + an ADR on
+      in-house Raft vs. `hashicorp/raft` (the latter breaks the one-dependency ethos).
+
+---
+
+## Beyond 1.0 — not committed scope
+
+Recorded to show the shape of the full problem space; undertaken only if they earn their
+place, never at the expense of the path above.
+
+- **More auth**: TLS client cert, LDAP.
+- **More dynamic secrets**: PostgreSQL/Mongo/MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
+- **Identity**: entities + groups, so multiple auth logins map to one subject.
+- **Console breadth**: Transit and the newer auth methods in `/ui/`.
+- **Transit extras**: convergent encryption, key derivation, BYOK import.
+- **Multi-tenancy**: namespaces (in-vault administrative isolation).
+- **Replication**: multi-DC HA/DR; control groups (M-of-N approval); login-enforced MFA.
+- **Hard compliance**: HSM/PKCS#11 seal-wrap, FIPS 140-3 validated build, KMIP, tokenization/FPE.
+- **OIDC discovery**: resolve the JWKS URL from `.well-known/openid-configuration`.
+
+---
+
+## Sequencing principles
+
+- **Interfaces first** (storage, seal, auth, engine, audit) so every addition is additive, never a rewrite — this is what lets the SQL backend and KMS seal slot in without touching the core.
+- **Durability before HA, correctness before durability.** Backups and hardening are cheap insurance that make everything after them safer.
+- **Zero-new-dependency by default.** Each capability is built from the standard library unless there is no reasonable alternative; the dependency graph staying readable is a security feature.
+- **Ship in small, reviewed, CI-green slices**; cut a beta when a coherent set lands.
