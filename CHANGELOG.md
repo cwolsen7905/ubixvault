@@ -8,6 +8,13 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Response wrapping** — `POST /v1/sys/wrapping/wrap` stores a JSON payload
+  behind a fresh single-use token (TTL from the `X-Vault-Wrap-TTL` header,
+  default 5m, max 24h), and `POST /v1/sys/wrapping/unwrap` returns it exactly
+  once before destroying the token. Wrapped payloads are barrier-encrypted and
+  indexed by the token's hash. This is the secure-introduction pattern: hand a
+  consumer a short-lived token instead of the secret itself.
+
 - **Transit rewrap & data keys** — `POST /v1/transit/rewrap/{name}` re-encrypts a
   ciphertext under a key's latest version without exposing the plaintext, so old
   key versions can be retired after a rotation. `POST /v1/transit/datakey/{plaintext|wrapped}/{name}`
