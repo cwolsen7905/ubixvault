@@ -136,6 +136,55 @@ func (h *Handler) transitDataKey(w http.ResponseWriter, r *http.Request) {
 	writeData(w, out)
 }
 
+// transitHMAC computes an HMAC over base64 input using the named key.
+func (h *Handler) transitHMAC(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Input     string `json:"input"`
+		Algorithm string `json:"algorithm"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	input, err := base64.StdEncoding.DecodeString(req.Input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "input must be base64")
+		return
+	}
+	mac, err := h.transit.HMAC(r.Context(), r.PathValue("name"), input, req.Algorithm)
+	if err != nil {
+		writeTransitError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"hmac": mac})
+}
+
+// transitVerify checks an HMAC over base64 input against the named key.
+func (h *Handler) transitVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Input     string `json:"input"`
+		HMAC      string `json:"hmac"`
+		Algorithm string `json:"algorithm"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.HMAC == "" {
+		writeError(w, http.StatusBadRequest, "hmac is required")
+		return
+	}
+	input, err := base64.StdEncoding.DecodeString(req.Input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "input must be base64")
+		return
+	}
+	valid, err := h.transit.VerifyHMAC(r.Context(), r.PathValue("name"), input, req.HMAC, req.Algorithm)
+	if err != nil {
+		writeTransitError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"valid": valid})
+}
+
 func writeTransitError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, barrier.ErrSealed):
@@ -145,7 +194,8 @@ func writeTransitError(w http.ResponseWriter, err error) {
 	case errors.Is(err, transit.ErrKeyExists),
 		errors.Is(err, transit.ErrInvalidName),
 		errors.Is(err, transit.ErrInvalidCiphertext),
-		errors.Is(err, transit.ErrInvalidDataKeyBits):
+		errors.Is(err, transit.ErrInvalidDataKeyBits),
+		errors.Is(err, transit.ErrInvalidAlgorithm):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)

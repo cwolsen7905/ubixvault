@@ -14,6 +14,10 @@ All notable changes to uBix Vault are documented here. The format is based on
   generates a random 128/256/512-bit data key wrapped under the named key — for
   envelope encryption where the caller encrypts bulk data locally and stores only
   the wrapped key.
+- **Transit HMAC** — `POST /v1/transit/hmac/{name}` computes an HMAC over the
+  input using the key's latest version (sha2-256/384/512; default sha2-256), and
+  `POST /v1/transit/verify/{name}` checks one in constant time. The MAC is
+  version-tagged so it keeps verifying across key rotations.
 
 ## [0.2.0-beta.7] — 2026-07-30
 
