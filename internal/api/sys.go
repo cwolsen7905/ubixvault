@@ -132,6 +132,13 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("DELETE /v1/sys/generate-root/init", h.generateRootCancel)
 	mux.HandleFunc("POST /v1/sys/generate-root/update", h.generateRootUpdate)
 
+	// Rekey — rotate the unseal shares by re-splitting the master key. Like
+	// generate-root, unauthenticated: authority is a quorum of current shares.
+	mux.HandleFunc("GET /v1/sys/rekey/init", h.rekeyStatus)
+	mux.HandleFunc("POST /v1/sys/rekey/init", h.rekeyInit)
+	mux.HandleFunc("DELETE /v1/sys/rekey/init", h.rekeyCancel)
+	mux.HandleFunc("POST /v1/sys/rekey/update", h.rekeyUpdate)
+
 	// KV v2 secrets engine — all endpoints require authentication.
 	mux.HandleFunc("GET /v1/secret/data/{path...}", h.authenticate(h.kvRead))
 	mux.HandleFunc("POST /v1/secret/data/{path...}", h.authenticate(h.kvWrite))

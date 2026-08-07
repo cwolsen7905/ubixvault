@@ -138,6 +138,48 @@ func (b *Barrier) VerifyMasterKey(ctx context.Context, masterKey []byte) (bool, 
 	return true, nil
 }
 
+// Rekey re-encrypts the stored barrier key from oldMasterKey to newMasterKey.
+// This changes which master key unseals the vault without altering the barrier
+// key or re-encrypting any data — the master key only wraps the keyring. It
+// fails with [ErrInvalidKey] if oldMasterKey does not decrypt the keyring, and
+// [ErrNotInitialized] if no keyring exists. The seal state is unchanged: an
+// unsealed barrier keeps serving, since its in-memory barrier key is untouched.
+func (b *Barrier) Rekey(ctx context.Context, oldMasterKey, newMasterKey []byte) error {
+	oldMaster, err := newAEAD(oldMasterKey)
+	if err != nil {
+		return err
+	}
+	newMaster, err := newAEAD(newMasterKey)
+	if err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	entry, err := b.phys.Get(ctx, keyringPath)
+	if err != nil {
+		return fmt.Errorf("barrier: read keyring: %w", err)
+	}
+	if entry == nil {
+		return ErrNotInitialized
+	}
+	barrierKey, err := decrypt(oldMaster, entry.Value, keyringPath)
+	if err != nil {
+		return ErrInvalidKey // wrong old master key: authentication failed
+	}
+	defer zero(barrierKey)
+
+	blob, err := encrypt(newMaster, barrierKey, keyringPath)
+	if err != nil {
+		return fmt.Errorf("barrier: reseal keyring: %w", err)
+	}
+	if err := b.phys.Put(ctx, &storage.Entry{Key: keyringPath, Value: blob}); err != nil {
+		return fmt.Errorf("barrier: persist keyring: %w", err)
+	}
+	return nil
+}
+
 // Unseal decrypts the stored barrier key with masterKey and makes the Barrier
 // usable. It returns [ErrNotInitialized] if no keyring exists and [ErrInvalidKey]
 // if masterKey is the wrong length or does not decrypt the keyring. Unsealing an

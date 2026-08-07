@@ -4,6 +4,18 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Rekey** — rotate the Shamir unseal shares without downtime or data
+  re-encryption. `POST /v1/sys/rekey/init` starts an attempt (new share
+  count/threshold), `POST /v1/sys/rekey/update` feeds a quorum of the *current*
+  shares, and on completion a fresh set of unseal shares is returned once; the
+  old shares stop working. Internally the master key is regenerated and the
+  barrier keyring re-wrapped under it — the barrier key and all data are
+  untouched, so the vault keeps serving throughout. Shamir-unseal vaults only.
+
 ## [0.2.0-beta.8] — 2026-08-06
 
 Eighth beta: Transit grows into full crypto-as-a-service, plus response wrapping.

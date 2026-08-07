@@ -72,6 +72,10 @@ var (
 	ErrRootGenSealed           = errors.New("core: unseal the vault before regenerating root")
 	ErrRootGenNotShamir        = errors.New("core: root regeneration requires Shamir unseal")
 	ErrRootGenNoRecovery       = errors.New("core: this auto-unseal vault has no recovery keys (initialized before recovery-key support)")
+	ErrRekeyNotStarted         = errors.New("core: no rekey attempt in progress")
+	ErrRekeyNonce              = errors.New("core: nonce does not match the current rekey attempt")
+	ErrRekeySealed             = errors.New("core: unseal the vault before rekeying")
+	ErrRekeyNotShamir          = errors.New("core: rekey applies only to Shamir-unseal vaults")
 )
 
 // recoveryKeySize is the length of the generated recovery key (auto-unseal mode).
@@ -91,6 +95,27 @@ type RootGenStatus struct {
 type rootGen struct {
 	nonce    string
 	progress [][]byte
+}
+
+// RekeyStatus describes a rekey (unseal-share rotation) attempt.
+type RekeyStatus struct {
+	Started      bool
+	Nonce        string
+	Progress     int
+	Required     int // current-share quorum needed to authorize
+	NewShares    int
+	NewThreshold int
+	Complete     bool
+	Keys         [][]byte // the new unseal shares, set only on completion
+}
+
+// rekeyAttempt holds the in-progress rekey state, including the target share
+// configuration captured at init.
+type rekeyAttempt struct {
+	nonce        string
+	newShares    int
+	newThreshold int
+	progress     [][]byte
 }
 
 // InitConfig parameterizes [Core.Initialize].
@@ -139,8 +164,9 @@ type Core struct {
 	seal    seal.Seal // auto-unseal seal; nil means Shamir mode
 
 	mu          sync.Mutex
-	progress    [][]byte // unseal shares gathered so far (in-memory only)
-	rootAttempt *rootGen // in-progress root regeneration, if any
+	progress    [][]byte      // unseal shares gathered so far (in-memory only)
+	rootAttempt *rootGen      // in-progress root regeneration, if any
+	rekey       *rekeyAttempt // in-progress rekey, if any
 }
 
 // Option configures a Core.
@@ -502,6 +528,173 @@ func (c *Core) GenerateRootStatus(ctx context.Context) (*RootGenStatus, error) {
 		Nonce:    c.rootAttempt.nonce,
 		Progress: len(c.rootAttempt.progress),
 		Required: cfg.Threshold,
+	}, nil
+}
+
+// RekeyInit starts a rekey attempt that will re-split the master key into
+// newShares Shamir shares (newThreshold required), rotating the unseal shares —
+// for example when a share-holder leaves. It returns a nonce; feeding a quorum of
+// the *current* shares to RekeyUpdate then rewraps the master key and returns the
+// new shares. Only Shamir-unseal vaults are supported, and the vault must be
+// unsealed. The barrier key and all data are untouched, so the vault keeps
+// serving throughout.
+func (c *Core) RekeyInit(ctx context.Context, newShares, newThreshold int) (*RekeyStatus, error) {
+	if newShares < 2 || newShares > 255 || newThreshold < 2 || newThreshold > newShares {
+		return nil, ErrInvalidConfig
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if isAutoSeal(cfg.Type) {
+		return nil, ErrRekeyNotShamir
+	}
+	if c.barrier.Sealed() {
+		return nil, ErrRekeySealed
+	}
+
+	nonce, err := randomNonce()
+	if err != nil {
+		return nil, err
+	}
+	c.rekey = &rekeyAttempt{nonce: nonce, newShares: newShares, newThreshold: newThreshold}
+	return &RekeyStatus{
+		Started:      true,
+		Nonce:        nonce,
+		Progress:     0,
+		Required:     cfg.Threshold,
+		NewShares:    newShares,
+		NewThreshold: newThreshold,
+	}, nil
+}
+
+// RekeyUpdate supplies one current unseal share to the attempt identified by
+// nonce. When the current threshold is reached it reconstructs and verifies the
+// master key, generates a new one, rewraps the barrier keyring under it, persists
+// the new share configuration, and returns the freshly split unseal shares. Those
+// shares are shown once — the old shares stop working once this completes.
+func (c *Core) RekeyUpdate(ctx context.Context, nonce string, share []byte) (*RekeyStatus, error) {
+	if len(share) != masterKeySize+1 {
+		return nil, ErrInvalidShare
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.rekey == nil {
+		return nil, ErrRekeyNotStarted
+	}
+	if nonce != c.rekey.nonce {
+		return nil, ErrRekeyNonce
+	}
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c.barrier.Sealed() {
+		return nil, ErrRekeySealed
+	}
+
+	if !containsShare(c.rekey.progress, share) {
+		c.rekey.progress = append(c.rekey.progress, append([]byte(nil), share...))
+	}
+	if len(c.rekey.progress) < cfg.Threshold {
+		return &RekeyStatus{
+			Started:      true,
+			Nonce:        nonce,
+			Progress:     len(c.rekey.progress),
+			Required:     cfg.Threshold,
+			NewShares:    c.rekey.newShares,
+			NewThreshold: c.rekey.newThreshold,
+		}, nil
+	}
+
+	oldMasterKey, err := shamir.Combine(c.rekey.progress)
+	if err != nil {
+		c.rekey = nil
+		return nil, fmt.Errorf("core: combine shares: %w", err)
+	}
+	defer zero(oldMasterKey)
+
+	ok, err := c.barrier.VerifyMasterKey(ctx, oldMasterKey)
+	if err != nil {
+		c.rekey = nil
+		return nil, err
+	}
+	if !ok {
+		c.rekey = nil
+		return nil, ErrUnsealFailed
+	}
+
+	newMasterKey := make([]byte, masterKeySize)
+	if _, err := rand.Read(newMasterKey); err != nil {
+		c.rekey = nil
+		return nil, fmt.Errorf("core: generate master key: %w", err)
+	}
+	defer zero(newMasterKey)
+
+	// Split the new key first (in memory) so a failure here changes nothing on
+	// disk. Only then rewrap the keyring and commit the new share configuration.
+	newShares := c.rekey.newShares
+	newThreshold := c.rekey.newThreshold
+	shares, err := shamir.Split(newMasterKey, newShares, newThreshold)
+	if err != nil {
+		c.rekey = nil
+		return nil, fmt.Errorf("core: split master key: %w", err)
+	}
+	if err := c.barrier.Rekey(ctx, oldMasterKey, newMasterKey); err != nil {
+		c.rekey = nil
+		return nil, fmt.Errorf("core: rewrap keyring: %w", err)
+	}
+	// The keyring now requires newMasterKey; record the matching share config.
+	if err := c.writeSealConfig(ctx, sealConfig{Type: SealTypeShamir, Shares: newShares, Threshold: newThreshold}); err != nil {
+		// The keyring is already rewrapped, so the new shares are the only way in:
+		// return them alongside the error rather than stranding the operator.
+		c.rekey = nil
+		return &RekeyStatus{Complete: true, NewShares: newShares, NewThreshold: newThreshold, Keys: shares}, err
+	}
+
+	c.rekey = nil
+	return &RekeyStatus{
+		Started:      false,
+		Complete:     true,
+		Required:     cfg.Threshold,
+		NewShares:    newShares,
+		NewThreshold: newThreshold,
+		Keys:         shares,
+	}, nil
+}
+
+// RekeyCancel discards any in-progress rekey attempt.
+func (c *Core) RekeyCancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rekey = nil
+}
+
+// RekeyStatus reports the current rekey attempt.
+func (c *Core) RekeyStatus(ctx context.Context) (*RekeyStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.rekey == nil {
+		return &RekeyStatus{Started: false}, nil
+	}
+	cfg, err := c.readSealConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &RekeyStatus{
+		Started:      true,
+		Nonce:        c.rekey.nonce,
+		Progress:     len(c.rekey.progress),
+		Required:     cfg.Threshold,
+		NewShares:    c.rekey.newShares,
+		NewThreshold: c.rekey.newThreshold,
 	}, nil
 }
 
