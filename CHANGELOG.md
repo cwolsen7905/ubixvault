@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.8] — 2026-08-06
+
+Eighth beta: Transit grows into full crypto-as-a-service, plus response wrapping.
 
 ### Added
 
@@ -32,6 +34,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   `signature` (or an `hmac`). A key's PEM public keys are returned per version so
   signatures can be verified without the vault. Symmetric-only operations
   (encrypt/decrypt/hmac) reject signing keys and vice versa.
+
+[0.2.0-beta.8]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.8
 
 ## [0.2.0-beta.7] — 2026-07-30
 
