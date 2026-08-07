@@ -259,3 +259,38 @@ the seal vault at startup (unreachable → stays sealed, fail-safe). A pluggable
 cloud-KMS/HSM seal (AWS/GCP/Azure) would be its own implementation behind the
 same interface, added only if wanted, and would be its own ADR (with its
 dependency recorded there).
+
+---
+
+## D-014 — A SQL (MySQL/MariaDB) storage backend for durable, replaceable-node storage
+
+**Status:** Accepted · 2026-08-06
+
+**Decision:** add a `storage.Backend` implementation over MySQL/MariaDB (reusing
+the existing `go-sql-driver/mysql` dependency from D-010 — no new dependency),
+selectable with a `-storage mysql` server flag while `file` stays the default.
+The database stores the vault's key/value state in a single `VARBINARY`-keyed
+table; the barrier still encrypts every value first, so the database holds only
+ciphertext. Full design in [`docs/design/sql-storage-backend.md`](design/sql-storage-backend.md).
+
+**Why:** single-node file storage is the project's production ceiling — durability
+rests on one disk and the node cannot be replaced. A SQL backend turns that into a
+**replaceable node over managed, replicated storage**: the vault process can
+restart on another node against the same durable database, whose own HA handles
+durability. It is the pragmatic durability step *before* integrated storage
+(Raft), which is months of far harder work; a SQL backend de-risks and may
+obviate it for single-org use (`docs/ROADMAP.md` Tier 1). Reusing the sole
+existing dependency preserves the minimal-dependency, "readable in an afternoon"
+posture (D-009/D-011/D-012); the trust model is unchanged because the database,
+like the file backend, never sees plaintext (DESIGN §3.2). `storage.Backend`
+needs no change — it already anticipates substitutable backends (D-007) — so the
+new backend is validated by the *same* conformance suite every backend passes.
+
+**Trade-off / follow-up:** it adds a runtime dependency on the database
+(unreachable at startup → fail fast) and a credential to manage (the DSN, kept in
+a Secret). Critically it is **not multi-writer HA**: exactly one active vault
+process per database, since barrier/lease/unseal state is in-memory —
+`replicaCount` stays 1, and the win is storage surviving node loss, not multiple
+serving nodes. Leader election / Raft coordination for true HA is a later,
+separate ADR. Postgres and other engines are viable behind the same interface
+later; MySQL is first only because it reuses the existing driver.
