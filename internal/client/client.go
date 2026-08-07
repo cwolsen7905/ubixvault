@@ -115,6 +115,56 @@ func (c *Client) Seal(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/v1/sys/seal", nil, nil)
 }
 
+// RekeyStatus is the state of a rekey (unseal-share rotation) attempt. Keys is
+// populated only on the update that completes the rekey.
+type RekeyStatus struct {
+	Started      bool     `json:"started"`
+	Nonce        string   `json:"nonce"`
+	Progress     int      `json:"progress"`
+	Required     int      `json:"required"`
+	NewShares    int      `json:"new_shares"`
+	NewThreshold int      `json:"new_threshold"`
+	Complete     bool     `json:"complete"`
+	Keys         []string `json:"keys"`
+	KeysBase64   []string `json:"keys_base64"`
+}
+
+// RekeyInit starts a rekey that will re-split the master key into shares/threshold
+// new unseal shares.
+func (c *Client) RekeyInit(ctx context.Context, shares, threshold int) (*RekeyStatus, error) {
+	body := map[string]int{"secret_shares": shares, "secret_threshold": threshold}
+	var out RekeyStatus
+	if err := c.do(ctx, http.MethodPost, "/v1/sys/rekey/init", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RekeyUpdate submits one current unseal key to the attempt identified by nonce.
+// The returned status carries the new shares once Complete is true.
+func (c *Client) RekeyUpdate(ctx context.Context, nonce, key string) (*RekeyStatus, error) {
+	body := map[string]string{"nonce": nonce, "key": key}
+	var out RekeyStatus
+	if err := c.do(ctx, http.MethodPost, "/v1/sys/rekey/update", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RekeyStatus returns the current rekey attempt, if any.
+func (c *Client) RekeyStatus(ctx context.Context) (*RekeyStatus, error) {
+	var out RekeyStatus
+	if err := c.do(ctx, http.MethodGet, "/v1/sys/rekey/init", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RekeyCancel aborts any in-progress rekey attempt.
+func (c *Client) RekeyCancel(ctx context.Context) error {
+	return c.do(ctx, http.MethodDelete, "/v1/sys/rekey/init", nil, nil)
+}
+
 // Snapshot streams a backup of the encrypted store to w. It requires a token.
 func (c *Client) Snapshot(ctx context.Context, w io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.addr+"/v1/sys/snapshot", nil)

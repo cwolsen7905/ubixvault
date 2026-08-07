@@ -70,6 +70,7 @@ func usage() {
 	fmt.Println("  operator seal              re-seal (requires -token)")
 	fmt.Println("  operator snapshot save <f> back up the encrypted store (requires -token)")
 	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
+	fmt.Println("  operator rekey init        rotate the unseal shares (start; then update/status/cancel)")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
 	fmt.Println("  TLS: -ca-cert <pem> (or $UBIXVAULT_CACERT), -tls-skip-verify (or $UBIXVAULT_TLS_SKIP_VERIFY)")
@@ -290,9 +291,126 @@ func runOperator(args []string) error {
 		return operatorSeal(args[1:])
 	case "snapshot":
 		return operatorSnapshot(args[1:])
+	case "rekey":
+		return operatorRekey(args[1:])
 	default:
 		return fmt.Errorf("unknown operator subcommand %q", args[0])
 	}
+}
+
+func operatorRekey(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: operator rekey init | update | status | cancel")
+	}
+	switch args[0] {
+	case "init":
+		return operatorRekeyInit(args[1:])
+	case "update":
+		return operatorRekeyUpdate(args[1:])
+	case "status":
+		return operatorRekeyStatus(args[1:])
+	case "cancel":
+		return operatorRekeyCancel(args[1:])
+	default:
+		return fmt.Errorf("unknown rekey subcommand %q", args[0])
+	}
+}
+
+func operatorRekeyInit(args []string) error {
+	fs := flag.NewFlagSet("operator rekey init", flag.ExitOnError)
+	cc := registerClientFlags(fs, false)
+	shares := fs.Int("shares", 5, "number of new unseal key shares")
+	threshold := fs.Int("threshold", 3, "new shares required to unseal")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	st, err := c.RekeyInit(context.Background(), *shares, *threshold)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Rekey started.\n")
+	fmt.Printf("Nonce:       %s\n", st.Nonce)
+	fmt.Printf("New config:  %d shares, threshold %d\n", st.NewShares, st.NewThreshold)
+	fmt.Printf("\nSubmit %d current unseal keys, one at a time:\n", st.Required)
+	fmt.Printf("  ubixvault operator rekey update -nonce %s <key>\n", st.Nonce)
+	return nil
+}
+
+func operatorRekeyUpdate(args []string) error {
+	fs := flag.NewFlagSet("operator rekey update", flag.ExitOnError)
+	cc := registerClientFlags(fs, false)
+	nonce := fs.String("nonce", "", "rekey nonce from `operator rekey init`")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	key := fs.Arg(0)
+	if *nonce == "" || key == "" {
+		return fmt.Errorf("usage: operator rekey update -nonce <nonce> <key>")
+	}
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	st, err := c.RekeyUpdate(context.Background(), *nonce, key)
+	if err != nil {
+		return err
+	}
+	if !st.Complete {
+		fmt.Printf("Progress: %d/%d\n", st.Progress, st.Required)
+		return nil
+	}
+	for i, k := range st.Keys {
+		fmt.Printf("New Unseal Key %d: %s\n", i+1, k)
+	}
+	fmt.Printf("\nRekey complete — save these now, they are shown only once.\n")
+	fmt.Printf("The old unseal keys no longer work. Unseal with any %d of the %d new keys.\n", st.NewThreshold, st.NewShares)
+	return nil
+}
+
+func operatorRekeyStatus(args []string) error {
+	fs := flag.NewFlagSet("operator rekey status", flag.ExitOnError)
+	cc := registerClientFlags(fs, false)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	st, err := c.RekeyStatus(context.Background())
+	if err != nil {
+		return err
+	}
+	if !st.Started {
+		fmt.Println("No rekey in progress.")
+		return nil
+	}
+	fmt.Printf("Rekey in progress.\n")
+	fmt.Printf("Nonce:       %s\n", st.Nonce)
+	fmt.Printf("Progress:    %d/%d\n", st.Progress, st.Required)
+	fmt.Printf("New config:  %d shares, threshold %d\n", st.NewShares, st.NewThreshold)
+	return nil
+}
+
+func operatorRekeyCancel(args []string) error {
+	fs := flag.NewFlagSet("operator rekey cancel", flag.ExitOnError)
+	cc := registerClientFlags(fs, false)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	if err := c.RekeyCancel(context.Background()); err != nil {
+		return err
+	}
+	fmt.Println("Rekey cancelled.")
+	return nil
 }
 
 func operatorSnapshot(args []string) error {
