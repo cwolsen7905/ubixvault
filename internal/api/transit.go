@@ -9,8 +9,18 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/transit"
 )
 
+// transitCreateKey creates a key. An optional {"type":"..."} body selects the
+// key type (default aes256-gcm96).
 func (h *Handler) transitCreateKey(w http.ResponseWriter, r *http.Request) {
-	info, err := h.transit.CreateKey(r.Context(), r.PathValue("name"))
+	var req struct {
+		Type string `json:"type"`
+	}
+	if r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	info, err := h.transit.CreateTypedKey(r.Context(), r.PathValue("name"), req.Type)
 	if err != nil {
 		writeTransitError(w, err)
 		return
@@ -158,18 +168,13 @@ func (h *Handler) transitHMAC(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"hmac": mac})
 }
 
-// transitVerify checks an HMAC over base64 input against the named key.
-func (h *Handler) transitVerify(w http.ResponseWriter, r *http.Request) {
+// transitSign signs base64 input with the named signing key.
+func (h *Handler) transitSign(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Input     string `json:"input"`
-		HMAC      string `json:"hmac"`
 		Algorithm string `json:"algorithm"`
 	}
 	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if req.HMAC == "" {
-		writeError(w, http.StatusBadRequest, "hmac is required")
 		return
 	}
 	input, err := base64.StdEncoding.DecodeString(req.Input)
@@ -177,7 +182,42 @@ func (h *Handler) transitVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "input must be base64")
 		return
 	}
-	valid, err := h.transit.VerifyHMAC(r.Context(), r.PathValue("name"), input, req.HMAC, req.Algorithm)
+	sig, err := h.transit.Sign(r.Context(), r.PathValue("name"), input, req.Algorithm)
+	if err != nil {
+		writeTransitError(w, err)
+		return
+	}
+	writeData(w, map[string]any{"signature": sig})
+}
+
+// transitVerify checks a signature or an HMAC over base64 input against the named
+// key. Exactly one of "signature" or "hmac" must be supplied.
+func (h *Handler) transitVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Input     string `json:"input"`
+		HMAC      string `json:"hmac"`
+		Signature string `json:"signature"`
+		Algorithm string `json:"algorithm"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if (req.HMAC == "") == (req.Signature == "") {
+		writeError(w, http.StatusBadRequest, "exactly one of hmac or signature is required")
+		return
+	}
+	input, err := base64.StdEncoding.DecodeString(req.Input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "input must be base64")
+		return
+	}
+	name := r.PathValue("name")
+	var valid bool
+	if req.Signature != "" {
+		valid, err = h.transit.Verify(r.Context(), name, input, req.Signature, req.Algorithm)
+	} else {
+		valid, err = h.transit.VerifyHMAC(r.Context(), name, input, req.HMAC, req.Algorithm)
+	}
 	if err != nil {
 		writeTransitError(w, err)
 		return
@@ -195,7 +235,9 @@ func writeTransitError(w http.ResponseWriter, err error) {
 		errors.Is(err, transit.ErrInvalidName),
 		errors.Is(err, transit.ErrInvalidCiphertext),
 		errors.Is(err, transit.ErrInvalidDataKeyBits),
-		errors.Is(err, transit.ErrInvalidAlgorithm):
+		errors.Is(err, transit.ErrInvalidAlgorithm),
+		errors.Is(err, transit.ErrInvalidKeyType),
+		errors.Is(err, transit.ErrKeyTypeMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)

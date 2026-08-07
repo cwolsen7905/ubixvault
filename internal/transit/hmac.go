@@ -42,6 +42,9 @@ func (e *Engine) HMAC(ctx context.Context, name string, data []byte, algo string
 	if err != nil {
 		return "", err
 	}
+	if !isSymmetric(k.Type) {
+		return "", ErrKeyTypeMismatch
+	}
 	mac := hmac.New(hfn, k.Versions[k.LatestVersion])
 	mac.Write(data)
 	return fmt.Sprintf("%sv%d:%s", cipherPrefix, k.LatestVersion, base64.StdEncoding.EncodeToString(mac.Sum(nil))), nil

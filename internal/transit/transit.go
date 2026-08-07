@@ -54,7 +54,8 @@ type Storage interface {
 // keyData is the persisted form of a transit key, including its version material.
 type keyData struct {
 	Name          string         `json:"name"`
-	Versions      map[int][]byte `json:"versions"` // version -> AES-256 key
+	Type          string         `json:"type,omitempty"` // "" == aes256-gcm96 (pre-typed keys)
+	Versions      map[int][]byte `json:"versions"`       // version -> AES key or PKCS#8 signing key
 	LatestVersion int            `json:"latest_version"`
 	CreatedTime   time.Time      `json:"created_time"`
 }
@@ -62,9 +63,13 @@ type keyData struct {
 // KeyInfo is the non-secret metadata for a key.
 type KeyInfo struct {
 	Name          string    `json:"name"`
+	Type          string    `json:"type"`
 	LatestVersion int       `json:"latest_version"`
 	Versions      []int     `json:"versions"`
 	CreatedTime   time.Time `json:"created_time"`
+	// PublicKeys holds the PEM public key per version for signing keys; nil for
+	// symmetric keys.
+	PublicKeys map[int]string `json:"public_keys,omitempty"`
 }
 
 // Engine is a transit secrets engine mounted at a storage prefix.
@@ -95,9 +100,16 @@ func (e *Engine) validateName(name string) error {
 	return nil
 }
 
-// CreateKey creates a new key with a single version. It fails with [ErrKeyExists]
-// if the name is already in use.
+// CreateKey creates a new symmetric (AES-256-GCM) key with a single version.
 func (e *Engine) CreateKey(ctx context.Context, name string) (*KeyInfo, error) {
+	return e.CreateTypedKey(ctx, name, KeyTypeAES256)
+}
+
+// CreateTypedKey creates a new key of the given type with a single version. It
+// fails with [ErrKeyExists] if the name is in use, or [ErrInvalidKeyType] for an
+// unknown type. keyType is one of the KeyType* constants; an empty string means
+// AES-256.
+func (e *Engine) CreateTypedKey(ctx context.Context, name, keyType string) (*KeyInfo, error) {
 	if err := e.validateName(name); err != nil {
 		return nil, err
 	}
@@ -107,12 +119,13 @@ func (e *Engine) CreateKey(ctx context.Context, name string) (*KeyInfo, error) {
 		return nil, err
 	}
 
-	material, err := randomKey()
+	material, err := generateMaterial(keyType)
 	if err != nil {
 		return nil, err
 	}
 	k := &keyData{
 		Name:          name,
+		Type:          normalizeType(keyType),
 		Versions:      map[int][]byte{1: material},
 		LatestVersion: 1,
 		CreatedTime:   e.now(),
@@ -129,7 +142,7 @@ func (e *Engine) Rotate(ctx context.Context, name string) (*KeyInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	material, err := randomKey()
+	material, err := generateMaterial(k.Type)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +190,9 @@ func (e *Engine) Encrypt(ctx context.Context, name string, plaintext []byte) (st
 	if err != nil {
 		return "", err
 	}
+	if !isSymmetric(k.Type) {
+		return "", ErrKeyTypeMismatch
+	}
 	aead, err := newAEAD(k.Versions[k.LatestVersion])
 	if err != nil {
 		return "", err
@@ -198,6 +214,9 @@ func (e *Engine) Decrypt(ctx context.Context, name, ciphertext string) ([]byte, 
 	k, err := e.load(ctx, name)
 	if err != nil {
 		return nil, err
+	}
+	if !isSymmetric(k.Type) {
+		return nil, ErrKeyTypeMismatch
 	}
 	material, ok := k.Versions[version]
 	if !ok {
@@ -253,12 +272,23 @@ func info(k *keyData) *KeyInfo {
 		versions = append(versions, v)
 	}
 	sort.Ints(versions)
-	return &KeyInfo{
+	ki := &KeyInfo{
 		Name:          k.Name,
+		Type:          normalizeType(k.Type),
 		LatestVersion: k.LatestVersion,
 		Versions:      versions,
 		CreatedTime:   k.CreatedTime,
 	}
+	if isSigningType(k.Type) {
+		pks := make(map[int]string, len(k.Versions))
+		for v, material := range k.Versions {
+			if pemStr, err := publicKeyPEM(material); err == nil {
+				pks[v] = pemStr
+			}
+		}
+		ki.PublicKeys = pks
+	}
+	return ki
 }
 
 func randomKey() ([]byte, error) {
