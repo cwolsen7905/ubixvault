@@ -50,6 +50,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s:%s" .Values.image.repository $tag -}}
 {{- end -}}
 
+{{/* In-cluster URL the backup job uses to reach the vault. */}}
+{{- define "ubixvault.backupAddress" -}}
+{{- $scheme := ternary "https" "http" .Values.tls.enabled -}}
+{{- printf "%s://%s:%v" $scheme (include "ubixvault.fullname" .) .Values.service.port -}}
+{{- end -}}
+
 {{/* Name of the Secret holding the auto-unseal KEK (existing or chart-created). */}}
 {{- define "ubixvault.autoUnsealSecretName" -}}
 {{- if .Values.autoUnseal.existingSecret -}}
