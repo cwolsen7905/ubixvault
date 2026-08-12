@@ -8,6 +8,18 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **MySQL/MariaDB storage backend** — run the vault against a database instead of
+  a local disk with `-storage mysql` (`-storage-mysql-dsn` or
+  `$UBIXVAULT_STORAGE_DSN`); `file` remains the default. The node becomes
+  replaceable: it can die and restart against the same durable, replicated
+  database. The vault creates its tables automatically. Values stay barrier
+  ciphertext — the database never sees plaintext, so a database or DSN compromise
+  yields ciphertext, not secrets. Single active writer (durability, not multi-writer
+  HA). Helm: `storage.type=mysql` with the DSN supplied via a Secret
+  (`storage.mysql.dsnSecret`), never a chart value; chart bumped to 0.1.10. No new
+  dependency (reuses the MySQL driver). See ADR D-014 and
+  `docs/design/sql-storage-backend.md`.
+
 - **Rekey** — rotate the Shamir unseal shares without downtime or data
   re-encryption. `POST /v1/sys/rekey/init` starts an attempt (new share
   count/threshold), `POST /v1/sys/rekey/update` feeds a quorum of the *current*
