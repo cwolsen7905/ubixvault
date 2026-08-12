@@ -75,6 +75,7 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
       storage**": the node can die and reschedule pointing at the same durable database,
       and the database's own HA handles durability. For most single-org production this is
       *sufficient HA*; it also de-risks any future Raft work.
+      Design: [`docs/design/sql-storage-backend.md`](design/sql-storage-backend.md) · ADR D-014.
 
 ### Continuous — trust & correctness (rides alongside Tier 0–1)
 - [ ] **Fuzz** the parsers — HCL policy, JWT/JWS, transit ciphertext, snapshot format.
