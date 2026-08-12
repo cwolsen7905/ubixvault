@@ -49,8 +49,26 @@ metrics:
     scrapeTimeout: 10s
     labels: {}          # extra labels, e.g. { release: kube-prometheus-stack }
 
+# --- Storage backend -------------------------------------------------------
+# Where the encrypted store lives.
+#   file  (default): on the persistence PVC below — single node, single disk.
+#   mysql: in a MySQL/MariaDB database — durable, replaceable-node storage. The
+#          node can die and reschedule against the same database, whose own HA
+#          handles durability. The vault CREATEs its tables automatically; you
+#          just provide a database, a user with rights on it, and a DSN Secret.
+#          Single active writer — replicaCount stays 1; this is durability, not
+#          multi-writer HA. When mysql, the persistence PVC below is not used.
+storage:
+  type: file                 # file | mysql
+  mysql:
+    # A Secret holding the go-sql-driver DSN, e.g.
+    #   ubixvault:PASSWORD@tcp(mariadb.db:3306)/ubixvault?tls=true
+    dsnSecret: ""            # REQUIRED when type=mysql
+    dsnSecretKey: dsn
+
 # --- Persistence -----------------------------------------------------------
-# The encrypted data directory. This is the whole vault at rest — back it up.
+# The encrypted data directory (storage.type=file only). The whole vault at
+# rest — back it up. Ignored when storage.type=mysql.
 persistence:
   enabled: true
   size: 1Gi

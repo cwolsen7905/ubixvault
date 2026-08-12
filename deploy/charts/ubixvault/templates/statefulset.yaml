@@ -10,6 +10,12 @@
 {{- if and .Values.autoUnseal.enabled (not .Values.sealTransit.enabled) (not .Values.autoUnseal.existingSecret) (not .Values.autoUnseal.create) -}}
 {{- fail "autoUnseal.enabled is true: set autoUnseal.existingSecret, or autoUnseal.create with autoUnseal.key" -}}
 {{- end -}}
+{{- if not (has .Values.storage.type (list "file" "mysql")) -}}
+{{- fail "storage.type must be \"file\" or \"mysql\"" -}}
+{{- end -}}
+{{- if and (eq .Values.storage.type "mysql") (not .Values.storage.mysql.dsnSecret) -}}
+{{- fail "storage.type=mysql requires storage.mysql.dsnSecret (a Secret holding the DSN)" -}}
+{{- end -}}
 {{- $tlsSecret := "" -}}
 {{- if .Values.tls.enabled -}}
 {{- $tlsSecret = default .Values.tls.certManager.secretName .Values.tls.existingSecret -}}
@@ -54,8 +60,13 @@ spec:
             - server
             - -listen
             - {{ printf "0.0.0.0:%d" (int .Values.containerPort) | quote }}
+            {{- if eq .Values.storage.type "mysql" }}
+            - -storage
+            - mysql
+            {{- else }}
             - -data
             - {{ .Values.persistence.mountPath | quote }}
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - -tls-cert
             - {{ printf "%s/tls.crt" .Values.tls.mountPath | quote }}
@@ -104,6 +115,13 @@ spec:
                   name: {{ required "sealTransit.enabled requires sealTransit.existingSecret" .Values.sealTransit.existingSecret }}
                   key: {{ .Values.sealTransit.secretKey }}
             {{- end }}
+            {{- if eq .Values.storage.type "mysql" }}
+            - name: UBIXVAULT_STORAGE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.mysql.dsnSecret }}
+                  key: {{ .Values.storage.mysql.dsnSecretKey }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -137,8 +155,10 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            {{- if eq .Values.storage.type "file" }}
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: tls
               mountPath: {{ .Values.tls.mountPath }}
@@ -149,6 +169,7 @@ spec:
               mountPath: {{ .Values.audit.persistence.mountPath }}
             {{- end }}
       volumes:
+        {{- if eq .Values.storage.type "file" }}
         {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}
@@ -156,6 +177,7 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim }}
+        {{- end }}
         {{- end }}
         {{- if .Values.tls.enabled }}
         - name: tls
@@ -178,9 +200,9 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if or (and .Values.persistence.enabled (not .Values.persistence.existingClaim)) (and .Values.audit.enabled .Values.audit.persistence.enabled) }}
+  {{- if or (and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim)) (and .Values.audit.enabled .Values.audit.persistence.enabled) }}
   volumeClaimTemplates:
-    {{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+    {{- if and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
     - metadata:
         name: data
         labels:

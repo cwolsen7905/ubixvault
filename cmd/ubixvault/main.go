@@ -79,7 +79,10 @@ func usage() {
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8200", "address to listen on")
-	dataDir := fs.String("data", "./data", "directory for encrypted storage")
+	storageType := fs.String("storage", "file", "storage backend: file or mysql")
+	dataDir := fs.String("data", "./data", "directory for encrypted storage (-storage file)")
+	storageDSN := fs.String("storage-mysql-dsn", os.Getenv("UBIXVAULT_STORAGE_DSN"),
+		"MySQL/MariaDB DSN for -storage mysql (or $UBIXVAULT_STORAGE_DSN)")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	tlsKey := fs.String("tls-key", "", "TLS private key file")
 	auditLog := fs.String("audit-log", "", "path to an audit log file (enables fail-closed audit logging)")
@@ -110,9 +113,25 @@ func runServer(args []string) error {
 		return err
 	}
 
-	phys, err := storage.NewFileBackend(*dataDir)
-	if err != nil {
-		return fmt.Errorf("open storage: %w", err)
+	var phys storage.Backend
+	switch *storageType {
+	case "file":
+		fb, err := storage.NewFileBackend(*dataDir)
+		if err != nil {
+			return fmt.Errorf("open storage: %w", err)
+		}
+		phys = fb
+	case "mysql":
+		if *storageDSN == "" {
+			return fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
+		}
+		mb, err := storage.NewMySQLBackend(*storageDSN)
+		if err != nil {
+			return fmt.Errorf("open storage: %w", err)
+		}
+		phys = mb
+	default:
+		return fmt.Errorf("unknown -storage %q (want file or mysql)", *storageType)
 	}
 
 	var coreOpts []core.Option
@@ -217,14 +236,18 @@ func runServer(args []string) error {
 		}()
 	}
 
+	storageDesc := *storageType
+	if *storageType == "file" {
+		storageDesc = "file:" + *dataDir
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		if tlsEnabled {
-			log.Printf("uBix Vault %s listening on https://%s (data: %s)", version, *listen, *dataDir)
+			log.Printf("uBix Vault %s listening on https://%s (storage: %s)", version, *listen, storageDesc)
 			errCh <- srv.ListenAndServeTLS(*tlsCert, *tlsKey)
 		} else {
 			log.Printf("WARNING: serving plain HTTP without TLS — set -tls-cert/-tls-key for production")
-			log.Printf("uBix Vault %s listening on http://%s (data: %s)", version, *listen, *dataDir)
+			log.Printf("uBix Vault %s listening on http://%s (storage: %s)", version, *listen, storageDesc)
 			errCh <- srv.ListenAndServe()
 		}
 	}()
