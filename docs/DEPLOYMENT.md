@@ -9,14 +9,94 @@ binary (`go build -o ubixvault ./cmd/ubixvault`).
 
 ## 1. Storage
 
-uBix Vault stores everything, encrypted, under a data directory:
+uBix Vault persists everything through a pluggable storage backend. Whatever the
+backend, it holds **only ciphertext** — the barrier encrypts every value before
+it is stored, so the store never sees plaintext.
+
+### File backend (default)
+
+Stores the encrypted data under a directory:
 
 ```sh
-ubixvault server -data /var/lib/ubixvault
+ubixvault server -data /var/lib/ubixvault           # -storage file is the default
 ```
 
-Back this directory up (see [Backups](#5-backups)). It contains only ciphertext,
-but losing it — or the means to unseal it — means losing the data.
+Back this directory up (see [Backups](#6-backups)). It is single-node and its
+durability rests on one disk.
+
+### MySQL/MariaDB backend
+
+Stores the encrypted data in a MySQL/MariaDB database, so the node becomes
+**replaceable**: it can die and restart — on another host — against the same
+durable, replicated database, and the database's own HA handles durability.
+
+```sh
+ubixvault server -storage mysql -storage-mysql-dsn "$UBIXVAULT_STORAGE_DSN"
+# or just set $UBIXVAULT_STORAGE_DSN and pass -storage mysql
+```
+
+**Setup is minimal — the vault creates its own tables.** You only provide a
+database and a user:
+
+```sql
+CREATE DATABASE ubixvault CHARACTER SET binary;
+CREATE USER 'ubixvault'@'%' IDENTIFIED BY 'a-strong-password';
+-- SELECT/INSERT/UPDATE/DELETE for normal operation; CREATE so the vault can
+-- create its two tables on first boot (you may drop CREATE afterward, or
+-- pre-create the tables and never grant it).
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON ubixvault.* TO 'ubixvault'@'%';
+```
+
+The DSN is a [go-sql-driver](https://github.com/go-sql-driver/mysql#dsn-data-source-name)
+string, e.g. `ubixvault:PASSWORD@tcp(db-host:3306)/ubixvault?tls=true`.
+
+**Single active writer.** Exactly one vault process may write to a given
+database: the barrier key, leases, and unseal progress live in memory, so two
+processes on one database would race and diverge. This is durable,
+replaceable-node storage, **not** multi-writer HA (keep `replicaCount: 1`).
+
+#### Securing the database credentials
+
+The DSN contains a database username and password. Two facts shape how much this
+matters, and how to protect it:
+
+- **The blast radius is bounded.** The database stores only barrier ciphertext,
+  and the master key (unseal shares / KEK) never touches the database or the DSN.
+  So a leaked DSN — or a fully compromised database — yields *ciphertext, not
+  secrets*. An attacker would still need the master key, which lives elsewhere.
+- **It is still a credential ("secret zero").** A secrets manager needs one
+  credential to start; you can shrink and protect it, not eliminate it.
+
+Protect it, roughly weakest to strongest:
+
+1. **Never put the DSN on the command line.** Pass it via `$UBIXVAULT_STORAGE_DSN`
+   (arguments are visible in `/proc/<pid>/cmdline` and `ps`). The Helm chart does
+   this for you — see below.
+2. **Least privilege + TLS to the database.** Scope the user to only the
+   `ubixvault` database, and use `?tls=true` in the DSN so credentials are
+   encrypted in transit. (`tls=true` and `tls=skip-verify` work out of the box; a
+   custom CA or client-certificate config is a planned enhancement.)
+3. **On Kubernetes:** keep the DSN in a `Secret` (the chart references it by name,
+   so it never appears in `values.yaml`, git, or `helm get values`), enable **etcd
+   encryption-at-rest**, and restrict `get secret` RBAC on it. Optionally source
+   the Secret from an external secret store (External Secrets Operator, etc.).
+4. **Remove the password entirely** (strongest): MariaDB `REQUIRE X509`
+   client-certificate (mTLS) auth, or cloud IAM auth / an auth-proxy sidecar
+   (RDS/Cloud SQL). The DSN then carries no password.
+
+#### Migrating an existing vault onto MySQL
+
+Use the snapshot machinery — it round-trips the whole encrypted store through the
+backend, so no data re-encryption or new tooling is needed:
+
+```sh
+# 1. Snapshot the file-backed vault (see Backups).
+ubixvault operator snapshot save -token "$ROOT" backup.snapshot
+# 2. Restore it into the MySQL backend (offline), then start on MySQL.
+ubixvault operator snapshot restore -storage mysql -storage-mysql-dsn "$DSN" backup.snapshot
+```
+
+The same unseal shares / KEK still work — only the physical store moved.
 
 ## 2. TLS
 
