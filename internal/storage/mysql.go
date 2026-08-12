@@ -162,7 +162,7 @@ func (b *MySQLBackend) List(ctx context.Context, prefix string) ([]string, error
 	defer func() { _ = rows.Close() }()
 
 	seen := make(map[string]struct{})
-	var children []string
+	children := make([]string, 0) // non-nil: an empty result must DeepEqual []string{}, not nil
 	for rows.Next() {
 		var kb []byte
 		if err := rows.Scan(&kb); err != nil {
