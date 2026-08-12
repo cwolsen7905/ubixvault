@@ -113,25 +113,9 @@ func runServer(args []string) error {
 		return err
 	}
 
-	var phys storage.Backend
-	switch *storageType {
-	case "file":
-		fb, err := storage.NewFileBackend(*dataDir)
-		if err != nil {
-			return fmt.Errorf("open storage: %w", err)
-		}
-		phys = fb
-	case "mysql":
-		if *storageDSN == "" {
-			return fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
-		}
-		mb, err := storage.NewMySQLBackend(*storageDSN)
-		if err != nil {
-			return fmt.Errorf("open storage: %w", err)
-		}
-		phys = mb
-	default:
-		return fmt.Errorf("unknown -storage %q (want file or mysql)", *storageType)
+	phys, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
+	if err != nil {
+		return err
 	}
 
 	var coreOpts []core.Option
@@ -438,7 +422,7 @@ func operatorRekeyCancel(args []string) error {
 
 func operatorSnapshot(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: operator snapshot save <file> | restore -data <dir> <file>")
+		return fmt.Errorf("usage: operator snapshot save <file> | restore [-storage file|mysql] <file>")
 	}
 	switch args[0] {
 	case "save":
@@ -477,18 +461,22 @@ func operatorSnapshotSave(args []string) error {
 	return nil
 }
 
-// operatorSnapshotRestore restores a snapshot offline, directly into a data
-// directory (the server must not be running against it). Start the server on the
-// directory afterwards and unseal as usual.
+// operatorSnapshotRestore restores a snapshot offline into a storage backend
+// that the server is not running against. Start the server on that backend
+// afterwards and unseal as usual. Restoring into a different backend than the
+// source (e.g. file -> mysql) is how a vault migrates between backends.
 func operatorSnapshotRestore(args []string) error {
 	fs := flag.NewFlagSet("operator snapshot restore", flag.ExitOnError)
-	dataDir := fs.String("data", "", "data directory to restore into (must be empty/new)")
+	storageType := fs.String("storage", "file", "storage backend to restore into: file or mysql")
+	dataDir := fs.String("data", "", "data directory to restore into (-storage file; must be empty/new)")
+	storageDSN := fs.String("storage-mysql-dsn", os.Getenv("UBIXVAULT_STORAGE_DSN"),
+		"MySQL/MariaDB DSN to restore into (-storage mysql; or $UBIXVAULT_STORAGE_DSN)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	path := fs.Arg(0)
-	if *dataDir == "" || path == "" {
-		return fmt.Errorf("usage: operator snapshot restore -data <dir> <file>")
+	if path == "" {
+		return fmt.Errorf("usage: operator snapshot restore [-storage file|mysql] (-data <dir> | -storage-mysql-dsn <dsn>) <file>")
 	}
 	f, err := os.Open(path) //nolint:gosec // G304: operator-provided snapshot path
 	if err != nil {
@@ -496,15 +484,39 @@ func operatorSnapshotRestore(args []string) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	backend, err := storage.NewFileBackend(*dataDir)
+	backend, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
 	if err != nil {
-		return fmt.Errorf("open data dir: %w", err)
+		return err
 	}
 	if err := snapshot.Restore(context.Background(), backend, f); err != nil {
 		return err
 	}
-	fmt.Printf("restored %s into %s — start the server on this directory and unseal\n", path, *dataDir)
+	if *storageType == "mysql" {
+		fmt.Printf("restored %s into the MySQL backend — start the server with -storage mysql and unseal\n", path)
+	} else {
+		fmt.Printf("restored %s into %s — start the server on this directory and unseal\n", path, *dataDir)
+	}
 	return nil
+}
+
+// openStorageBackend builds the physical storage backend selected by storageType
+// ("file" uses dataDir; "mysql" uses dsn). Shared by the server and the offline
+// snapshot-restore command.
+func openStorageBackend(storageType, dataDir, dsn string) (storage.Backend, error) {
+	switch storageType {
+	case "file":
+		if dataDir == "" {
+			return nil, fmt.Errorf("-storage file requires -data <dir>")
+		}
+		return storage.NewFileBackend(dataDir)
+	case "mysql":
+		if dsn == "" {
+			return nil, fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
+		}
+		return storage.NewMySQLBackend(dsn)
+	default:
+		return nil, fmt.Errorf("unknown -storage %q (want file or mysql)", storageType)
+	}
 }
 
 func defaultAddr() string {
