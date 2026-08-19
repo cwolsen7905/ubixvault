@@ -119,6 +119,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// System / lifecycle. These are unauthenticated by necessity: there is no
 	// token before the vault exists or while it is sealed.
 	mux.HandleFunc("GET /v1/sys/health", h.health)
+	mux.HandleFunc("GET /v1/sys/livez", h.livez)
 	mux.HandleFunc("GET /v1/sys/metrics", h.metricsEndpoint)
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)

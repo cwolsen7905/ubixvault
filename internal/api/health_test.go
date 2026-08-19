@@ -52,3 +52,17 @@ func TestHealthNeedsNoToken(t *testing.T) {
 		t.Fatalf("health without token = %d, want 200", rec.Code)
 	}
 }
+
+func TestLivezAlwaysOK(t *testing.T) {
+	// Uninitialized: health is 501, but livez must still be 200 — a liveness
+	// probe must not crash-loop a not-yet-initialized (or sealed) vault.
+	h := newTestHandler()
+	if rec := do(t, h, "GET", "/v1/sys/livez", ""); rec.Code != http.StatusOK {
+		t.Fatalf("livez (uninitialized) = %d, want 200", rec.Code)
+	}
+	// Unsealed: still 200.
+	hu, _ := unsealedHandler(t)
+	if rec := do(t, hu, "GET", "/v1/sys/livez", ""); rec.Code != http.StatusOK {
+		t.Fatalf("livez (unsealed) = %d, want 200", rec.Code)
+	}
+}

@@ -65,7 +65,7 @@ func publicEndpoint(path string) bool {
 		return true
 	}
 	switch path {
-	case "/", "/ui", "/v1/sys/health", "/v1/sys/metrics":
+	case "/", "/ui", "/v1/sys/health", "/v1/sys/livez", "/v1/sys/metrics":
 		return true
 	default:
 		return false

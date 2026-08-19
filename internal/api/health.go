@@ -13,13 +13,14 @@ type healthResponse struct {
 	UptimeSeconds int64  `json:"uptime_seconds"`
 }
 
-// health reports liveness/readiness. The HTTP status encodes readiness so load
-// balancers and probes can act on it without parsing the body:
+// health reports readiness. The HTTP status encodes it so load balancers and
+// probes can act without parsing the body:
 //   - 200 initialized and unsealed (ready)
 //   - 503 sealed (not ready)
 //   - 501 not initialized
 //
-// It is unauthenticated and excluded from audit logging (see ServeHTTP).
+// For process liveness (which must ignore seal state) use livez instead. This
+// endpoint is unauthenticated and excluded from audit logging (see ServeHTTP).
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	st, err := h.core.Status(r.Context())
 	if err != nil {
@@ -43,4 +44,15 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 		ServerTimeUTC: now.Unix(),
 		UptimeSeconds: int64(now.Sub(h.startTime).Seconds()),
 	})
+}
+
+// livez reports process liveness. Unlike health (whose status encodes
+// readiness — 501 uninitialized, 503 sealed), livez returns 200 whenever the
+// HTTP server is serving, regardless of init/seal state. That makes it safe as
+// a Kubernetes liveness probe: it never fails during the normal sealed window,
+// so it will not crash-loop a sealed vault, while still confirming the HTTP
+// server actually responds (which a bare TCP probe cannot). Unauthenticated and
+// audit-exempt, like health.
+func (h *Handler) livez(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"alive": true})
 }

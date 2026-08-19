@@ -129,18 +129,24 @@ spec:
             - name: api
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
-          # Liveness is a TCP check on purpose: a sealed vault answers 503 on
-          # /v1/sys/health, so an httpGet liveness probe would kill it before a
-          # human (or auto-unseal) can unseal it. Readiness uses the health
-          # endpoint so only an unsealed vault (200) receives traffic.
+          # Liveness/startup use /v1/sys/livez, which returns 200 whenever the
+          # process is serving — regardless of seal state — so a sealed vault is
+          # never killed before it can be (auto-)unsealed, and (unlike a bare TCP
+          # probe) a hung HTTP server is still detected. Readiness uses
+          # /v1/sys/health (503 while sealed) so only an unsealed vault gets
+          # traffic. (livez requires uBix Vault >= 0.2.0-beta.10.)
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: /v1/sys/livez
               port: api
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /v1/sys/livez
               port: api
+              scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}

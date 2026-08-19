@@ -4,6 +4,29 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0-beta.10] — 2026-08-19
+
+Tenth beta: a dedicated Kubernetes liveness endpoint.
+
+### Added
+
+- **`GET /v1/sys/livez`** — a liveness endpoint that returns `200` whenever the
+  HTTP server is serving, regardless of init/seal state. Unlike `/v1/sys/health`
+  (whose status encodes *readiness* — `501` uninitialized, `503` sealed), `livez`
+  is safe as a Kubernetes liveness probe: it never fails during the normal sealed
+  window, so it will not crash-loop a sealed vault, yet it still verifies the HTTP
+  server actually responds (which a bare TCP probe cannot). Unauthenticated and
+  audit/rate-limit-exempt, like `/v1/sys/health`.
+
+### Changed
+
+- **Helm chart 0.1.11** — the `livenessProbe` and `startupProbe` now `httpGet`
+  `/v1/sys/livez` instead of a bare `tcpSocket` check. This removes the recurring
+  `TLS handshake error … EOF` log noise (a TCP probe against the TLS port never
+  completes a handshake) and detects a hung-but-listening server. Readiness
+  continues to use `/v1/sys/health`. The chart now requires **>= 0.2.0-beta.10**;
+  do not deploy chart 0.1.11 against an older image (the probe would 404).
+
 ## [0.2.0-beta.9] — 2026-08-11
 
 Ninth beta: production-oriented storage & operations — durable database storage,
