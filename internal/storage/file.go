@@ -15,6 +15,14 @@ import (
 // "b". This mirrors HashiCorp Vault's file backend.
 const filePrefix = "_"
 
+// tempFilePrefix names the transient files Put writes before renaming into place.
+// It deliberately does NOT start with filePrefix: a crash between creating a temp
+// file and renaming it leaves the temp file behind, and List only surfaces
+// filePrefix-prefixed files as keys — so a leftover temp file is never mistaken
+// for a data key (in List, Walk, or a snapshot). The leading "." also keeps it
+// out of ordinary listings.
+const tempFilePrefix = ".uvtmp-"
+
 const (
 	dirPerm  os.FileMode = 0o700 // secrets hygiene: not group/world accessible
 	filePerm os.FileMode = 0o600
@@ -97,7 +105,7 @@ func (b *FileBackend) Put(_ context.Context, entry *Entry) error {
 		return fmt.Errorf("storage: create dir for %q: %w", entry.Key, err)
 	}
 
-	tmp, err := os.CreateTemp(dir, filePrefix+"tmp-*")
+	tmp, err := os.CreateTemp(dir, tempFilePrefix+"*")
 	if err != nil {
 		return fmt.Errorf("storage: temp file for %q: %w", entry.Key, err)
 	}
