@@ -53,6 +53,6 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 // so it will not crash-loop a sealed vault, while still confirming the HTTP
 // server actually responds (which a bare TCP probe cannot). Unauthenticated and
 // audit-exempt, like health.
-func (h *Handler) livez(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) livez(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"alive": true})
 }

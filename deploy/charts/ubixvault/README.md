@@ -45,6 +45,45 @@ kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
   ubixvault operator init -shares 5 -threshold 3    # save the shares + root token
 ```
 
+## Deploying with MySQL storage (production example)
+
+Run the vault against a MySQL/MariaDB database so the node is replaceable (see
+[`examples/values-mysql-production.yaml`](examples/values-mysql-production.yaml),
+which targets `https://vault.ubixsys.com`). Ordered runbook:
+
+```sh
+# 1. Namespace (labeled so Replikate syncs the *.ubixsys.com wildcard TLS secret).
+#    Managed in the kube-stuff/kubernetes repo (namespaces/ubixvault.yml).
+
+# 2. Prepare the database — the vault creates its own tables, you create the DB + user.
+#    On your MariaDB:
+#      CREATE DATABASE ubixvault CHARACTER SET binary;
+#      CREATE USER 'ubixvault'@'%' IDENTIFIED BY 'STRONG-PASSWORD';
+#      GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON ubixvault.* TO 'ubixvault'@'%';
+
+# 3. Secrets: the DSN and the auto-unseal KEK (never put these in values/git).
+kubectl -n ubixvault create secret generic ubixvault-db \
+  --from-literal=dsn='ubixvault:STRONG-PASSWORD@tcp(MARIADB-HOST:3306)/ubixvault?tls=true'
+kubectl -n ubixvault create secret generic ubixvault-kek \
+  --from-literal=auto-unseal-key="$(head -c32 /dev/urandom | xxd -p | tr -d '\n')"
+
+# 4. Install.
+helm upgrade --install vault ./deploy/charts/ubixvault \
+  -n ubixvault -f deploy/charts/ubixvault/examples/values-mysql-production.yaml
+
+# 5. Initialize once — SAVE the recovery keys and root token (shown once).
+kubectl -n ubixvault exec -it vault-ubixvault-0 -- ubixvault operator init
+
+# 6. Verify: it auto-unseals from the KEK; readiness turns green once unsealed.
+kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
+  ubixvault operator seal-status -tls-skip-verify -address https://127.0.0.1:8200
+```
+
+Because storage is the database, there is **no data PVC** and the pod can be
+rescheduled freely — it reconnects to the same store and auto-unseals. Enable
+scheduled backups afterward (see [Backups](#backups)) once you have created a
+least-privilege `sys/snapshot` token Secret.
+
 ## Design notes
 
 - **StatefulSet, 1 replica** with a `volumeClaimTemplate` for the encrypted data
