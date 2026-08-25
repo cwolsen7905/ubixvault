@@ -299,6 +299,32 @@ Stored entries are format-versioned, so a newer binary reads an older store.
 Upgrade in place: stop the service, replace the binary, start it, and unseal (or
 let auto-unseal run). Take a snapshot first.
 
+## 9. Verifying released images
+
+Published images are **keyless-signed with [cosign](https://github.com/sigstore/cosign)**
+and carry an **SPDX SBOM attestation**, both produced in CI via GitHub OIDC and
+bound to the image digest. Verify a release before deploying:
+
+```sh
+IMAGE=ghcr.io/cwolsen7905/ubixvault:0.2.0-beta.10
+IDENTITY='https://github.com/cwolsen7905/ubixvault/.github/workflows/image.yml@refs/tags/v0.2.0-beta.10'
+
+# Verify the signature came from this repo's release workflow.
+cosign verify "$IMAGE" \
+  --certificate-identity "$IDENTITY" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Verify and extract the SBOM attestation.
+cosign verify-attestation "$IMAGE" --type spdxjson \
+  --certificate-identity "$IDENTITY" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r '.payload | @base64d | fromjson | .predicate' > sbom.spdx.json
+```
+
+Use `--certificate-identity-regexp 'https://github.com/cwolsen7905/ubixvault/.*'`
+instead of the exact identity to accept any tag. A failed verification means the
+image is not a genuine, unmodified release — do not deploy it.
+
 ## Security notes
 
 - **Not production-hardened / no external security review.** Treat accordingly.
