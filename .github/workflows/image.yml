@@ -16,6 +16,7 @@ env:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless cosign signing/attestation via GitHub OIDC
 
 jobs:
   publish:
@@ -52,6 +53,7 @@ jobs:
             org.opencontainers.image.licenses=BSD-3-Clause
 
       - name: Build & push (linux/amd64, linux/arm64)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -63,3 +65,26 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Supply-chain: keyless-sign the image and attach an SBOM attestation, both
+      # bound to the immutable digest and verifiable via the GitHub OIDC identity.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the published image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+
+      - name: Attest the SBOM to the image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}@${DIGEST}"
