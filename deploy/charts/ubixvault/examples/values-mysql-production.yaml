@@ -1,0 +1,84 @@
+# Example production values: uBix Vault backed by a MySQL/MariaDB database,
+# reachable at https://vault.ubixsys.com.
+#
+# This is the "durable, replaceable node" shape (ADR D-014): the encrypted store
+# lives in a database, so the vault pod can be rescheduled onto any node and come
+# back against the same data. The database sees only ciphertext.
+#
+# Prerequisites (see the chart README "Deploying with MySQL storage"):
+#   - the `ubixvault` namespace exists and is labeled cert-manager-tls: tls-prod
+#     so Replikate syncs the *.ubixsys.com wildcard into it;
+#   - a MariaDB database + user exist, and its DSN is in a Secret `ubixvault-db`;
+#   - an auto-unseal KEK is in a Secret `ubixvault-kek`.
+#
+# Deploy:
+#   helm upgrade --install vault ./deploy/charts/ubixvault \
+#     -n ubixvault -f deploy/charts/ubixvault/examples/values-mysql-production.yaml
+
+# Pin to an immutable release tag rather than tracking a moving one.
+image:
+  repository: ghcr.io/cwolsen7905/ubixvault
+  tag: "0.2.0-beta.10"
+
+# --- Storage: MySQL/MariaDB -------------------------------------------------
+# The DSN comes from a Secret (never a chart value). The vault creates its tables.
+storage:
+  type: mysql
+  mysql:
+    dsnSecret: ubixvault-db      # Secret with key `dsn` = user:pass@tcp(host:3306)/ubixvault?tls=true
+    dsnSecretKey: dsn
+
+# --- TLS: the Replikate-synced *.ubixsys.com wildcard -----------------------
+tls:
+  enabled: true
+  existingSecret: tls-wildcard-ubixsys
+
+# --- Auto-unseal: a KEK you manage in a Secret ------------------------------
+autoUnseal:
+  enabled: true
+  existingSecret: ubixvault-kek
+  secretKey: auto-unseal-key
+
+# --- Ingress: vault.ubixsys.com, TLS re-encrypted end to end ----------------
+# A secrets manager is sensitive — restrict who can reach it.
+ingress:
+  enabled: true
+  className: nginx
+  host: vault.ubixsys.com
+  tlsSecret: tls-wildcard-ubixsys
+  whitelistSourceRange: ""       # set a CIDR allow-list for real use, e.g. "10.0.0.0/8"
+
+# --- Auth & observability ---------------------------------------------------
+kubernetesAuth:
+  enabled: true                  # pods authenticate with their ServiceAccount token
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+# Optional per-client rate limiting; on behind an ingress, trustForwarded keys on
+# the real client IP.
+rateLimit:
+  enabled: true
+  perSecond: 50
+  burst: 100
+  trustForwarded: true
+
+# --- Scheduled off-node backups (enable AFTER init) -------------------------
+# Needs a least-privilege sys/snapshot token in a Secret (see the README). Enable
+# once the vault is initialized and that token Secret exists.
+backup:
+  enabled: false
+  # tokenSecret: ubixvault-backup-token
+  # schedule: "0 */6 * * *"
+  # persistence:
+  #   storageClass: <network-backed-class>   # off-node durability
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
