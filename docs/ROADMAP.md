@@ -1,6 +1,6 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-08-06 · Current release `v0.2.0-beta.8`
+> **Status:** Active · Last updated 2026-08-26 · Current release `v0.2.0-beta.10`
 
 uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
 minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
@@ -8,10 +8,12 @@ barrier, Shamir seal/unseal, all cryptography — is standard-library Go written
 in-house, so the entire trust path can be read in an afternoon. It speaks a
 Vault-compatible HTTP API so existing clients work unchanged.
 
-The **feature core is essentially complete** (see below). The remaining work to a real
-`1.0` is not more features — it is the three things that gate running a secrets manager in
-production: **durable storage**, **hardened correctness**, and **external review**. This
-roadmap is sequenced around that reality.
+The **feature core is essentially complete**, and as of `v0.2.0-beta.10` the two
+engineering gates that were open — **durable storage** (a MySQL/MariaDB backend) and
+**hardened correctness** (parser fuzzing, crypto property tests, a crash-recovery fix,
+signed images + SBOM) — have largely landed. What remains for a real `1.0` is the
+**cloud-KMS/HSM seal** (design accepted, implementation pending) and the one gate that is
+not ours to build: an **external security review**. This roadmap is sequenced around that.
 
 ## Honest positioning (read before deploying)
 
@@ -31,7 +33,7 @@ onto it:
 
 ---
 
-## Where it is now (through `v0.2.0-beta.8`)
+## Where it is now (through `v0.2.0-beta.10`)
 
 Core — complete, tested, documented:
 
@@ -52,6 +54,11 @@ Core — complete, tested, documented:
 - [x] **Web console** (`/ui/`) — KV, policies, tokens, PKI.
 - [x] **Operations** — Prometheus metrics, rate limiting, health/readiness, encrypted snapshot/restore.
 - [x] **Delivery** — `ubixvault server` + `operator` CLI, single-node Helm chart, multi-arch GHCR images, CI (build/test/lint/govulncheck/MariaDB integration).
+- [x] **Rekey** — live rotation of the Shamir unseal shares (`sys/rekey`, `operator rekey`), no downtime.
+- [x] **MySQL/MariaDB storage backend** — durable, replaceable-node storage (`-storage mysql`); the DB holds only ciphertext (ADR D-014).
+- [x] **Scheduled backups** — opt-in chart CronJob snapshotting to an off-node PVC.
+- [x] **Signed releases** — keyless cosign signatures + SPDX SBOM attestation on every published image.
+- [x] **Dedicated liveness endpoint** (`/v1/sys/livez`), used by the chart's probes.
 
 ---
 
@@ -62,15 +69,15 @@ guiding rule: **durability without correctness is a trap** — HA on top of un-h
 crypto is just a reliable way to lose or leak secrets — so the hardening work runs
 *alongside* the storage work, not after it.
 
-### Tier 0 — production safety (do first; small)
-- [ ] **Automated, tested, off-node backups.** Wire `snapshot save` to a scheduled job →
-      object storage, and prove a restore. Converts "single disk dies = total loss" into
-      "lose minutes." (Chart CronJob + a snapshot-to-object-store target.)
-- [ ] **Rekey** — operator flow to re-split the master key into fresh Shamir shares (and
-      change threshold/count), for when a share-holder leaves. Mirrors `generate-root`.
+### Tier 0 — production safety (do first; small) — **done**
+- [x] **Automated, off-node backups.** Chart CronJob runs `snapshot save` to a separate
+      (network-backed) PVC. *Follow-up:* timestamped history + direct object-storage upload
+      (needs an uploader image alongside the shell-less vault image).
+- [x] **Rekey** — live rotation of the Shamir unseal shares (`sys/rekey`, `operator rekey`),
+      no downtime, no data re-encryption.
 
-### Tier 1 — durable storage (the real production unlock)
-- [ ] **SQL storage backend** over the existing MySQL/MariaDB driver (no new dependency).
+### Tier 1 — durable storage (the real production unlock) — **done**
+- [x] **SQL storage backend** over the existing MySQL/MariaDB driver (no new dependency).
       Turns "single node + local disk" into "**replaceable node over managed, replicated
       storage**": the node can die and reschedule pointing at the same durable database,
       and the database's own HA handles durability. For most single-org production this is
@@ -78,16 +85,20 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
       Design: [`docs/design/sql-storage-backend.md`](design/sql-storage-backend.md) · ADR D-014.
 
 ### Continuous — trust & correctness (rides alongside Tier 0–1)
-- [ ] **Fuzz** the parsers — HCL policy, JWT/JWS, transit ciphertext, snapshot format.
-- [ ] **Property tests** for Shamir (split/combine round-trips, threshold behavior) and the barrier.
-- [ ] **Race / chaos tests** — concurrent access; kill mid-write and verify recovery.
-- [ ] **Supply-chain hygiene** — signed, reproducible release images (cosign), SBOM.
+- [x] **Fuzz** the parsers — HCL policy, JWT/JWS, transit ciphertext, snapshot restore.
+- [x] **Property tests** for Shamir (split/combine round-trips) and the barrier (round-trip + encryption-at-rest).
+- [~] **Race / chaos tests** — crash-mid-write recovery done (found + fixed a real temp-file bug);
+      broader concurrent-load testing still open.
+- [x] **Supply-chain hygiene** — keyless cosign signatures + SPDX SBOM attestation on every image.
+      *Follow-up:* reproducible builds.
 
 ### Tier 2 — pre-production trust gates (before real secrets land)
-- [ ] **Pluggable cloud-KMS/HSM seal** behind the existing seal interface (kept zero-dep by
+- [~] **Pluggable cloud-KMS/HSM seal** behind the existing seal interface (kept zero-dep by
       staying over-the-wire / pluggable, like the transit seal), so the KEK is never on the host.
-      Design: [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) · ADR D-015 (external-command seal).
-- [ ] **`SECURITY.md`** + coordinated-disclosure policy; threat-model refresh (`docs/DESIGN.md`).
+      **Design accepted** — [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) · ADR D-015
+      (external-command seal); **implementation pending**.
+- [x] **`SECURITY.md`** + coordinated-disclosure policy, supported-versions, and scope.
+      Threat-model refresh in `docs/DESIGN.md` still open.
 - [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
       Cure53) when feasible; at minimum a scoped external look + the hardening above first.
 
