@@ -48,14 +48,17 @@ const (
 
 // Seal types recorded in the seal config.
 const (
-	SealTypeShamir  = "shamir"
-	SealTypeAuto    = "auto"    // auto-unseal with a locally-held KEK
-	SealTypeTransit = "transit" // auto-unseal via a remote Transit engine
+	SealTypeShamir   = "shamir"
+	SealTypeAuto     = "auto"     // auto-unseal with a locally-held KEK
+	SealTypeTransit  = "transit"  // auto-unseal via a remote Transit engine
+	SealTypeExternal = "external" // auto-unseal via an operator-supplied KMS/HSM command
 )
 
 // isAutoSeal reports whether a seal type is one of the auto-unseal modes (which
 // share the recovery-key and root-regeneration behaviour), as opposed to Shamir.
-func isAutoSeal(t string) bool { return t == SealTypeAuto || t == SealTypeTransit }
+func isAutoSeal(t string) bool {
+	return t == SealTypeAuto || t == SealTypeTransit || t == SealTypeExternal
+}
 
 // Errors returned by Core.
 var (

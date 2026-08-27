@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -98,6 +99,12 @@ func runServer(args []string) error {
 	sealTransitCACert := fs.String("seal-transit-ca-cert", "", "PEM CA bundle to trust for the transit seal vault")
 	sealTransitSkipVerify := fs.Bool("seal-transit-tls-skip-verify", false,
 		"skip TLS verification to the transit seal vault (INSECURE)")
+	sealExternalCmd := fs.String("seal-external-command", os.Getenv("UBIXVAULT_SEAL_EXTERNAL_COMMAND"),
+		"command that wraps/unwraps the master key via a KMS/HSM (`<cmd> wrap|unwrap` over stdin/stdout)")
+	var sealExternalArgs stringSliceFlag
+	fs.Var(&sealExternalArgs, "seal-external-arg", "extra argument passed before the wrap/unwrap mode (repeatable)")
+	sealExternalTimeout := fs.Duration("seal-external-timeout", 30*time.Second,
+		"timeout for each external seal command invocation")
 	rateLimit := fs.Float64("rate-limit", 0, "per-client API requests/second (0 disables rate limiting)")
 	rateBurst := fs.Float64("rate-limit-burst", 0, "rate-limit burst size; defaults to -rate-limit when unset")
 	rateTrustFwd := fs.Bool("rate-limit-trust-forwarded", false,
@@ -118,12 +125,23 @@ func runServer(args []string) error {
 		return err
 	}
 
+	// At most one auto-unseal mode may be configured.
+	sealModes := 0
+	for _, set := range []bool{*autoUnsealKey != "", *sealTransitAddr != "", *sealExternalCmd != ""} {
+		if set {
+			sealModes++
+		}
+	}
+	if sealModes > 1 {
+		return fmt.Errorf("configure at most one auto-unseal mode: -auto-unseal-key, -seal-transit-*, or -seal-external-command")
+	}
+
 	var coreOpts []core.Option
 	switch {
+	case *sealExternalCmd != "":
+		coreOpts = append(coreOpts, core.WithSeal(
+			seal.NewExternal(*sealExternalCmd, sealExternalArgs, nil, *sealExternalTimeout)))
 	case *sealTransitAddr != "":
-		if *autoUnsealKey != "" {
-			return fmt.Errorf("use either -auto-unseal-key or -seal-transit-*, not both")
-		}
 		var caPEM []byte
 		if *sealTransitCACert != "" {
 			b, err := os.ReadFile(*sealTransitCACert)
@@ -532,6 +550,16 @@ func envTrue(name string) bool {
 		return true
 	}
 	return false
+}
+
+// stringSliceFlag collects a repeatable string flag into a slice, in order.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, " ") }
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
 
 // clientConfig holds the connection flags shared by the operator subcommands.
