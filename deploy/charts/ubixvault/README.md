@@ -25,7 +25,7 @@ Deploys a **single-node** uBix Vault to Kubernetes.
 ```sh
 # Minimal (TLS via an existing Secret, auto-unseal via an existing Secret):
 helm install vault ./deploy/charts/ubixvault \
-  --namespace ubixvault --create-namespace \
+  --namespace ubixvault-prod \
   --set image.repository=<your-registry>/ubixvault \
   --set tls.existingSecret=ubixvault-tls \
   --set autoUnseal.existingSecret=ubixvault-kek
@@ -34,26 +34,30 @@ helm install vault ./deploy/charts/ubixvault \
 Create the auto-unseal KEK Secret first (32 random bytes, 64 hex chars):
 
 ```sh
-kubectl -n ubixvault create secret generic ubixvault-kek \
+kubectl -n ubixvault-prod create secret generic ubixvault-kek \
   --from-literal=auto-unseal-key="$(head -c32 /dev/urandom | xxd -p | tr -d '\n')"
 ```
 
 Then **initialize once** — see the post-install notes (`helm status`), or:
 
 ```sh
-kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
+kubectl -n ubixvault-prod exec -it vault-ubixvault-0 -- \
   ubixvault operator init -shares 5 -threshold 3    # save the shares + root token
 ```
 
-## Deploying with MySQL storage (production example)
+## Deploying with MySQL storage
 
-Run the vault against a MySQL/MariaDB database so the node is replaceable (see
-[`examples/values-mysql-production.yaml`](examples/values-mysql-production.yaml),
-which targets `https://vault.ubixsys.com`). Ordered runbook:
+Run the vault against a MySQL/MariaDB database so the node is replaceable. The
+example below uses the production environment (`ubixvault-prod`,
+`vault.prod.ubixsys.com`); for dev, substitute `ubixvault-dev`,
+`vault.dev.ubixsys.com`, and the `tls-wildcard-ubixsys-dev` secret. Ordered runbook:
 
 ```sh
-# 1. Namespace (labeled so Replikate syncs the *.ubixsys.com wildcard TLS secret).
-#    Managed in the kube-stuff/kubernetes repo (namespaces/ubixvault.yml).
+NS=ubixvault-prod          # or ubixvault-dev
+
+# 1. Namespace: managed in the kube-stuff/kubernetes repo (namespaces/$NS.yml),
+#    labeled cert-manager-tls: tls-prod (or tls-dev) so Replikate syncs the
+#    matching *.ubixsys.com wildcard TLS secret into it.
 
 # 2. Prepare the database — the vault creates its own tables, you create the DB + user.
 #    On your MariaDB:
@@ -62,20 +66,26 @@ which targets `https://vault.ubixsys.com`). Ordered runbook:
 #      GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON ubixvault.* TO 'ubixvault'@'%';
 
 # 3. Secrets: the DSN and the auto-unseal KEK (never put these in values/git).
-kubectl -n ubixvault create secret generic ubixvault-db \
+kubectl -n "$NS" create secret generic ubixvault-db \
   --from-literal=dsn='ubixvault:STRONG-PASSWORD@tcp(MARIADB-HOST:3306)/ubixvault?tls=true'
-kubectl -n ubixvault create secret generic ubixvault-kek \
+kubectl -n "$NS" create secret generic ubixvault-kek \
   --from-literal=auto-unseal-key="$(head -c32 /dev/urandom | xxd -p | tr -d '\n')"
 
-# 4. Install.
-helm upgrade --install vault ./deploy/charts/ubixvault \
-  -n ubixvault -f deploy/charts/ubixvault/examples/values-mysql-production.yaml
+# 4. Install (DSN comes from the Secret; no data PVC is provisioned).
+helm upgrade --install vault ./deploy/charts/ubixvault -n "$NS" \
+  --set image.tag=0.2.0-beta.10 \
+  --set storage.type=mysql --set storage.mysql.dsnSecret=ubixvault-db \
+  --set autoUnseal.existingSecret=ubixvault-kek \
+  --set tls.existingSecret=tls-wildcard-ubixsys-prod \
+  --set ingress.enabled=true \
+  --set ingress.host=vault.prod.ubixsys.com \
+  --set ingress.tlsSecret=tls-wildcard-ubixsys-prod
 
 # 5. Initialize once — SAVE the recovery keys and root token (shown once).
-kubectl -n ubixvault exec -it vault-ubixvault-0 -- ubixvault operator init
+kubectl -n "$NS" exec -it vault-ubixvault-0 -- ubixvault operator init
 
 # 6. Verify: it auto-unseals from the KEK; readiness turns green once unsealed.
-kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
+kubectl -n "$NS" exec -it vault-ubixvault-0 -- \
   ubixvault operator seal-status -tls-skip-verify -address https://127.0.0.1:8200
 ```
 
@@ -142,7 +152,7 @@ requires the unseal shares or the KEK.
 ### Manual snapshot
 
 ```sh
-kubectl -n ubixvault exec -it vault-ubixvault-0 -- \
+kubectl -n ubixvault-prod exec -it vault-ubixvault-0 -- \
   ubixvault operator snapshot save /var/lib/ubixvault/backup.snapshot
 ```
 
@@ -171,7 +181,7 @@ TOKEN=$(curl -sf -H "X-Vault-Token: $ROOT" -X POST \
   | jq -r .auth.client_token)
 
 # 3. A Secret the CronJob reads.
-kubectl -n ubixvault create secret generic uv-backup-token \
+kubectl -n ubixvault-prod create secret generic uv-backup-token \
   --from-literal=token="$TOKEN"
 ```
 

@@ -6,7 +6,7 @@ description: |
   sandbox / dev / internal use, not a production HA story.
 type: application
 # Chart version — bump on chart changes, independent of the app.
-version: 0.1.12
+version: 0.1.13
 # The uBix Vault release this chart targets.
 # NOTE: 0.1.11 liveness/startup probes use GET /v1/sys/livez — requires >= 0.2.0-beta.10.
 appVersion: "0.2.0-beta.10"
