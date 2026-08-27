@@ -4,6 +4,19 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **External-command (KMS/HSM) auto-unseal seal** — reach any cloud KMS
+  (AWS/GCP/Azure) or hardware HSM without a provider SDK. `-seal-external-command`
+  configures a command the vault invokes as `<cmd> [args] wrap|unwrap` over
+  stdin/stdout to wrap/unwrap the master key; the provider-specific logic and
+  credentials live in that command, so the vault adds no new dependency (ADR
+  D-015). `-seal-external-arg` (repeatable) and `-seal-external-timeout` tune it;
+  a failing or slow command leaves the vault sealed (fail-safe). Joins the static
+  KEK and transit seals behind the same interface.
+
 ## [0.2.0-beta.10] — 2026-08-19
 
 Tenth beta: a dedicated Kubernetes liveness endpoint.
