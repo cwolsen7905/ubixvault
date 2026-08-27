@@ -154,6 +154,57 @@ master key. If the seal vault is unreachable it stays sealed (fail-safe). Like
 KEK auto-unseal, `init` returns recovery keys for root-token regeneration. In the
 chart, set `sealTransit.*` (mutually exclusive with `autoUnseal`).
 
+**External (cloud-KMS / HSM) auto-unseal.** Reach any cloud KMS (AWS/GCP/Azure)
+or HSM without a provider SDK in the vault: point `-seal-external-command` at a
+command that wraps/unwraps the master key. The vault invokes it in two modes,
+piping raw bytes:
+
+```
+<command> [args...] wrap     # plaintext master key on stdin  -> wrapped blob on stdout
+<command> [args...] unwrap   # wrapped blob on stdin          -> plaintext master key on stdout
+```
+
+Success is exit status 0 with non-empty stdout; the wrapped blob is opaque (the
+command owns its format). A non-zero exit or a timeout leaves the vault **sealed**
+(never fail-open). `unwrap` must emit exactly the original 32 bytes — no trailing
+newline. The command's KMS/HSM credentials come from its environment (instance
+role, workload identity, a mounted key), never from the vault.
+
+```sh
+ubixvault server -data /var/lib/ubixvault \
+  -seal-external-command /usr/local/bin/uv-kms-seal \
+  -seal-external-timeout 30s
+```
+
+Reference wrapper commands (each is a tiny script you provide — the KMS logic
+lives here, not in the vault). The master key is 32 bytes, under every KMS's
+direct-encrypt limit, so no envelope indirection is needed:
+
+```sh
+# AWS KMS — /usr/local/bin/uv-kms-seal
+#!/bin/sh
+case "$1" in
+  wrap)   aws kms encrypt --key-id "$KMS_KEY_ID" --plaintext fileb:///dev/stdin \
+            --query CiphertextBlob --output text | base64 -d ;;
+  unwrap) aws kms decrypt --ciphertext-blob fileb:///dev/stdin \
+            --query Plaintext --output text | base64 -d ;;
+esac
+
+# GCP Cloud KMS
+case "$1" in
+  wrap)   gcloud kms encrypt --key "$KMS_KEY" --plaintext-file - --ciphertext-file - ;;
+  unwrap) gcloud kms decrypt --key "$KMS_KEY" --ciphertext-file - --plaintext-file - ;;
+esac
+
+# PKCS#11 HSM — via pkcs11-tool / openssl pkeyutl -engine pkcs11 (same shape).
+```
+
+**Image note:** the published vault image is distroless (no shell, no cloud CLI),
+so the wrap command must be provided into the container — mount a static binary,
+or build a derived image that bundles your provider CLI plus the script above.
+Like the other auto-unseal modes, `init` returns recovery keys and only one seal
+mode may be configured at a time.
+
 Auto-unseal `init` also returns **recovery keys** (k-of-n, like Shamir shares).
 The vault unseals itself with the KEK, so you never enter them to unseal — but a
 threshold of them is the *only* way to regenerate a lost root token (see
