@@ -294,3 +294,40 @@ process per database, since barrier/lease/unseal state is in-memory —
 serving nodes. Leader election / Raft coordination for true HA is a later,
 separate ADR. Postgres and other engines are viable behind the same interface
 later; MySQL is first only because it reuses the existing driver.
+
+---
+
+## D-015 — Cloud-KMS / HSM auto-unseal via an external command, not native SDKs
+
+**Status:** Accepted · 2026-08-26
+
+**Decision:** reach cloud KMS (AWS/GCP/Azure) and hardware HSMs for auto-unseal
+through a generic **external-command (exec) seal** — a new `Seal` implementation
+(`type: external`) that pipes the master key to an operator-supplied command
+(`<cmd> wrap` reads plaintext on stdin → wrapped on stdout; `<cmd> unwrap` the
+reverse) — rather than importing cloud provider SDKs. The provider-specific logic
+and credentials live in that command; uBix Vault adds **no new dependency**. Full
+design in [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md).
+
+**Why:** the last production seal gap is "the KEK is supplied directly"; the
+Transit seal (D-013) already closes it when you run a Vault-compatible transit
+engine, but not for cloud-native KMS or a local HSM. Native SDK seals (as
+HashiCorp Vault uses) would be the turnkey option but mean importing large,
+per-provider dependency graphs into the security-critical seal path — directly
+against the minimal-dependency posture (D-009/D-010/D-014). Hand-rolling each
+provider's request signing over HTTP, or a CGo PKCS#11 binding (which also breaks
+the static distroless build), are worse. Delegating to a small operator-supplied
+command is the zero-dependency mechanism that covers **every** KMS/HSM at once,
+maps directly onto the existing `Seal` interface (nothing above it changes), and
+keeps provider code and credentials out of the vault. The master key (32 bytes)
+is under every KMS's direct-encrypt limit, so no envelope indirection is needed.
+
+**Trade-off / follow-up:** the master key transits the command's stdin/stdout —
+bounded (in-memory pipe, a child in the same trust domain, no worse than
+StaticKEK holding the KEK in-process, better than a KEK persisted on the host,
+since the wrapping key lives in the KMS/HSM). The operator must supply and secure
+the wrap command and its credentials, and provide it into the shell-less
+distroless image (a mounted script/binary or an image variant). A missing/failing
+command leaves the vault sealed (fail-safe). Native in-vault SDK seals remain a
+possible later opt-in behind the same interface — their own ADR, their own
+recorded dependency — only if the exec seal proves insufficient.

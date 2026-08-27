@@ -86,6 +86,7 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
 ### Tier 2 — pre-production trust gates (before real secrets land)
 - [ ] **Pluggable cloud-KMS/HSM seal** behind the existing seal interface (kept zero-dep by
       staying over-the-wire / pluggable, like the transit seal), so the KEK is never on the host.
+      Design: [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) · ADR D-015 (external-command seal).
 - [ ] **`SECURITY.md`** + coordinated-disclosure policy; threat-model refresh (`docs/DESIGN.md`).
 - [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
       Cure53) when feasible; at minimum a scoped external look + the hardening above first.
