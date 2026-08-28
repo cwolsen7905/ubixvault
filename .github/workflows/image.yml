@@ -83,6 +83,10 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: true
+          # Don't attach to the GitHub Release: it needs contents:write (this
+          # workflow is least-privilege contents:read), and the SBOM is already
+          # published as a workflow artifact and a cosign attestation below.
+          upload-release-assets: false
 
       - name: Attest the SBOM to the image (keyless)
         env:
