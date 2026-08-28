@@ -1,13 +1,14 @@
 # Reviewer quickstart
 
 A one-page path to a running uBix Vault and its tests, for security reviewers.
-Pairs with the scope in [`docs/security/audit-scope.md`](security/audit-scope.md)
+Pairs with the scope in [`docs/SECURITY_REVIEW_BRIEF.md`](SECURITY_REVIEW_BRIEF.md)
 and the threat model in [`docs/DESIGN.md`](DESIGN.md) §5.
 
 ## Build
 
 ```sh
-go build -o bin/ubixvault ./cmd/ubixvault    # Go 1.24; static, CGO-free
+make build                                   # -> bin/ubixvault (Go 1.24, static, CGO-free)
+# equivalently: CGO_ENABLED=0 go build -trimpath -o bin/ubixvault ./cmd/ubixvault
 ```
 
 ## Happy path (file storage, loopback plaintext)
@@ -39,8 +40,7 @@ is a read-only web console at `/ui/`.
 ## MySQL/MariaDB storage backend
 
 ```sh
-docker run --rm -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=ubixvault \
-  -p 3306:3306 mariadb:11
+docker compose up -d mariadb                 # compose.yaml; DB "ubixvault"
 # The vault creates its own tables.
 ./bin/ubixvault server \
   -storage mysql \
@@ -64,18 +64,17 @@ chmod +x /tmp/kmsseal.sh
 ## Tests, fuzzing, and scanners
 
 ```sh
-go test ./...                                   # unit + property tests + fuzz seed corpora
-go test -race ./internal/barrier/... ./internal/core/...
+make test                                       # unit + property tests (race detector + coverage) + fuzz seed corpora
+make integration                                # against the compose MariaDB (build tag + DSN env, as CI runs it)
+make fuzz                                        # fuzz the policy parser 30s (edit the target for others)
+make lint                                        # golangci-lint (.golangci.yml)
+make vuln                                        # govulncheck ./...
+# make help lists every target.
 
-# Integration (real MariaDB); build tag + DSN env, as CI runs it:
-UBIXVAULT_MARIADB_DSN='root:root@tcp(127.0.0.1:3306)/ubixvault' \
-  go test -tags integration ./internal/database/... ./internal/storage/...
-
-# Fuzz a parser directly (targets: internal/policy, internal/jwtauth, internal/transit, internal/snapshot):
-go test -run=x -fuzz=FuzzParseDocument -fuzztime=60s ./internal/policy/
-
-golangci-lint run ./...                         # config: .golangci.yml
-govulncheck ./...
+# Other fuzz targets (run directly): internal/jwtauth (FuzzSplitJWT, FuzzParseJWKS),
+# internal/transit (FuzzParseCiphertext), internal/snapshot (FuzzRestore),
+# internal/shamir (FuzzSplitCombine), e.g.:
+go test -run=x -fuzz=FuzzSplitJWT -fuzztime=60s ./internal/jwtauth/
 ```
 
 ## Where the crown jewels live

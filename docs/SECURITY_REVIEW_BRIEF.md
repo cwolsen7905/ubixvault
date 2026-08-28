@@ -11,7 +11,7 @@
 
 | | |
 |---|---|
-| **Review target** | A tag frozen at engagement start. Current reviewable release: `v0.2.0-beta.11`; a `1.0.0-rc.1` tag will be cut for the engagement and docs frozen to it. |
+| **Review target** | Set at outreach — `1.0.0-rc.1` · commit `<sha>` · frozen `<YYYY-MM-DD>`, docs frozen to the same tag. Until then, the current reviewable release is `v0.2.0-beta.11`. |
 | **Language / toolchain** | Go 1.24 (`go.mod`), standard library + **one** third-party dependency (`github.com/go-sql-driver/mysql`). |
 | **Size** | ~10.5k LoC production (55 non-test `.go` files) + ~7.4k LoC tests. |
 | **Build** | Single **static** binary, **CGO disabled** (`CGO_ENABLED=0`), multi-arch (amd64/arm64), distroless runtime image. |
@@ -41,6 +41,11 @@ The gate is satisfied when, against the frozen review tag:
 - The **fail-closed audit** guarantee is verified (an unwritable audit sink stops the vault serving).
 - The load-bearing invariant **"storage / DSN compromise yields ciphertext, not secrets"** holds end to end.
 - **Medium/Low findings may be accepted** for 1.0 with documented mitigations or a tracked follow-up.
+
+**Severity (our definitions; score with CVSS 3.1):** *Critical* = key disclosure,
+unseal without a quorum/KEK, a fail-open seal, or storage/DSN yielding plaintext.
+*High* = authentication or authorization bypass, or audit bypass. *Medium/Low* =
+everything else, per CVSS.
 
 ## Threat model
 
@@ -149,8 +154,8 @@ auto-unseal works without a provider SDK. The exact model to review:
 ## Supply chain
 
 - **Toolchain:** Go 1.24; `go.sum` pins all module hashes; standard Go module
-  resolution (module proxy), **not vendored**. `govulncheck ./...` runs in CI on
-  every change.
+  resolution (module proxy), **not vendored**. **No `replace` directives, no
+  vendoring, `go.sum` committed.** `govulncheck ./...` runs in CI on every change.
 - **Releases:** multi-arch images are **keyless-signed with cosign** and carry an
   **SPDX SBOM attestation**; both are stored in the registry (OCI) alongside the
   image and logged to the Rekor transparency log, verifiable via the GitHub OIDC

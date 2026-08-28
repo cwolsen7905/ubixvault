@@ -8,6 +8,8 @@ LDFLAGS     := -X main.version=$(VERSION)
 GOBIN       := $(shell go env GOPATH)/bin
 IMAGE       ?= ghcr.io/cwolsen7905/ubixvault
 CHART       := deploy/charts/ubixvault
+# DSN for the local MariaDB from `docker compose up -d mariadb` (compose.yaml).
+MARIADB_DSN ?= root:root@tcp(127.0.0.1:3306)/ubixvault
 
 .DEFAULT_GOAL := help
 
@@ -50,6 +52,15 @@ lint: ## Run golangci-lint (installs it if missing)
 vuln: ## Run govulncheck (installs it if missing)
 	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
 	govulncheck $(PKG)
+
+.PHONY: integration
+integration: ## Integration tests against the compose MariaDB (MARIADB_DSN)
+	UBIXVAULT_MARIADB_DSN='$(MARIADB_DSN)' \
+		go test -tags integration ./internal/database/... ./internal/storage/...
+
+.PHONY: fuzz
+fuzz: ## Fuzz the policy (HCL/JSON) parser 30s; swap the target for others
+	go test -run=x -fuzz=FuzzParseDocument -fuzztime=30s ./internal/policy/
 
 .PHONY: tidy
 tidy: ## Tidy go.mod/go.sum
