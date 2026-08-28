@@ -53,8 +53,19 @@ GitHub profile ([@cwolsen7905](https://github.com/cwolsen7905)).
 - We will keep you informed as we investigate and work on a fix.
 - We will credit reporters who wish to be credited once a fix is released.
 
-This is a solo-maintained project, so response and fix timelines are best-effort.
-Please give us a reasonable window to release a fix before any public disclosure.
+## Coordinated disclosure
+
+We follow coordinated disclosure with a **90-day** default embargo:
+
+- We aim to acknowledge within a few days and to agree a fix timeline with you.
+- Please keep the report **private until a fix is released or 90 days have
+  passed**, whichever comes first. We will ask for more time only for a genuinely
+  complex fix, and only with your agreement.
+- We provide a **fix branch for re-test** before release where practical, and
+  publish an advisory (crediting you, if you wish) when the fix ships.
+
+This is a solo-maintained project, so timelines are best-effort; we will
+communicate openly if a fix needs longer.
 
 ## Scope
 
