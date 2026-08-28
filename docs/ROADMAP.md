@@ -97,8 +97,8 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
       wraps/unwraps the master key via an operator-supplied command, so any cloud KMS or HSM
       works with no provider SDK in the vault ([`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) ·
       ADR D-015). *Follow-up:* Helm `sealExternal` chart wiring.
-- [x] **`SECURITY.md`** + coordinated-disclosure policy, supported-versions, and scope.
-      Threat-model refresh in `docs/DESIGN.md` still open.
+- [x] **`SECURITY.md`** + coordinated-disclosure policy, supported-versions, and scope;
+      threat-model refresh in `docs/DESIGN.md` §5 (current as of beta.11).
 - [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
       Cure53) when feasible; at minimum a scoped external look + the hardening above first.
 

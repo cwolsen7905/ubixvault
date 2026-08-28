@@ -162,15 +162,85 @@ environment-variable injection is an *optional* extension, warranted only for th
 apps that cannot be modified to call the API; it is less secure and cannot deliver rotating
 secrets to env vars. See `docs/DECISIONS.md` (D-008) and `docs/ROADMAP.md`.
 
-## 5. Threat model (summary)
+## 5. Threat model
 
-- **At rest:** storage compromise yields only ciphertext; attacker lacks the barrier/master key.
-- **Sealed state:** a stolen/stopped node is useless without unseal shares.
-- **In transit:** TLS required for the API; no plaintext secret transport.
-- **Access:** default-deny ACLs; least privilege via short-lived tokens and dynamic secrets.
-- **Auditability:** every access is logged; sensitive values are HMAC'd so secrets are not exposed in the log.
-- **In memory (residual risk):** secrets exist in plaintext in RAM while in use; mitigated by `mlock`, short lifetimes, minimized copies. Documented as a known limitation of the Go runtime.
-- **Out of scope for MVP:** M-of-N approval (control groups), multi-tenant isolation (namespaces), HSM-backed key storage — all on the roadmap.
+The model an external review should start from — what is protected, the boundaries
+it is protected across, which adversary positions are in scope, and what is
+explicitly not defended. Reflects the implementation as of `v0.2.0-beta.11`.
+
+### Assets
+
+- **Secrets** — plaintext KV values, generated dynamic credentials, and the
+  plaintext a caller submits to Transit. The thing being protected.
+- **The key hierarchy** — unseal shares / recovery keys → master key → barrier key
+  → data. Compromise of a key compromises everything below it.
+- **The auto-unseal wrapping key** — a local KEK, a transit token, or a KMS/HSM key
+  reached through the external seal — which recovers the master key on restart.
+- **Tokens** and their ACL policies (the credentials that authorize requests).
+- **Audit-log integrity** — a tamper-evident record of access.
+- **Availability** of the vault.
+
+### Trust boundaries
+
+- **Client ↔ API** — the network. Mandatory TLS (§2); the server refuses
+  non-loopback plaintext without an explicit dev override.
+- **Barrier ↔ storage** — the file or MySQL backend. The barrier AES-256-GCM-encrypts
+  every value, path- and version-bound, *before* it reaches storage, so the storage
+  layer (a local disk or a shared/managed database) sees **only ciphertext** and is in
+  the TCB for *availability*, not *confidentiality* (§3.1–3.2, D-014).
+- **Vault ↔ seal** — for auto-unseal the wrapping key lives outside the vault: in
+  another transit engine (D-013) or a KMS/HSM reached via the external-command seal
+  (D-015). The external seal pipes the 32-byte master key through a child process's
+  stdio during an unseal.
+- **Vault ↔ managed database** — the dynamic-secrets engine holds admin credentials
+  to mint short-lived users.
+- **Release ↔ operator** — published images are keyless-signed with an SBOM
+  attestation, so an operator can verify provenance before deploying.
+
+### Adversary positions (in scope) and mitigations
+
+- **Reads storage** (steals the disk, dumps the database, or leaks the MySQL DSN):
+  gets **ciphertext only** — still needs the master key, which never touches storage.
+- **Steals or stops a sealed node:** useless — nothing is readable until unsealed,
+  and unsealing needs a share quorum, the KEK, or the external seal.
+- **On the network:** blocked by TLS; secrets never transit in plaintext, and the
+  barrier's path binding stops a ciphertext being relocated to another path.
+- **Holds a leaked token:** limited to that token's default-deny ACL grants; tokens
+  are short-lived and revocable, and dynamic DB creds auto-revoke on lease expiry.
+- **Reads the audit log:** sensitive fields (including the client token) are HMAC'd,
+  and the log is fail-closed (unwritable → the vault stops serving).
+- **Tampers with a published image:** detectable via the cosign signature + SBOM.
+- **Supplies a malicious external-seal command or KMS response:** a wrong unwrap
+  yields a wrong master key, which fails barrier authentication → the vault stays
+  **sealed** (fail-safe), never fail-open.
+
+### Residual risks (in scope, imperfectly mitigated)
+
+- **Secrets in memory.** Plaintext secrets and the barrier key live in RAM while in
+  use. Mitigated only by short lifetimes and minimized copies; **`mlock` is not
+  currently used**, and the Go GC may relocate or retain copies — so a
+  memory-forensics adversary on a running, unsealed host can recover secrets. Known
+  limitation (D-001); memory-locking is possible future hardening.
+- **A compromised unsealed host is game over** — code execution on the unsealed
+  process has the master key in memory. No secrets manager defends this fully;
+  mitigation is operational (host hardening, minimizing the unsealed blast radius).
+- **The external-seal key path** — the master key transits a child process's stdio
+  during unseal: bounded (in-memory pipe, operator-trusted child, no worse than a
+  local KEK) but a real exposure (D-015).
+- **"Secret zero"** — auto-unseal and the MySQL backend each need one bootstrap
+  credential (a KEK, a transit token, or a DSN). It can be shrunk and protected
+  (Secrets, KMS, mTLS/IAM) but not eliminated.
+- **No external security review yet** — the most significant residual risk. See
+  `SECURITY.md`.
+
+### Explicitly out of scope
+
+- **Multi-writer HA and multi-tenant isolation** — single active writer per store;
+  in-vault namespaces are not implemented.
+- **Approval workflows (M-of-N control groups)** and login-enforced MFA.
+- **Nation-state memory forensics, physical extraction, and FIPS-140 physical
+  requirements** — D-001 notes the escape hatch (the crypto core sits behind an
+  interface a hardened module could replace).
 
 ## 6. MVP definition of done
 
