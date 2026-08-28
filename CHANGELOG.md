@@ -4,7 +4,9 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0-beta.11] — 2026-08-27
+
+Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
 
 ### Added
 
@@ -16,6 +18,8 @@ All notable changes to uBix Vault are documented here. The format is based on
   D-015). `-seal-external-arg` (repeatable) and `-seal-external-timeout` tune it;
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
+
+[0.2.0-beta.11]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.11
 
 ## [0.2.0-beta.10] — 2026-08-19
 

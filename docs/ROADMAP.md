@@ -1,6 +1,6 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-08-26 · Current release `v0.2.0-beta.10`
+> **Status:** Active · Last updated 2026-08-27 · Current release `v0.2.0-beta.11`
 
 uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
 minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
@@ -8,12 +8,12 @@ barrier, Shamir seal/unseal, all cryptography — is standard-library Go written
 in-house, so the entire trust path can be read in an afternoon. It speaks a
 Vault-compatible HTTP API so existing clients work unchanged.
 
-The **feature core is essentially complete**, and as of `v0.2.0-beta.10` the two
-engineering gates that were open — **durable storage** (a MySQL/MariaDB backend) and
+The **feature core is essentially complete**, and as of `v0.2.0-beta.11` the
+engineering gates for `1.0` have landed: **durable storage** (a MySQL/MariaDB backend),
 **hardened correctness** (parser fuzzing, crypto property tests, a crash-recovery fix,
-signed images + SBOM) — have largely landed. What remains for a real `1.0` is the
-**cloud-KMS/HSM seal** (design accepted, implementation pending) and the one gate that is
-not ours to build: an **external security review**. This roadmap is sequenced around that.
+signed images + SBOM), and the **cloud-KMS/HSM seal** (an external-command seal, ADR
+D-015). What remains for `1.0` is the one gate that is **not ours to build**: an
+**external security review**. This roadmap is sequenced around that.
 
 ## Honest positioning (read before deploying)
 
@@ -93,10 +93,10 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
       *Follow-up:* reproducible builds.
 
 ### Tier 2 — pre-production trust gates (before real secrets land)
-- [~] **Pluggable cloud-KMS/HSM seal** behind the existing seal interface (kept zero-dep by
-      staying over-the-wire / pluggable, like the transit seal), so the KEK is never on the host.
-      **Design accepted** — [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) · ADR D-015
-      (external-command seal); **implementation pending**.
+- [x] **Pluggable cloud-KMS/HSM seal** — an external-command seal (`-seal-external-command`)
+      wraps/unwraps the master key via an operator-supplied command, so any cloud KMS or HSM
+      works with no provider SDK in the vault ([`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) ·
+      ADR D-015). *Follow-up:* Helm `sealExternal` chart wiring.
 - [x] **`SECURITY.md`** + coordinated-disclosure policy, supported-versions, and scope.
       Threat-model refresh in `docs/DESIGN.md` still open.
 - [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
