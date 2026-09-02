@@ -4,6 +4,21 @@ All notable changes to uBix Vault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **TLS client-certificate auth method** — authenticate by presenting an mTLS
+  client certificate. Define cert roles under `/v1/auth/cert/certs/{name}` (a
+  trusted CA or a specific certificate, a policy set, optional
+  `allowed_common_names`, token TTL), then `POST /v1/auth/cert/login` while
+  presenting a certificate that chains to (or equals) the role's trust anchor and
+  matches its name constraints — no request body needed. The server requests a
+  client certificate on the TLS handshake but does not verify it; the auth method
+  verifies it against each role's configured CA. Zero new dependency (stdlib
+  `crypto/x509`). Joins the token, AppRole, Kubernetes, userpass, and JWT/OIDC
+  methods.
+
 ## [0.2.0-beta.11] — 2026-08-27
 
 Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
