@@ -1,6 +1,6 @@
 # uBix Vault — Positioning & Prior Art
 
-> **Status:** Active · Last updated 2026-07-18
+> **Status:** Active · Last updated 2026-08-27
 > Why this project exists alongside HashiCorp Vault and OpenBao.
 
 ## Prior art (acknowledged up front)
@@ -39,3 +39,34 @@ explicitly in `docs/ROADMAP.md`, with the reasoning in `docs/DECISIONS.md` (D-00
 - Not a drop-in replacement for the full Vault/OpenBao feature set — see the roadmap's
   committed-vs-extension split.
 - Not aiming to displace Vault or OpenBao — for general production use, prefer those.
+
+## Where it sits: Vault Community vs. Enterprise
+
+uBix Vault deliberately targets a **subset of Vault _Community_** (the free tier), not
+Enterprise — and it does not yet have full Community parity either. That's the point of
+"depth over breadth." Enterprise-tier features are, with a couple of exceptions, out of
+scope; the long-term catch-up backlog is tracked in `docs/ROADMAP.md` ("Beyond 1.0").
+
+The Community/Enterprise line has shifted over Vault's history — cloud-KMS auto-unseal,
+login MFA, and rate-limit quotas all moved from Enterprise to Community. Notably, uBix
+Vault's **external-command seal already covers cloud-KMS/HSM auto-unseal** — the capability
+that was Enterprise-gated (HSM) for years — reached without any provider SDK.
+
+| Vault Enterprise capability | uBix Vault |
+| --- | --- |
+| HSM / cloud-KMS auto-unseal (+ seal-wrap) | 🟡 KMS/HSM unseal via the external-command seal; no seal-wrap |
+| Automated snapshots to cloud storage | 🟡 scheduled backup CronJob (to a PVC, not object storage yet) |
+| Namespaces (in-vault multi-tenancy) | ❌ |
+| Performance + DR replication; performance standbys | ❌ |
+| Sentinel policies (ABAC / EGP / RGP) | ❌ — ACL (JSON + HCL) only |
+| Control Groups (M-of-N approval) | ❌ |
+| Managed Keys; Key Management engine (→ cloud KMS) | ❌ |
+| KMIP secrets engine | ❌ |
+| Transform engine (tokenization / FPE / masking) | ❌ |
+| FIPS 140-2/-3 builds; entropy augmentation | ❌ |
+| Lease-count / resource quotas | ❌ (per-client rate limiting — Community-tier — is present) |
+
+Of ~15 Enterprise-differentiated capabilities, uBix Vault has a partial analog of ~2 and is
+missing ~13 — **by design.** The gaps that matter more for the project are the remaining
+*Community* ones (Raft HA, more auth methods and DB plugins, identity/entities), also tracked
+in the roadmap; none is the real 1.0 blocker, which is an external security review.
