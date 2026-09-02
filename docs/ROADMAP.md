@@ -110,20 +110,40 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
 
 ---
 
-## Beyond 1.0 — not committed scope
+## Beyond 1.0 — the catch-up backlog (not committed scope)
 
-Recorded to show the shape of the full problem space; undertaken only if they earn their
-place, never at the expense of the path above.
+The long path toward broader Vault parity, recorded so the gap is explicit and can be
+chipped away at slowly. **This is not committed 1.0 scope** — 1.0 is gated only on the
+external review (above). These are undertaken as they earn their place, never at the expense
+of the finished core, and each larger item gets its own design note + ADR first (as the SQL
+backend and the KMS seal did), with any new dependency recorded there. Rough priority:
+Community-parity gaps before Enterprise-tier features.
 
-- **More auth**: TLS client cert, LDAP.
-- **More dynamic secrets**: PostgreSQL/Mongo/MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
-- **Identity**: entities + groups, so multiple auth logins map to one subject.
-- **Console breadth**: Transit and the newer auth methods in `/ui/`.
-- **Transit extras**: convergent encryption, key derivation, BYOK import.
-- **Multi-tenancy**: namespaces (in-vault administrative isolation).
-- **Replication**: multi-DC HA/DR; control groups (M-of-N approval); login-enforced MFA.
-- **Hard compliance**: HSM/PKCS#11 seal-wrap, FIPS 140-3 validated build, KMIP, tokenization/FPE.
-- **OIDC discovery**: resolve the JWKS URL from `.well-known/openid-configuration`.
+### Toward Vault Community parity (free-tier gaps)
+- [ ] **Integrated Storage (Raft)** — multi-writer HA (also in "Path to 1.0 · Optional"; the SQL backend already gives a durable, replaceable node, so this may never be needed).
+- [ ] **More auth methods** — TLS client certificate, LDAP.
+- [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
+- [ ] **Identity** — entities + groups, so multiple auth logins map to one subject.
+- [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.
+- [ ] **Transit extras** — convergent encryption, key derivation, BYOK import.
+- [ ] **Cubbyhole** — per-token private storage (response wrapping is already done).
+- [ ] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
+
+### Toward Vault Enterprise parity (Enterprise-differentiated features)
+Mostly large and compliance-oriented; listed so the gap is explicit (see
+`docs/POSITIONING.md` for the side-by-side). Of ~15, two already have partial analogs:
+- [~] **HSM / cloud-KMS auto-unseal** — done via the external-command seal (D-015); **seal-wrap** of individual entries is not.
+- [~] **Automated snapshots to object storage** — the scheduled backup CronJob exists (to a PVC); direct object-storage upload + retention remains.
+- [ ] **Namespaces** — in-vault administrative multi-tenancy.
+- [ ] **Replication** — Performance replication, Disaster-Recovery replication, performance standby nodes.
+- [ ] **Policy-as-code (Sentinel-style)** — ABAC / endpoint- & role-governing policies beyond ACL.
+- [ ] **Control Groups** — M-of-N approval to access a secret; login-enforced step-up MFA.
+- [ ] **Managed Keys** — offload crypto operations to an external HSM/KMS.
+- [ ] **Key Management secrets engine** — distribute/manage keys in cloud KMS (AWS/Azure/GCP).
+- [ ] **KMIP secrets engine** — act as a KMIP server.
+- [ ] **Transform secrets engine** — tokenization, format-preserving encryption, data masking.
+- [ ] **Resource quotas** — lease-count quotas and richer rate-limit quotas.
+- [ ] **Compliance builds** — FIPS 140-3 validated crypto, entropy augmentation.
 
 ---
 
