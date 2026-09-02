@@ -15,6 +15,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/approle"
 	"github.com/cwolsen7905/ubixvault/internal/audit"
+	"github.com/cwolsen7905/ubixvault/internal/certauth"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
@@ -53,6 +54,7 @@ type Handler struct {
 	approle        *approle.Method
 	userpass       *userpass.Method
 	jwtauth        *jwtauth.Method
+	certauth       *certauth.Method
 	wrapping       *wrapping.Store
 	tokens         *token.Store
 	policies       *policy.Store
@@ -105,6 +107,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
 		userpass:   userpass.New(c.Barrier(), c.Tokens(), "auth/userpass"),
 		jwtauth:    jwtauth.New(c.Barrier(), c.Tokens(), "auth/jwt"),
+		certauth:   certauth.New(c.Barrier(), c.Tokens(), "auth/cert"),
 		wrapping:   wrapping.NewStore(c.Barrier()),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
@@ -251,6 +254,15 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/auth/jwt/role", h.authenticate(h.jwtListRoles))
 	mux.HandleFunc("DELETE /v1/auth/jwt/role/{name}", h.authenticate(h.jwtDeleteRole))
 	mux.HandleFunc("POST /v1/auth/jwt/login", h.jwtLogin)
+
+	// TLS certificate auth: define trusted cert roles (authenticated), then log in
+	// by presenting a matching mTLS client certificate (unauthenticated).
+	mux.HandleFunc("POST /v1/auth/cert/certs/{name}", h.authenticate(h.certWriteCert))
+	mux.HandleFunc("PUT /v1/auth/cert/certs/{name}", h.authenticate(h.certWriteCert))
+	mux.HandleFunc("GET /v1/auth/cert/certs/{name}", h.authenticate(h.certReadCert))
+	mux.HandleFunc("LIST /v1/auth/cert/certs", h.authenticate(h.certListCerts))
+	mux.HandleFunc("DELETE /v1/auth/cert/certs/{name}", h.authenticate(h.certDeleteCert))
+	mux.HandleFunc("POST /v1/auth/cert/login", h.certLogin)
 
 	h.mux = mux
 	for _, opt := range opts {

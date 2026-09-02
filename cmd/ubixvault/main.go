@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
@@ -214,6 +215,16 @@ func runServer(args []string) error {
 		Addr:              *listen,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if tlsEnabled {
+		// Request (but do not require) a client certificate, so the TLS
+		// certificate auth method can use one when presented. The cert is NOT
+		// verified by the TLS stack here — the auth method verifies it against the
+		// CAs configured for each cert role.
+		srv.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ClientAuth: tls.RequestClientCert,
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
