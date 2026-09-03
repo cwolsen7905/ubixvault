@@ -141,3 +141,47 @@ func TestGetMissing(t *testing.T) {
 		t.Fatalf("want ErrPolicyNotFound, got %v", err)
 	}
 }
+
+func TestTemplatedExpandsAndDrops(t *testing.T) {
+	resolve := func(key string) (string, bool) {
+		switch key {
+		case "identity.entity.id":
+			return "abc123", true
+		case "identity.entity.name":
+			return "alice", true
+		default:
+			return "", false
+		}
+	}
+	p := &Policy{Name: "t", Rules: []Rule{
+		{Path: "secret/data/users/{{identity.entity.name}}/*", Capabilities: []Capability{Read}},
+		{Path: "cubbyhole/{{ identity.entity.id }}", Capabilities: []Capability{Create}},
+		{Path: "secret/data/team/{{identity.entity.metadata.team}}/*", Capabilities: []Capability{Read}}, // unresolved -> dropped
+		{Path: "secret/data/shared", Capabilities: []Capability{Read}},                                   // no template -> kept
+	}}
+	out := p.Templated(resolve)
+
+	got := map[string]bool{}
+	for _, r := range out.Rules {
+		got[r.Path] = true
+	}
+	if !got["secret/data/users/alice/*"] {
+		t.Fatalf("name template not expanded: %v", got)
+	}
+	if !got["cubbyhole/abc123"] {
+		t.Fatalf("id template (with spaces) not expanded: %v", got)
+	}
+	if !got["secret/data/shared"] {
+		t.Fatalf("non-templated rule dropped: %v", got)
+	}
+	if len(out.Rules) != 3 {
+		t.Fatalf("expected 3 rules (one dropped), got %d: %v", len(out.Rules), got)
+	}
+}
+
+func TestTemplatedNoTemplatesReturnsSame(t *testing.T) {
+	p := &Policy{Name: "t", Rules: []Rule{{Path: "secret/data/x", Capabilities: []Capability{Read}}}}
+	if out := p.Templated(func(string) (string, bool) { return "", false }); out != p {
+		t.Fatal("a policy with no templates should be returned unchanged (same pointer)")
+	}
+}

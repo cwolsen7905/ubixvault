@@ -365,3 +365,34 @@ TTL-bounded tokens (documented, same model as Vault). Ships in phases —
 entities+aliases, then internal groups, then external groups, then identity
 templating in ACL paths (`{{identity.*}}`, its own note and ADR) — each a small
 CI-green PR.
+
+## D-017 — Identity templating: expand {{identity.*}} in ACL paths at evaluation time
+
+**Status:** Accepted · 2026-09-02 (phase 4 of identity, D-016)
+
+**Decision:** allow ACL policy rule paths to contain `{{identity.entity.id}}`,
+`{{identity.entity.name}}`, and `{{identity.entity.metadata.<key>}}`
+placeholders, expanded against the requesting token's entity at authorize time
+before the ACL is evaluated. A placeholder that does not resolve drops that rule
+(fail-closed). The policy engine gains a generic `Policy.Templated(resolve
+func(key string)(string,bool)) *Policy` expander; `internal/api`'s `authorize()`
+sources the entity's template values from the identity engine and runs each
+loaded policy through it. Full design in
+[`docs/design/identity-templating.md`](design/identity-templating.md).
+
+**Why:** identity (D-016) gives every token a subject, but without templating a
+"let each user reach their own subtree" policy must be written per user — the
+toil identity was meant to remove. Templating lets one policy
+(`secret/data/users/{{identity.entity.name}}/*`) serve everyone. Expanding at
+evaluation time (not policy-write time) is required because the value is
+per-request; a `resolve` callback keeps the policy package identity-agnostic and
+unit-testable, with the identity engine supplying only a flat value map. Dropping
+unresolved placeholders keeps a templated grant worthless to a token lacking the
+identity value.
+
+**Trade-off / follow-up:** template values are inserted literally, so a
+metadata value containing `*` could widen a prefix match — metadata is
+operator-set and entity writes are root/ACL-gated, so this is trusted input
+(documented, not sanitized, matching Vault). `id`/`name` are safe by
+construction. Alias- and group-scoped placeholders can be added later by growing
+the value map; the expander does not change. No new dependency.

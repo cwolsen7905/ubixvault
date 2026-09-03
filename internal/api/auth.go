@@ -89,9 +89,9 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 	}
 
 	// A token's effective policies are its own plus any contributed by the
-	// identity entity it belongs to (identity only ever adds). Group policies
-	// join this union in a later phase.
+	// identity entity it belongs to (identity only ever adds).
 	names := tok.Policies
+	var resolve func(string) (string, bool)
 	if h.identity != nil && tok.EntityID != "" {
 		entityPolicies, err := h.identity.PoliciesFor(ctx, tok.EntityID)
 		if err != nil {
@@ -99,6 +99,14 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 		}
 		if len(entityPolicies) > 0 {
 			names = append(append([]string{}, tok.Policies...), entityPolicies...)
+		}
+		// Template values for {{identity.*}} placeholders in policy paths.
+		vals, err := h.identity.TemplateValues(ctx, tok.EntityID)
+		if err != nil {
+			return false, err
+		}
+		if len(vals) > 0 {
+			resolve = func(key string) (string, bool) { v, ok := vals[key]; return v, ok }
 		}
 	}
 
@@ -110,6 +118,9 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 			continue // a named-but-missing policy grants nothing
 		case err != nil:
 			return false, err
+		}
+		if resolve != nil {
+			p = p.Templated(resolve) // resolve {{identity.*}} placeholders
 		}
 		policies = append(policies, p)
 	}
