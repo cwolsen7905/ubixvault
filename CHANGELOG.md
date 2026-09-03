@@ -8,6 +8,18 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **LDAP / Active Directory auth method** — log in with a directory username and
+  password: the vault binds to the directory to verify them, reads the user's
+  group memberships, and issues a token whose policies come from a group→policy
+  map (`/v1/auth/ldap/groups/{name}`) and/or identity external groups (the LDAP
+  groups are asserted through the same seam as an OIDC groups claim). Configure
+  via `/v1/auth/ldap/config` (URL, StartTLS/LDAPS, service bind DN, user/group
+  search bases and attributes); log in at `/v1/auth/ldap/login/{username}`. This
+  is the project's **second** dependency — `github.com/go-ldap/ldap/v3` (ADR
+  D-018) — confined to one adapter behind a `Connector` seam; the method logic is
+  stdlib. Completes the Vault-Community auth-method set (token, AppRole,
+  Kubernetes, userpass, JWT/OIDC, TLS cert, LDAP).
+
 - **Identity — policy templating (phase 4)** — ACL policy paths may now contain
   `{{identity.entity.id}}`, `{{identity.entity.name}}`, and
   `{{identity.entity.metadata.<key>}}` placeholders, expanded against the

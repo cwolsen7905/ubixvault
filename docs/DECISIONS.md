@@ -397,11 +397,25 @@ operator-set and entity writes are root/ACL-gated, so this is trusted input
 construction. Alias- and group-scoped placeholders can be added later by growing
 the value map; the expander does not change. No new dependency.
 
-## D-018 — LDAP / Active Directory auth: whether to add the project's second dependency
+## D-018 — LDAP / Active Directory auth via go-ldap: the project's second dependency
 
-**Status:** Proposed — **awaiting decision** · 2026-09-02
+**Status:** Accepted (option A) · 2026-09-02
 
-**Decision (pending):** whether to add an LDAP/AD auth method, and if so how.
+**Decision:** add an LDAP/AD auth method built on **`github.com/go-ldap/ldap/v3`**,
+the standard Go LDAP client — the project's **second** direct dependency. LDAP is
+the last Vault-Community auth method uBix Vault lacked; Go has no stdlib LDAP
+client and LDAP is ASN.1-BER over TLS, and a vetted library for a protocol-heavy,
+security-sensitive login flow is exactly when a dependency earns its place (the
+same reasoning that admitted the MySQL driver, D-010). The LDAP protocol handling
+is confined to one thin adapter behind a `connector` seam; the method's own logic
+(config, group→policy mapping, token issuance) is stdlib and unit-tested with a
+fake connector. A user's LDAP groups feed identity external groups (D-016) as
+well as an in-method group→policy map. The alternatives (hand-rolled BER, an
+external-command bind helper, or OIDC-only) were rejected — see the analysis
+below.
+
+**Historical — the options considered:** whether to add an LDAP/AD auth method,
+and if so how.
 LDAP is the last Vault-Community auth method uBix Vault lacks, but Go's standard
 library has no LDAP client and LDAP is ASN.1-BER over TLS, so there is no
 stdlib path. The options (full analysis in

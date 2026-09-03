@@ -24,6 +24,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
+	"github.com/cwolsen7905/ubixvault/internal/ldapauth"
 	"github.com/cwolsen7905/ubixvault/internal/metrics"
 	"github.com/cwolsen7905/ubixvault/internal/pki"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
@@ -60,6 +61,7 @@ type Handler struct {
 	userpass       *userpass.Method
 	jwtauth        *jwtauth.Method
 	certauth       *certauth.Method
+	ldap           *ldapauth.Method
 	wrapping       *wrapping.Store
 	tokens         *token.Store
 	policies       *policy.Store
@@ -115,6 +117,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		userpass:   userpass.New(c.Barrier(), c.Tokens(), "auth/userpass"),
 		jwtauth:    jwtauth.New(c.Barrier(), c.Tokens(), "auth/jwt"),
 		certauth:   certauth.New(c.Barrier(), c.Tokens(), "auth/cert"),
+		ldap:       ldapauth.New(c.Barrier(), c.Tokens(), "auth/ldap"),
 		wrapping:   wrapping.NewStore(c.Barrier()),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
@@ -300,6 +303,18 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/auth/cert/certs", h.authenticate(h.certListCerts))
 	mux.HandleFunc("DELETE /v1/auth/cert/certs/{name}", h.authenticate(h.certDeleteCert))
 	mux.HandleFunc("POST /v1/auth/cert/login", h.certLogin)
+
+	// LDAP/AD auth: configure the directory and group→policy maps (authenticated),
+	// then log in with a directory username + password (unauthenticated).
+	mux.HandleFunc("POST /v1/auth/ldap/config", h.authenticate(h.ldapConfigure))
+	mux.HandleFunc("PUT /v1/auth/ldap/config", h.authenticate(h.ldapConfigure))
+	mux.HandleFunc("GET /v1/auth/ldap/config", h.authenticate(h.ldapReadConfig))
+	mux.HandleFunc("POST /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapWriteGroup))
+	mux.HandleFunc("PUT /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapWriteGroup))
+	mux.HandleFunc("GET /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapReadGroup))
+	mux.HandleFunc("LIST /v1/auth/ldap/groups", h.authenticate(h.ldapListGroups))
+	mux.HandleFunc("DELETE /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapDeleteGroup))
+	mux.HandleFunc("POST /v1/auth/ldap/login/{username}", h.ldapLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
