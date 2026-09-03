@@ -159,7 +159,9 @@ func TestExternalGroupMembershipFollowsLatestLogin(t *testing.T) {
 	e := newEngine()
 
 	entID, _ := e.ResolveAlias(ctx, "jwt", "bob@idp", []string{"platform"})
-	e.WriteGroup(ctx, "platform-team", GroupInput{Type: GroupExternal, MountType: "jwt", GroupName: "platform", Policies: []string{"pol"}})
+	if _, err := e.WriteGroup(ctx, "platform-team", GroupInput{Type: GroupExternal, MountType: "jwt", GroupName: "platform", Policies: []string{"pol"}}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
 	if got, _ := e.PoliciesFor(ctx, entID); len(got) != 1 {
 		t.Fatalf("initial PoliciesFor = %v, want [pol]", got)
 	}
