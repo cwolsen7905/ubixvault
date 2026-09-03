@@ -402,6 +402,34 @@ func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string, group
 	return ent.ID, nil
 }
 
+// TemplateValues returns the identity placeholder values for an entity, keyed as
+// they appear in policy templates ("identity.entity.id", "identity.entity.name",
+// "identity.entity.metadata.<key>"). It returns nil if the entity is absent or
+// disabled, so a templated rule referencing it drops (fail-closed).
+func (e *Engine) TemplateValues(ctx context.Context, entityID string) (map[string]string, error) {
+	if entityID == "" {
+		return nil, nil
+	}
+	ent, err := e.ReadEntity(ctx, entityID)
+	if errors.Is(err, ErrEntityNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if ent.Disabled {
+		return nil, nil
+	}
+	vals := map[string]string{
+		"identity.entity.id":   ent.ID,
+		"identity.entity.name": ent.Name,
+	}
+	for k, v := range ent.Metadata {
+		vals["identity.entity.metadata."+k] = v
+	}
+	return vals, nil
+}
+
 // PoliciesFor returns the policies contributed by an entity: its own policies
 // plus those of every group it is a transitive member of. It returns nil if the
 // entity is absent or disabled.

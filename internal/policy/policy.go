@@ -125,6 +125,67 @@ func (p *Policy) Document() ([]byte, error) {
 	return json.Marshal(doc)
 }
 
+// Templated returns a copy of the policy with {{...}} placeholders in rule paths
+// resolved via resolve (e.g. "identity.entity.id" -> the entity's ID). A rule
+// whose placeholders do not all resolve is dropped, so a templated grant is
+// worthless to a caller lacking the value (fail-closed). A policy with no
+// placeholders is returned unchanged — the common case, at no cost.
+func (p *Policy) Templated(resolve func(key string) (string, bool)) *Policy {
+	hasTemplate := false
+	for _, r := range p.Rules {
+		if containsTemplate(r.Path) {
+			hasTemplate = true
+			break
+		}
+	}
+	if !hasTemplate {
+		return p
+	}
+	out := &Policy{Name: p.Name}
+	for _, r := range p.Rules {
+		if !containsTemplate(r.Path) {
+			out.Rules = append(out.Rules, r)
+			continue
+		}
+		expanded, ok := expandTemplate(r.Path, resolve)
+		if !ok {
+			continue // unresolved placeholder — drop the rule
+		}
+		out.Rules = append(out.Rules, Rule{Path: expanded, Capabilities: r.Capabilities})
+	}
+	return out
+}
+
+func containsTemplate(s string) bool { return strings.Contains(s, "{{") }
+
+// expandTemplate replaces each {{ key }} placeholder in s with resolve(key). If
+// any placeholder is unresolved, ok is false. An unterminated "{{" is left
+// literal.
+func expandTemplate(s string, resolve func(key string) (string, bool)) (string, bool) {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "{{")
+		if i < 0 {
+			b.WriteString(s)
+			return b.String(), true
+		}
+		rest := s[i+2:]
+		j := strings.Index(rest, "}}")
+		if j < 0 {
+			b.WriteString(s) // no closing braces; leave the remainder literal
+			return b.String(), true
+		}
+		b.WriteString(s[:i])
+		key := strings.TrimSpace(rest[:j])
+		val, ok := resolve(key)
+		if !ok {
+			return "", false
+		}
+		b.WriteString(val)
+		s = rest[j+2:]
+	}
+}
+
 // ACL is the merged rule set from one or more policies attached to a token.
 type ACL struct {
 	rules []Rule

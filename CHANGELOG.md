@@ -8,6 +8,16 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Identity — policy templating (phase 4)** — ACL policy paths may now contain
+  `{{identity.entity.id}}`, `{{identity.entity.name}}`, and
+  `{{identity.entity.metadata.<key>}}` placeholders, expanded against the
+  requesting token's entity when the request is authorized. One policy —
+  `secret/data/users/{{identity.entity.name}}/*` — thus gives every user their
+  own subtree, with no per-user policy. A placeholder that does not resolve drops
+  that rule (fail-closed), so a templated grant is worthless to a token without
+  the value. Completes the identity layer (D-016); design in
+  `docs/design/identity-templating.md`, ADR D-017. Zero new dependency.
+
 - **Identity — external groups (phase 3)** — groups whose membership is asserted
   by an auth method rather than listed by hand. Create a group with
   `"type":"external"`, a `mount_type`, and a `group_name`; an entity is a member
