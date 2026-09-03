@@ -121,13 +121,14 @@ Community-parity gaps before Enterprise-tier features.
 
 ### Toward Vault Community parity (free-tier gaps)
 - [ ] **Integrated Storage (Raft)** — multi-writer HA (also in "Path to 1.0 · Optional"; the SQL backend already gives a durable, replaceable node, so this may never be needed).
-- [ ] **More auth methods** — TLS client certificate, LDAP.
+- [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
+- [ ] **More auth methods** — LDAP.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
 - [ ] **Identity** — entities + groups, so multiple auth logins map to one subject.
 - [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.
 - [ ] **Transit extras** — convergent encryption, key derivation, BYOK import.
-- [ ] **Cubbyhole** — per-token private storage (response wrapping is already done).
-- [ ] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
+- [x] **Cubbyhole** — per-token private storage, destroyed on token revoke.
+- [x] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
 
 ### Toward Vault Enterprise parity (Enterprise-differentiated features)
 Mostly large and compliance-oriented; listed so the gap is explicit (see
