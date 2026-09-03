@@ -16,7 +16,7 @@ import (
 // real directory, not in unit tests.
 type realConnector struct{}
 
-func (realConnector) Authenticate(ctx context.Context, cfg *Config, username, password string) ([]string, error) {
+func (realConnector) Authenticate(_ context.Context, cfg *Config, username, password string) ([]string, error) {
 	l, err := dial(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ldapauth: connect: %w", err)
