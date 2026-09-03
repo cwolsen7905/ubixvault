@@ -124,7 +124,7 @@ Community-parity gaps before Enterprise-tier features.
 - [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
 - [ ] **More auth methods** — LDAP.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
-- [ ] **Identity** — entities + groups, so multiple auth logins map to one subject.
+- [ ] **Identity** — entities + groups, so multiple auth logins map to one subject. Design: [`docs/design/identity-entities-groups.md`](design/identity-entities-groups.md) (ADR D-016, proposed); ships in phases.
 - [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.
 - [ ] **Transit extras** — convergent encryption, key derivation, BYOK import.
 - [x] **Cubbyhole** — per-token private storage, destroyed on token revoke.
