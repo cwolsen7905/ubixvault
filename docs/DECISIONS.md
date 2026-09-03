@@ -396,3 +396,32 @@ operator-set and entity writes are root/ACL-gated, so this is trusted input
 (documented, not sanitized, matching Vault). `id`/`name` are safe by
 construction. Alias- and group-scoped placeholders can be added later by growing
 the value map; the expander does not change. No new dependency.
+
+## D-018 — LDAP / Active Directory auth: whether to add the project's second dependency
+
+**Status:** Proposed — **awaiting decision** · 2026-09-02
+
+**Decision (pending):** whether to add an LDAP/AD auth method, and if so how.
+LDAP is the last Vault-Community auth method uBix Vault lacks, but Go's standard
+library has no LDAP client and LDAP is ASN.1-BER over TLS, so there is no
+stdlib path. The options (full analysis in
+[`docs/design/ldap-auth.md`](design/ldap-auth.md)):
+
+- **A —** add `github.com/go-ldap/ldap/v3` (the standard Go LDAP client): the
+  project's second direct dependency, but a vetted library for a
+  protocol-heavy, security-sensitive feature. LDAP groups feed identity external
+  groups (D-016) directly.
+- **B —** hand-roll a minimal BER/LDAP client (stdlib only): keeps the
+  dependency count but puts hand-written ASN.1-BER in the auth path — the wrong
+  risk; **not recommended**.
+- **C —** external-command bind helper (like the KMS/HSM seal, D-015): credentials
+  transit an exec per login; the seal trick does not fit a login flow; **not
+  recommended**.
+- **D —** don't add LDAP; document fronting LDAP with the existing OIDC support
+  (Keycloak/Entra/Okta/Dex), leaving the box deliberately unchecked.
+
+**Recommendation:** **A** if LDAP-without-OIDC is a target audience (a vetted
+library is exactly when a dependency earns its place, as the MySQL driver did in
+D-010); otherwise **D**. Explicitly not B or C. This is a product/philosophy call
+about the "essentially no dependencies" posture — deferred to the maintainer.
+This ADR moves to Accepted once that call is made.
