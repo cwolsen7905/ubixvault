@@ -161,9 +161,9 @@ func (m *Method) Login(ctx context.Context, presented []*x509.Certificate) (*tok
 		}
 		cn := leaf.Subject.CommonName // the certificate CN is the identity alias name
 		if role.TokenTTL > 0 {
-			return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "cert", cn)
+			return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "cert", cn, nil)
 		}
-		return m.tokens.CreateWithAlias(ctx, role.Policies, "cert", cn)
+		return m.tokens.CreateWithAlias(ctx, role.Policies, "cert", cn, nil)
 	}
 	return nil, ErrDenied
 }

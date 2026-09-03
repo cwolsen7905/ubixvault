@@ -67,12 +67,12 @@ func TestResolveAliasAutoCreate(t *testing.T) {
 	e := newEngine()
 
 	// First userpass login for "alice" auto-creates.
-	id1, err := e.ResolveAlias(ctx, "userpass", "alice")
+	id1, err := e.ResolveAlias(ctx, "userpass", "alice", nil)
 	if err != nil || id1 == "" {
 		t.Fatalf("first ResolveAlias = %q, %v", id1, err)
 	}
 	// Second login resolves to the same entity (no duplicate).
-	id2, err := e.ResolveAlias(ctx, "userpass", "alice")
+	id2, err := e.ResolveAlias(ctx, "userpass", "alice", nil)
 	if err != nil || id2 != id1 {
 		t.Fatalf("second ResolveAlias = %q, %v (want %q)", id2, err, id1)
 	}
@@ -86,7 +86,7 @@ func TestResolveAliasAutoCreate(t *testing.T) {
 	if _, err := e.CreateAlias(ctx, id1, "jwt", "alice@idp"); err != nil {
 		t.Fatalf("CreateAlias: %v", err)
 	}
-	viaJWT, err := e.ResolveAlias(ctx, "jwt", "alice@idp")
+	viaJWT, err := e.ResolveAlias(ctx, "jwt", "alice@idp", nil)
 	if err != nil || viaJWT != id1 {
 		t.Fatalf("ResolveAlias via jwt = %q, %v (want %q)", viaJWT, err, id1)
 	}
@@ -97,7 +97,7 @@ func TestResolveAliasAutoCreateOff(t *testing.T) {
 	e := newEngine()
 	e.SetAutoCreate(false)
 
-	id, err := e.ResolveAlias(ctx, "userpass", "nobody")
+	id, err := e.ResolveAlias(ctx, "userpass", "nobody", nil)
 	if err != nil {
 		t.Fatalf("ResolveAlias: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestCreateAliasRequiresEntity(t *testing.T) {
 func TestDeleteEntityRemovesAliases(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
-	id, _ := e.ResolveAlias(ctx, "userpass", "frank") // auto-creates entity + alias
+	id, _ := e.ResolveAlias(ctx, "userpass", "frank", nil) // auto-creates entity + alias
 
 	if err := e.DeleteEntity(ctx, id); err != nil {
 		t.Fatalf("DeleteEntity: %v", err)
@@ -150,7 +150,7 @@ func TestDeleteEntityRemovesAliases(t *testing.T) {
 		t.Fatalf("entity survived delete: %v", err)
 	}
 	// The alias index is gone, so a later login auto-creates a fresh entity.
-	id2, _ := e.ResolveAlias(ctx, "userpass", "frank")
+	id2, _ := e.ResolveAlias(ctx, "userpass", "frank", nil)
 	if id2 == id {
 		t.Fatal("alias not cleared: resolved to the deleted entity's ID")
 	}

@@ -8,6 +8,15 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Identity — external groups (phase 3)** — groups whose membership is asserted
+  by an auth method rather than listed by hand. Create a group with
+  `"type":"external"`, a `mount_type`, and a `group_name`; an entity is a member
+  when a login through that method asserted that group. The JWT/OIDC method reads
+  the caller's groups from a configurable `groups_claim` and records them on the
+  entity's alias, refreshed each login — so gaining or losing an IdP group takes
+  effect on next login. External groups nest inside internal ones like any other.
+  Zero new dependency. (Identity templating in ACL paths is the remaining phase.)
+
 - **Identity — internal groups (phase 2)** — collect entities into **groups**
   that carry their own policies; a member entity's tokens pick up the group's
   policies (unioned per-request, like entity policies). Groups nest —

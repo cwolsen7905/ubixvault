@@ -19,9 +19,12 @@ type entityRequest struct {
 type groupRequest struct {
 	ID              string            `json:"id"` // when set, update this group in place (keeps its name)
 	Name            string            `json:"name"`
+	Type            string            `json:"type"` // "internal" (default) or "external"
 	Policies        []string          `json:"policies"`
 	MemberEntityIDs []string          `json:"member_entity_ids"`
 	MemberGroupIDs  []string          `json:"member_group_ids"`
+	MountType       string            `json:"mount_type"` // external groups: asserting auth method
+	GroupName       string            `json:"group_name"` // external groups: asserted group name
 	Metadata        map[string]string `json:"metadata"`
 }
 
@@ -120,14 +123,23 @@ func (h *Handler) identityWriteGroup(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	in := identity.GroupInput{
+		Type:            req.Type,
+		Policies:        req.Policies,
+		MemberEntityIDs: req.MemberEntityIDs,
+		MemberGroupIDs:  req.MemberGroupIDs,
+		MountType:       req.MountType,
+		GroupName:       req.GroupName,
+		Metadata:        req.Metadata,
+	}
 	var (
 		g   *identity.Group
 		err error
 	)
 	if req.ID != "" {
-		g, err = h.identity.UpdateGroup(r.Context(), req.ID, req.Policies, req.MemberEntityIDs, req.MemberGroupIDs, req.Metadata)
+		g, err = h.identity.UpdateGroup(r.Context(), req.ID, in)
 	} else {
-		g, err = h.identity.WriteGroup(r.Context(), req.Name, req.Policies, req.MemberEntityIDs, req.MemberGroupIDs, req.Metadata)
+		g, err = h.identity.WriteGroup(r.Context(), req.Name, in)
 	}
 	if err != nil {
 		writeIdentityError(w, err)
@@ -175,9 +187,12 @@ func groupData(g *identity.Group) map[string]any {
 	return map[string]any{
 		"id":                g.ID,
 		"name":              g.Name,
+		"type":              g.Type,
 		"policies":          g.Policies,
 		"member_entity_ids": g.MemberEntityIDs,
 		"member_group_ids":  g.MemberGroupIDs,
+		"mount_type":        g.MountType,
+		"group_name":        g.GroupName,
 		"metadata":          g.Metadata,
 		"created_time":      g.CreatedTime,
 	}

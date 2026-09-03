@@ -10,7 +10,7 @@ import (
 func TestWriteReadGroup(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
-	g, err := e.WriteGroup(ctx, "platform", []string{"p-admin"}, []string{"e1", "e2"}, nil, nil)
+	g, err := e.WriteGroup(ctx, "platform", GroupInput{Policies: []string{"p-admin"}, MemberEntityIDs: []string{"e1", "e2"}, MemberGroupIDs: nil, Metadata: nil})
 	if err != nil {
 		t.Fatalf("WriteGroup: %v", err)
 	}
@@ -27,8 +27,8 @@ func TestWriteReadGroup(t *testing.T) {
 func TestWriteGroupUpsertsByName(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
-	first, _ := e.WriteGroup(ctx, "g", []string{"a"}, nil, nil, nil)
-	second, err := e.WriteGroup(ctx, "g", []string{"b"}, nil, nil, nil)
+	first, _ := e.WriteGroup(ctx, "g", GroupInput{Policies: []string{"a"}, MemberEntityIDs: nil, MemberGroupIDs: nil, Metadata: nil})
+	second, err := e.WriteGroup(ctx, "g", GroupInput{Policies: []string{"b"}, MemberEntityIDs: nil, MemberGroupIDs: nil, Metadata: nil})
 	if err != nil {
 		t.Fatalf("second WriteGroup: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestGroupPolicyInPoliciesFor(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
 	ent, _ := e.WriteEntity(ctx, "alice", []string{"own"}, nil, false)
-	if _, err := e.WriteGroup(ctx, "platform", []string{"grp"}, []string{ent.ID}, nil, nil); err != nil {
+	if _, err := e.WriteGroup(ctx, "platform", GroupInput{Policies: []string{"grp"}, MemberEntityIDs: []string{ent.ID}, MemberGroupIDs: nil, Metadata: nil}); err != nil {
 		t.Fatalf("WriteGroup: %v", err)
 	}
 
@@ -71,10 +71,10 @@ func TestNestedGroupPolicies(t *testing.T) {
 	e := newEngine()
 	ent, _ := e.WriteEntity(ctx, "carol", nil, nil, false)
 
-	child, _ := e.WriteGroup(ctx, "child", []string{"child-pol"}, []string{ent.ID}, nil, nil)
-	parent, _ := e.WriteGroup(ctx, "parent", []string{"parent-pol"}, nil, []string{child.ID}, nil)
+	child, _ := e.WriteGroup(ctx, "child", GroupInput{Policies: []string{"child-pol"}, MemberEntityIDs: []string{ent.ID}, MemberGroupIDs: nil, Metadata: nil})
+	parent, _ := e.WriteGroup(ctx, "parent", GroupInput{Policies: []string{"parent-pol"}, MemberEntityIDs: nil, MemberGroupIDs: []string{child.ID}, Metadata: nil})
 	// Introduce a cycle: child also lists parent as a child.
-	if _, err := e.WriteGroup(ctx, "child", []string{"child-pol"}, []string{ent.ID}, []string{parent.ID}, nil); err != nil {
+	if _, err := e.WriteGroup(ctx, "child", GroupInput{Policies: []string{"child-pol"}, MemberEntityIDs: []string{ent.ID}, MemberGroupIDs: []string{parent.ID}, Metadata: nil}); err != nil {
 		t.Fatalf("rewrite child: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestDeleteGroup(t *testing.T) {
 	ctx := context.Background()
 	e := newEngine()
 	ent, _ := e.WriteEntity(ctx, "dave", nil, nil, false)
-	g, _ := e.WriteGroup(ctx, "temp", []string{"gp"}, []string{ent.ID}, nil, nil)
+	g, _ := e.WriteGroup(ctx, "temp", GroupInput{Policies: []string{"gp"}, MemberEntityIDs: []string{ent.ID}, MemberGroupIDs: nil, Metadata: nil})
 
 	if err := e.DeleteGroup(ctx, g.ID); err != nil {
 		t.Fatalf("DeleteGroup: %v", err)
@@ -103,6 +103,93 @@ func TestDeleteGroup(t *testing.T) {
 	// The entity no longer inherits the deleted group's policy.
 	if got, _ := e.PoliciesFor(ctx, ent.ID); len(got) != 0 {
 		t.Fatalf("PoliciesFor after group delete = %v, want empty", got)
+	}
+}
+
+// TestExternalGroupMatchesAssertedGroups covers phase 3: an entity whose login
+// asserted a group name is a member of an external group naming that (mount,
+// group), and picks up its policies.
+func TestExternalGroupMatchesAssertedGroups(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine()
+
+	// A jwt login for alice asserts membership in "platform" and "eng".
+	entID, err := e.ResolveAlias(ctx, "jwt", "alice@idp", []string{"platform", "eng"})
+	if err != nil {
+		t.Fatalf("ResolveAlias: %v", err)
+	}
+
+	// An external group matching the "platform" jwt group, carrying a policy.
+	if _, err := e.WriteGroup(ctx, "platform-team", GroupInput{
+		Type: GroupExternal, MountType: "jwt", GroupName: "platform", Policies: []string{"platform-pol"},
+	}); err != nil {
+		t.Fatalf("WriteGroup external: %v", err)
+	}
+	// An external group for a group the login did NOT assert.
+	if _, err := e.WriteGroup(ctx, "secops", GroupInput{
+		Type: GroupExternal, MountType: "jwt", GroupName: "secops", Policies: []string{"secops-pol"},
+	}); err != nil {
+		t.Fatalf("WriteGroup external 2: %v", err)
+	}
+
+	got, err := e.PoliciesFor(ctx, entID)
+	if err != nil {
+		t.Fatalf("PoliciesFor: %v", err)
+	}
+	if len(got) != 1 || got[0] != "platform-pol" {
+		t.Fatalf("PoliciesFor = %v, want [platform-pol]", got)
+	}
+
+	// A different mount asserting the same group name does not match a jwt group.
+	if _, err := e.ResolveAlias(ctx, "userpass", "alice", []string{"platform"}); err != nil {
+		t.Fatalf("ResolveAlias userpass: %v", err)
+	}
+	// (The userpass alias belongs to a different entity; the jwt entity's
+	// membership is unchanged.)
+	got2, _ := e.PoliciesFor(ctx, entID)
+	if len(got2) != 1 || got2[0] != "platform-pol" {
+		t.Fatalf("PoliciesFor after unrelated login = %v, want [platform-pol]", got2)
+	}
+}
+
+// TestExternalGroupMembershipFollowsLatestLogin confirms the asserted groups are
+// refreshed each login, so losing an IdP group drops the membership.
+func TestExternalGroupMembershipFollowsLatestLogin(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine()
+
+	entID, _ := e.ResolveAlias(ctx, "jwt", "bob@idp", []string{"platform"})
+	if _, err := e.WriteGroup(ctx, "platform-team", GroupInput{Type: GroupExternal, MountType: "jwt", GroupName: "platform", Policies: []string{"pol"}}); err != nil {
+		t.Fatalf("WriteGroup: %v", err)
+	}
+	if got, _ := e.PoliciesFor(ctx, entID); len(got) != 1 {
+		t.Fatalf("initial PoliciesFor = %v, want [pol]", got)
+	}
+
+	// Next login no longer asserts "platform".
+	if _, err := e.ResolveAlias(ctx, "jwt", "bob@idp", []string{"eng"}); err != nil {
+		t.Fatalf("re-login: %v", err)
+	}
+	if got, _ := e.PoliciesFor(ctx, entID); len(got) != 0 {
+		t.Fatalf("PoliciesFor after dropping group = %v, want empty", got)
+	}
+}
+
+func TestWriteExternalGroupValidation(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine()
+	// External group without mount_type/group_name is rejected.
+	if _, err := e.WriteGroup(ctx, "bad", GroupInput{Type: GroupExternal}); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("external group missing fields = %v, want ErrInvalidName", err)
+	}
+	// Unknown type is rejected.
+	if _, err := e.WriteGroup(ctx, "bad2", GroupInput{Type: "weird"}); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("unknown type = %v, want ErrInvalidName", err)
+	}
+	// Empty type defaults to internal.
+	g, err := e.WriteGroup(ctx, "ok", GroupInput{})
+	if err != nil || g.Type != GroupInternal {
+		t.Fatalf("default type = %q, %v, want internal", g.Type, err)
 	}
 }
 

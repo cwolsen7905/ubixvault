@@ -1,8 +1,9 @@
 # Design note: identity — entities, aliases, and groups
 
-> **Status:** Accepted · Phases 1–2 (entities + aliases + entity policies;
-> internal groups) shipped 2026-09-02 · relates to ADR [D-016](../DECISIONS.md)
-> and `docs/ROADMAP.md` "Toward Vault Community parity".
+> **Status:** Accepted · Phases 1–3 (entities + aliases + entity policies;
+> internal groups; external/IdP-asserted groups) shipped 2026-09-02 · relates to
+> ADR [D-016](../DECISIONS.md) and `docs/ROADMAP.md` "Toward Vault Community
+> parity". Remaining: identity templating (phase 4).
 
 ## Problem
 
