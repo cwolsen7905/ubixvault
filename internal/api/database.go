@@ -169,8 +169,8 @@ func (h *Handler) leaseLookup(w http.ResponseWriter, r *http.Request) {
 }
 
 // tokenRevokeSelf revokes the calling token and cascades: every dynamic-database
-// lease created by that token is revoked too, so its credentials do not outlive
-// it.
+// lease created by that token is revoked and its cubbyhole is destroyed, so
+// neither its credentials nor its private data outlive it.
 func (h *Handler) tokenRevokeSelf(w http.ResponseWriter, r *http.Request) {
 	tok, ok := tokenFromContext(r.Context())
 	if !ok {
@@ -178,6 +178,10 @@ func (h *Handler) tokenRevokeSelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.database.RevokeByToken(r.Context(), tok.ID); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	if err := h.cubbyhole.Destroy(r.Context(), tok.ID); err != nil {
 		writeInternal(w, err)
 		return
 	}

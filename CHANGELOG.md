@@ -8,6 +8,15 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Cubbyhole secrets engine** — per-token private storage at `/v1/cubbyhole/`.
+  Each token gets its own namespace: `POST`/`GET`/`LIST`/`DELETE
+  /v1/cubbyhole/{path}` read and write plain JSON objects (no versioning), and
+  the data is visible only to the token that wrote it — no ACL grant, not even a
+  root token, reaches another token's cubbyhole, because the scoping is
+  structural (the storage path derives from the token). A token's cubbyhole is
+  destroyed when the token is revoked, so its private data never outlives the
+  credential. Zero new dependency.
+
 - **JWT/OIDC discovery** — the JWT auth method can now resolve its JWKS URL from
   an OIDC issuer: set `oidc_discovery_url` on the config and the vault fetches
   `<issuer>/.well-known/openid-configuration` to find `jwks_uri` (cached), instead

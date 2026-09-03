@@ -81,6 +81,13 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 		return true, nil
 	}
 
+	// Every token may access its own cubbyhole. Access is scoped to the token by
+	// construction (the storage path derives from the token), so no ACL grant is
+	// needed or would widen it — this mirrors Vault's built-in default policy.
+	if path == cubbyholeMountPrefix || strings.HasPrefix(path, cubbyholeMountPrefix+"/") {
+		return true, nil
+	}
+
 	var policies []*policy.Policy
 	for _, name := range tok.Policies {
 		p, err := h.policies.Get(ctx, name)

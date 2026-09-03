@@ -17,6 +17,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/certauth"
 	"github.com/cwolsen7905/ubixvault/internal/core"
+	"github.com/cwolsen7905/ubixvault/internal/cubbyhole"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
 	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
@@ -37,9 +38,10 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 // Storage prefixes under which the engines are mounted.
 const (
-	kvMountPrefix       = "secret"
-	transitMountPrefix  = "transit"
-	databaseMountPrefix = "database"
+	kvMountPrefix        = "secret"
+	transitMountPrefix   = "transit"
+	databaseMountPrefix  = "database"
+	cubbyholeMountPrefix = "cubbyhole"
 )
 
 // Handler serves the HTTP API over a Core and its mounted engines. It implements
@@ -49,6 +51,7 @@ type Handler struct {
 	kv             *kv.Engine
 	transit        *transit.Engine
 	database       *database.Engine
+	cubbyhole      *cubbyhole.Engine
 	pki            *pki.Engine
 	kubernetes     *kubeauth.Method
 	approle        *approle.Method
@@ -102,6 +105,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		kv:         kv.New(c.Barrier(), kvMountPrefix),
 		transit:    transit.New(c.Barrier(), transitMountPrefix),
 		database:   database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
+		cubbyhole:  cubbyhole.New(c.Barrier(), cubbyholeMountPrefix),
 		pki:        pki.New(c.Barrier(), "pki"),
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
@@ -154,6 +158,14 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.authenticate(h.kvList))
 	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.authenticate(h.kvDeleteMetadata))
 
+	// Cubbyhole — per-token private storage. Every operation is scoped to the
+	// calling token; the data is destroyed when the token is revoked.
+	mux.HandleFunc("GET /v1/cubbyhole/{path...}", h.authenticate(h.cubbyRead))
+	mux.HandleFunc("POST /v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
+	mux.HandleFunc("PUT /v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
+	mux.HandleFunc("LIST /v1/cubbyhole/{path...}", h.authenticate(h.cubbyList))
+	mux.HandleFunc("DELETE /v1/cubbyhole/{path...}", h.authenticate(h.cubbyDelete))
+
 	// ACL policies (governed by the same ACL check; root or an explicit grant).
 	mux.HandleFunc("PUT /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
 	mux.HandleFunc("POST /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
@@ -162,7 +174,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
 
 	// Token creation, renewal, and revocation (revoke cascades to the token's
-	// dynamic-database leases).
+	// dynamic-database leases and destroys its cubbyhole).
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
 	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
 	mux.HandleFunc("POST /v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
