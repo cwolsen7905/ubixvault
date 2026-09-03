@@ -4,8 +4,8 @@
 //
 // Signatures are verified with the standard library (RS256/384/512 and
 // ES256/384/512) against static PEM public keys and/or a fetched JWKS — no
-// dependency. OIDC discovery of the JWKS URL is future work; today the JWKS URL
-// is configured directly.
+// dependency. The JWKS URL may be configured directly or resolved from an OIDC
+// issuer's .well-known/openid-configuration (OIDC discovery).
 package jwtauth
 
 import (
@@ -30,12 +30,15 @@ var (
 	ErrRoleNotFound  = errors.New("jwtauth: role not found")
 	ErrDenied        = errors.New("jwtauth: token rejected")
 	ErrNotConfigured = errors.New("jwtauth: not configured")
-	ErrInvalidConfig = errors.New("jwtauth: config needs a JWKS URL or validation keys; a role needs a policy")
+	ErrInvalidConfig = errors.New("jwtauth: config needs a JWKS URL, an OIDC discovery URL, or validation keys; a role needs a policy")
 )
 
-// Config holds the signature-validation settings.
+// Config holds the signature-validation settings. Provide one of: a JWKS URL,
+// an OIDC discovery URL (the issuer — the JWKS URL is resolved from its
+// .well-known/openid-configuration), or static validation public keys.
 type Config struct {
 	JWKSURL           string   `json:"jwks_url"`
+	OIDCDiscoveryURL  string   `json:"oidc_discovery_url"`
 	ValidationPubKeys []string `json:"jwt_validation_pubkeys"` // PEM
 	BoundIssuer       string   `json:"bound_issuer"`
 }
@@ -63,9 +66,11 @@ type Method struct {
 	prefix string
 	fetch  func(ctx context.Context, url string) ([]byte, error) // JWKS fetch (injectable)
 
-	mu        sync.Mutex
-	jwksURL   string
-	jwksCache []crypto.PublicKey
+	mu              sync.Mutex
+	jwksURL         string
+	jwksCache       []crypto.PublicKey
+	discoveryURL    string // the OIDC discovery URL last resolved
+	resolvedJWKSURL string // jwks_uri resolved from discoveryURL
 }
 
 // New returns a method storing under prefix (e.g. "auth/jwt").
@@ -80,7 +85,7 @@ func validName(name string) bool { return name != "" && !strings.Contains(name, 
 
 // Configure stores the validation config.
 func (m *Method) Configure(ctx context.Context, cfg Config) error {
-	if cfg.JWKSURL == "" && len(cfg.ValidationPubKeys) == 0 {
+	if cfg.JWKSURL == "" && cfg.OIDCDiscoveryURL == "" && len(cfg.ValidationPubKeys) == 0 {
 		return ErrInvalidConfig
 	}
 	// Validate any static keys up front.
@@ -97,7 +102,8 @@ func (m *Method) Configure(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("jwtauth: persist config: %w", err)
 	}
 	m.mu.Lock()
-	m.jwksCache = nil // force refetch
+	m.jwksCache = nil      // force refetch
+	m.resolvedJWKSURL = "" // force OIDC re-discovery
 	m.mu.Unlock()
 	return nil
 }
@@ -226,13 +232,51 @@ func (m *Method) verifySignature(ctx context.Context, cfg *Config, alg string, s
 	if tryKeys(static) {
 		return true
 	}
-	if cfg.JWKSURL == "" {
+	jwksURL := m.resolveJWKSURL(ctx, cfg)
+	if jwksURL == "" {
 		return false
 	}
-	if tryKeys(m.jwksKeys(ctx, cfg.JWKSURL, false)) {
+	if tryKeys(m.jwksKeys(ctx, jwksURL, false)) {
 		return true
 	}
-	return tryKeys(m.jwksKeys(ctx, cfg.JWKSURL, true)) // force refetch
+	return tryKeys(m.jwksKeys(ctx, jwksURL, true)) // force refetch
+}
+
+// resolveJWKSURL returns the JWKS URL to use: cfg.JWKSURL if set, otherwise the
+// jwks_uri discovered from cfg.OIDCDiscoveryURL's
+// /.well-known/openid-configuration (fetched once and cached). Returns "" if
+// neither is configured or discovery fails.
+func (m *Method) resolveJWKSURL(ctx context.Context, cfg *Config) string {
+	if cfg.JWKSURL != "" {
+		return cfg.JWKSURL
+	}
+	if cfg.OIDCDiscoveryURL == "" {
+		return ""
+	}
+	m.mu.Lock()
+	if m.discoveryURL == cfg.OIDCDiscoveryURL && m.resolvedJWKSURL != "" {
+		u := m.resolvedJWKSURL
+		m.mu.Unlock()
+		return u
+	}
+	m.mu.Unlock()
+
+	doc := strings.TrimRight(cfg.OIDCDiscoveryURL, "/") + "/.well-known/openid-configuration"
+	data, err := m.fetch(ctx, doc)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil || meta.JWKSURI == "" {
+		return ""
+	}
+	m.mu.Lock()
+	m.discoveryURL = cfg.OIDCDiscoveryURL
+	m.resolvedJWKSURL = meta.JWKSURI
+	m.mu.Unlock()
+	return meta.JWKSURI
 }
 
 // jwksKeys returns the JWKS public keys, fetching and caching on first use or

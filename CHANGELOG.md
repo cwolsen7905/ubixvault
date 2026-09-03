@@ -8,6 +8,11 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **JWT/OIDC discovery** — the JWT auth method can now resolve its JWKS URL from
+  an OIDC issuer: set `oidc_discovery_url` on the config and the vault fetches
+  `<issuer>/.well-known/openid-configuration` to find `jwks_uri` (cached), instead
+  of configuring `jwks_url` directly. Zero new dependency.
+
 - **TLS client-certificate auth method** — authenticate by presenting an mTLS
   client certificate. Define cert roles under `/v1/auth/cert/certs/{name}` (a
   trusted CA or a specific certificate, a policy set, optional

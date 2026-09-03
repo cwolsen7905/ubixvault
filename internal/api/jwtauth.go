@@ -10,6 +10,7 @@ import (
 
 type jwtConfigRequest struct {
 	JWKSURL           string   `json:"jwks_url"`
+	OIDCDiscoveryURL  string   `json:"oidc_discovery_url"`
 	ValidationPubKeys []string `json:"jwt_validation_pubkeys"`
 	BoundIssuer       string   `json:"bound_issuer"`
 }
@@ -33,6 +34,7 @@ func (h *Handler) jwtConfigure(w http.ResponseWriter, r *http.Request) {
 	}
 	err := h.jwtauth.Configure(r.Context(), jwtauth.Config{
 		JWKSURL:           req.JWKSURL,
+		OIDCDiscoveryURL:  req.OIDCDiscoveryURL,
 		ValidationPubKeys: req.ValidationPubKeys,
 		BoundIssuer:       req.BoundIssuer,
 	})
