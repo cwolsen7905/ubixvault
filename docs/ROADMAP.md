@@ -122,7 +122,7 @@ Community-parity gaps before Enterprise-tier features.
 ### Toward Vault Community parity (free-tier gaps)
 - [ ] **Integrated Storage (Raft)** — multi-writer HA (also in "Path to 1.0 · Optional"; the SQL backend already gives a durable, replaceable node, so this may never be needed).
 - [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
-- [ ] **More auth methods** — LDAP.
+- [x] **LDAP / Active Directory auth** — bind + group search via `go-ldap/ldap/v3` (D-018, the project's second dependency); LDAP groups feed a group→policy map and identity external groups.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
 - [x] **Identity** — entities, aliases, and groups, so multiple auth logins map to one subject, with policy templating. Design: [`docs/design/identity-entities-groups.md`](design/identity-entities-groups.md) + [`identity-templating.md`](design/identity-templating.md) (ADRs D-016, D-017). All four phases shipped: entities + aliases + entity policies; internal groups (nestable); external/IdP-asserted groups (JWT `groups_claim`); `{{identity.*}}` templating in ACL paths. Request-time policy union.
 - [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.

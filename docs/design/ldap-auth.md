@@ -1,7 +1,7 @@
 # Design note: LDAP / Active Directory auth — and the dependency question
 
-> **Status:** Proposed — **awaiting a decision** · 2026-09-02 · would be recorded
-> as ADR [D-018](../DECISIONS.md). Relates to `docs/ROADMAP.md` "Toward Vault
+> **Status:** Accepted — **option A chosen** (add `go-ldap/ldap/v3`) · 2026-09-02
+> · ADR [D-018](../DECISIONS.md). Relates to `docs/ROADMAP.md` "Toward Vault
 > Community parity" and the minimal-dependency posture (D-009/D-010/D-014).
 
 ## What LDAP auth is
