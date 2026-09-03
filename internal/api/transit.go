@@ -13,19 +13,38 @@ import (
 // key type (default aes256-gcm96).
 func (h *Handler) transitCreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Type string `json:"type"`
+		Type       string `json:"type"`
+		Derived    bool   `json:"derived"`
+		Convergent bool   `json:"convergent"`
 	}
 	if r.ContentLength != 0 {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 	}
-	info, err := h.transit.CreateTypedKey(r.Context(), r.PathValue("name"), req.Type)
+	info, err := h.transit.CreateKeyWithOptions(r.Context(), r.PathValue("name"), req.Type, transit.KeyOptions{
+		Derived:    req.Derived,
+		Convergent: req.Convergent,
+	})
 	if err != nil {
 		writeTransitError(w, err)
 		return
 	}
 	writeData(w, info)
+}
+
+// decodeContext decodes the optional base64 "context" field for derived keys.
+// An empty string yields a nil context.
+func decodeContext(w http.ResponseWriter, s string) ([]byte, bool) {
+	if s == "" {
+		return nil, true
+	}
+	dctx, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "context must be base64")
+		return nil, false
+	}
+	return dctx, true
 }
 
 func (h *Handler) transitRotateKey(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +86,7 @@ func (h *Handler) transitDeleteKey(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) transitEncrypt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Plaintext string `json:"plaintext"`
+		Context   string `json:"context"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -76,7 +96,11 @@ func (h *Handler) transitEncrypt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "plaintext must be base64")
 		return
 	}
-	ciphertext, err := h.transit.Encrypt(r.Context(), r.PathValue("name"), plaintext)
+	dctx, ok := decodeContext(w, req.Context)
+	if !ok {
+		return
+	}
+	ciphertext, err := h.transit.EncryptWithContext(r.Context(), r.PathValue("name"), plaintext, dctx)
 	if err != nil {
 		writeTransitError(w, err)
 		return
@@ -88,11 +112,16 @@ func (h *Handler) transitEncrypt(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) transitDecrypt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Ciphertext string `json:"ciphertext"`
+		Context    string `json:"context"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	plaintext, err := h.transit.Decrypt(r.Context(), r.PathValue("name"), req.Ciphertext)
+	dctx, ok := decodeContext(w, req.Context)
+	if !ok {
+		return
+	}
+	plaintext, err := h.transit.DecryptWithContext(r.Context(), r.PathValue("name"), req.Ciphertext, dctx)
 	if err != nil {
 		writeTransitError(w, err)
 		return
@@ -104,11 +133,16 @@ func (h *Handler) transitDecrypt(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) transitRewrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Ciphertext string `json:"ciphertext"`
+		Context    string `json:"context"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ciphertext, err := h.transit.Rewrap(r.Context(), r.PathValue("name"), req.Ciphertext)
+	dctx, ok := decodeContext(w, req.Context)
+	if !ok {
+		return
+	}
+	ciphertext, err := h.transit.RewrapWithContext(r.Context(), r.PathValue("name"), req.Ciphertext, dctx)
 	if err != nil {
 		writeTransitError(w, err)
 		return
@@ -237,7 +271,9 @@ func writeTransitError(w http.ResponseWriter, err error) {
 		errors.Is(err, transit.ErrInvalidDataKeyBits),
 		errors.Is(err, transit.ErrInvalidAlgorithm),
 		errors.Is(err, transit.ErrInvalidKeyType),
-		errors.Is(err, transit.ErrKeyTypeMismatch):
+		errors.Is(err, transit.ErrKeyTypeMismatch),
+		errors.Is(err, transit.ErrContextRequired),
+		errors.Is(err, transit.ErrContextNotAllowed):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)

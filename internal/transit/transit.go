@@ -57,6 +57,8 @@ type keyData struct {
 	Type          string         `json:"type,omitempty"` // "" == aes256-gcm96 (pre-typed keys)
 	Versions      map[int][]byte `json:"versions"`       // version -> AES key or PKCS#8 signing key
 	LatestVersion int            `json:"latest_version"`
+	Derived       bool           `json:"derived,omitempty"`    // encryption key is derived per-context
+	Convergent    bool           `json:"convergent,omitempty"` // deterministic ciphertext (implies Derived)
 	CreatedTime   time.Time      `json:"created_time"`
 }
 
@@ -66,6 +68,8 @@ type KeyInfo struct {
 	Type          string    `json:"type"`
 	LatestVersion int       `json:"latest_version"`
 	Versions      []int     `json:"versions"`
+	Derived       bool      `json:"derived"`
+	Convergent    bool      `json:"convergent"`
 	CreatedTime   time.Time `json:"created_time"`
 	// PublicKeys holds the PEM public key per version for signing keys; nil for
 	// symmetric keys.
@@ -110,8 +114,33 @@ func (e *Engine) CreateKey(ctx context.Context, name string) (*KeyInfo, error) {
 // unknown type. keyType is one of the KeyType* constants; an empty string means
 // AES-256.
 func (e *Engine) CreateTypedKey(ctx context.Context, name, keyType string) (*KeyInfo, error) {
+	return e.CreateKeyWithOptions(ctx, name, keyType, KeyOptions{})
+}
+
+// KeyOptions holds the optional behaviors of a new key.
+type KeyOptions struct {
+	// Derived makes every encrypt/decrypt derive a per-context subkey from a
+	// caller-supplied context (via HKDF), so one key yields independent keys per
+	// context. Symmetric keys only.
+	Derived bool
+	// Convergent makes encryption deterministic — the same plaintext and context
+	// produce the same ciphertext, enabling equality checks without decrypting.
+	// It implies Derived.
+	Convergent bool
+}
+
+// CreateKeyWithOptions creates a new key of the given type with a single
+// version and the given options. Convergent implies Derived, and both require a
+// symmetric key.
+func (e *Engine) CreateKeyWithOptions(ctx context.Context, name, keyType string, opts KeyOptions) (*KeyInfo, error) {
 	if err := e.validateName(name); err != nil {
 		return nil, err
+	}
+	if opts.Convergent {
+		opts.Derived = true
+	}
+	if opts.Derived && !isSymmetric(keyType) {
+		return nil, ErrKeyTypeMismatch
 	}
 	if _, err := e.load(ctx, name); err == nil {
 		return nil, ErrKeyExists
@@ -128,6 +157,8 @@ func (e *Engine) CreateTypedKey(ctx context.Context, name, keyType string) (*Key
 		Type:          normalizeType(keyType),
 		Versions:      map[int][]byte{1: material},
 		LatestVersion: 1,
+		Derived:       opts.Derived,
+		Convergent:    opts.Convergent,
 		CreatedTime:   e.now(),
 	}
 	if err := e.save(ctx, k); err != nil {
@@ -184,57 +215,15 @@ func (e *Engine) DeleteKey(ctx context.Context, name string) error {
 }
 
 // Encrypt encrypts plaintext with the key's latest version and returns a
-// self-describing ciphertext string.
+// self-describing ciphertext string. For a derived key, use
+// [Engine.EncryptWithContext].
 func (e *Engine) Encrypt(ctx context.Context, name string, plaintext []byte) (string, error) {
-	k, err := e.load(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	if !isSymmetric(k.Type) {
-		return "", ErrKeyTypeMismatch
-	}
-	aead, err := newAEAD(k.Versions[k.LatestVersion])
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("transit: nonce: %w", err)
-	}
-	sealed := aead.Seal(nonce, nonce, plaintext, []byte(name))
-	return fmt.Sprintf("%sv%d:%s", cipherPrefix, k.LatestVersion, base64.StdEncoding.EncodeToString(sealed)), nil
+	return e.EncryptWithContext(ctx, name, plaintext, nil)
 }
 
 // Decrypt reverses Encrypt, selecting the key version named in the ciphertext.
 func (e *Engine) Decrypt(ctx context.Context, name, ciphertext string) ([]byte, error) {
-	version, blob, err := parseCiphertext(ciphertext)
-	if err != nil {
-		return nil, err
-	}
-	k, err := e.load(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if !isSymmetric(k.Type) {
-		return nil, ErrKeyTypeMismatch
-	}
-	material, ok := k.Versions[version]
-	if !ok {
-		return nil, ErrInvalidCiphertext
-	}
-	aead, err := newAEAD(material)
-	if err != nil {
-		return nil, err
-	}
-	if len(blob) < aead.NonceSize() {
-		return nil, ErrInvalidCiphertext
-	}
-	nonce, ct := blob[:aead.NonceSize()], blob[aead.NonceSize():]
-	plaintext, err := aead.Open(nil, nonce, ct, []byte(name))
-	if err != nil {
-		return nil, ErrInvalidCiphertext
-	}
-	return plaintext, nil
+	return e.DecryptWithContext(ctx, name, ciphertext, nil)
 }
 
 func (e *Engine) load(ctx context.Context, name string) (*keyData, error) {
@@ -277,6 +266,8 @@ func info(k *keyData) *KeyInfo {
 		Type:          normalizeType(k.Type),
 		LatestVersion: k.LatestVersion,
 		Versions:      versions,
+		Derived:       k.Derived,
+		Convergent:    k.Convergent,
 		CreatedTime:   k.CreatedTime,
 	}
 	if isSigningType(k.Type) {
