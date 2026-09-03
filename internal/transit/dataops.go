@@ -13,11 +13,7 @@ var ErrInvalidDataKeyBits = fmt.Errorf("transit: data key bits must be 128, 256,
 // without exposing the plaintext to the caller. Use it to upgrade ciphertexts
 // after [Engine.Rotate] so old key versions can eventually be retired.
 func (e *Engine) Rewrap(ctx context.Context, name, ciphertext string) (string, error) {
-	plaintext, err := e.Decrypt(ctx, name, ciphertext)
-	if err != nil {
-		return "", err
-	}
-	return e.Encrypt(ctx, name, plaintext)
+	return e.RewrapWithContext(ctx, name, ciphertext, nil)
 }
 
 // GenerateDataKey returns a fresh random data key of the given bit length,

@@ -126,7 +126,7 @@ Community-parity gaps before Enterprise-tier features.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
 - [x] **Identity** — entities, aliases, and groups, so multiple auth logins map to one subject, with policy templating. Design: [`docs/design/identity-entities-groups.md`](design/identity-entities-groups.md) + [`identity-templating.md`](design/identity-templating.md) (ADRs D-016, D-017). All four phases shipped: entities + aliases + entity policies; internal groups (nestable); external/IdP-asserted groups (JWT `groups_claim`); `{{identity.*}}` templating in ACL paths. Request-time policy union.
 - [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.
-- [ ] **Transit extras** — convergent encryption, key derivation, BYOK import.
+- [~] **Transit extras** — key derivation + convergent encryption **shipped** (stdlib HKDF); BYOK import still to do.
 - [x] **Cubbyhole** — per-token private storage, destroyed on token revoke.
 - [x] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
 

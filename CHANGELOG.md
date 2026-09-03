@@ -8,6 +8,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Transit — derived keys & convergent encryption** — a transit key created
+  with `"derived":true` derives a per-context subkey (HKDF-SHA256) from a
+  caller-supplied `context` on every encrypt/decrypt, so one key yields
+  independent keys per context; the context is bound into the ciphertext (a wrong
+  context fails to decrypt). `"convergent":true` (implies derived) makes
+  encryption deterministic — the same plaintext and context produce the same
+  ciphertext, enabling equality/dedup checks without decrypting — via a nonce
+  derived (HMAC-SHA256) from the plaintext. `context` (base64) is accepted on
+  `/encrypt`, `/decrypt`, and `/rewrap`; a derived key requires it and a
+  non-derived key rejects it. Stdlib `crypto/hkdf` — zero new dependency.
+
 - **LDAP / Active Directory auth method** — log in with a directory username and
   password: the vault binds to the directory to verify them, reads the user's
   group memberships, and issues a token whose policies come from a group→policy
