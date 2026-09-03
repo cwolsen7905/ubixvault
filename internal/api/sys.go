@@ -20,6 +20,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/cubbyhole"
 	"github.com/cwolsen7905/ubixvault/internal/database"
 	"github.com/cwolsen7905/ubixvault/internal/database/mariadb"
+	"github.com/cwolsen7905/ubixvault/internal/identity"
 	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
 	"github.com/cwolsen7905/ubixvault/internal/kv"
@@ -52,6 +53,7 @@ type Handler struct {
 	transit        *transit.Engine
 	database       *database.Engine
 	cubbyhole      *cubbyhole.Engine
+	identity       *identity.Engine
 	pki            *pki.Engine
 	kubernetes     *kubeauth.Method
 	approle        *approle.Method
@@ -106,6 +108,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		transit:    transit.New(c.Barrier(), transitMountPrefix),
 		database:   database.New(c.Barrier(), databaseMountPrefix, mariadb.New()),
 		cubbyhole:  cubbyhole.New(c.Barrier(), cubbyholeMountPrefix),
+		identity:   identity.New(c.Barrier(), "identity"),
 		pki:        pki.New(c.Barrier(), "pki"),
 		kubernetes: kubeauth.New(c.Barrier(), c.Tokens(), "auth/kubernetes"),
 		approle:    approle.New(c.Barrier(), c.Tokens(), "auth/approle"),
@@ -118,6 +121,10 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		metrics:    metrics.New(),
 		startTime:  time.Now().UTC(),
 	}
+	// Route auth-method logins through the identity resolver so their tokens carry
+	// an entity (auto-created on first login) and pick up the entity's policies.
+	c.Tokens().SetAliaser(h.identity)
+
 	mux := http.NewServeMux()
 
 	// Embedded read-only web console at /ui/, with / redirecting to it.
@@ -165,6 +172,18 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("PUT /v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
 	mux.HandleFunc("LIST /v1/cubbyhole/{path...}", h.authenticate(h.cubbyList))
 	mux.HandleFunc("DELETE /v1/cubbyhole/{path...}", h.authenticate(h.cubbyDelete))
+
+	// Identity — entities and aliases (phase 1). ACL-gated like policies; a login
+	// resolves its alias to an entity automatically (see SetAliaser above).
+	mux.HandleFunc("POST /v1/identity/entity", h.authenticate(h.identityWriteEntity))
+	mux.HandleFunc("PUT /v1/identity/entity", h.authenticate(h.identityWriteEntity))
+	mux.HandleFunc("LIST /v1/identity/entity/id", h.authenticate(h.identityListEntities))
+	mux.HandleFunc("GET /v1/identity/entity/id/{id}", h.authenticate(h.identityReadEntityByID))
+	mux.HandleFunc("DELETE /v1/identity/entity/id/{id}", h.authenticate(h.identityDeleteEntity))
+	mux.HandleFunc("GET /v1/identity/entity/name/{name}", h.authenticate(h.identityReadEntityByName))
+	mux.HandleFunc("POST /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
+	mux.HandleFunc("PUT /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
+	mux.HandleFunc("DELETE /v1/identity/entity-alias/id/{id}", h.authenticate(h.identityDeleteEntityAlias))
 
 	// ACL policies (governed by the same ACL check; root or an explicit grant).
 	mux.HandleFunc("PUT /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))

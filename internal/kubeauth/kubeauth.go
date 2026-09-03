@@ -220,7 +220,8 @@ func (m *Method) Login(ctx context.Context, roleName, jwt string) (*token.Token,
 		return nil, ErrDenied
 	}
 
-	tok, err := m.tokens.Create(ctx, role.Policies)
+	subject := result.Namespace + "/" + result.ServiceAccount
+	tok, err := m.tokens.CreateWithAlias(ctx, role.Policies, "kubernetes", subject)
 	if err != nil {
 		return nil, fmt.Errorf("kubeauth: issue token: %w", err)
 	}

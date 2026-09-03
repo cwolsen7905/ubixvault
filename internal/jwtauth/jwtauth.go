@@ -205,10 +205,11 @@ func (m *Method) Login(ctx context.Context, roleName, rawJWT string) (*token.Tok
 		return nil, ErrDenied
 	}
 
+	subject, _ := claims["sub"].(string) // the JWT subject is the identity alias name
 	if role.TokenTTL > 0 {
-		return m.tokens.CreateWithTTL(ctx, role.Policies, role.TokenTTL)
+		return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "jwt", subject)
 	}
-	return m.tokens.Create(ctx, role.Policies)
+	return m.tokens.CreateWithAlias(ctx, role.Policies, "jwt", subject)
 }
 
 // verifySignature tries the static keys and the JWKS keys; on a miss it refetches

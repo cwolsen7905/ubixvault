@@ -1,7 +1,8 @@
 # Design note: identity — entities, aliases, and groups
 
-> **Status:** Proposed · 2026-09-02 · relates to ADR [D-016](../DECISIONS.md) and
-> `docs/ROADMAP.md` "Toward Vault Community parity".
+> **Status:** Accepted · Phase 1 (entities + aliases + entity policies) shipped
+> 2026-09-02 · relates to ADR [D-016](../DECISIONS.md) and `docs/ROADMAP.md`
+> "Toward Vault Community parity".
 
 ## Problem
 
@@ -58,7 +59,7 @@ Entity {
   Name      string            // unique, human-facing
   Policies  []string          // attached directly to the entity
   Metadata  map[string]string
-  Disabled  bool              // a disabled entity's aliases cannot log in
+  Disabled  bool              // disabled → contributes no policies (phase 1); hard login-block later
 }
 
 Alias {
