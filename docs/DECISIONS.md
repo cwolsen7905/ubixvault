@@ -331,3 +331,37 @@ distroless image (a mounted script/binary or an image variant). A missing/failin
 command leaves the vault sealed (fail-safe). Native in-vault SDK seals remain a
 possible later opt-in behind the same interface — their own ADR, their own
 recorded dependency — only if the exec seal proves insufficient.
+
+## D-016 — Identity (entities, aliases, groups) as barrier records with request-time policy resolution
+
+**Status:** Proposed · 2026-09-02
+
+**Decision:** add an identity layer — *entities* (the canonical subject),
+*aliases* (per-auth-method logins that resolve to an entity), and *groups*
+(internal or externally-asserted collections of entities, with their own
+policies) — as JSON records on the existing barrier under `identity/`. Tokens
+gain an `EntityID`; `authorize()` unions the entity's and its groups' policies
+with the token's own policies **on each request**, rather than snapshotting them
+at login. Auth methods resolve `(mountType, loginName)` to an alias at login,
+auto-creating an entity+alias on first sight (with an opt-out). Full design in
+[`docs/design/identity-entities-groups.md`](design/identity-entities-groups.md).
+
+**Why:** the six auth methods are self-contained — each login mints a token with
+the role's static policies and no notion of who is behind it, so one subject's
+several logins are unrelated, policy is duplicated across every role, and
+IdP-asserted group membership is discarded. Identity is the single largest
+Vault-Community parity gap (`docs/POSITIONING.md`). Resolving policy at request
+time (not at login) is what makes a group or entity edit take effect immediately,
+matching operator expectations; a per-request cache keyed by `EntityID` bounds
+the cost. Identity only *adds* policies, never subtracts, so it cannot silently
+narrow an existing grant. The whole thing is storage records plus a resolver over
+the existing `policy` package — **no new dependency** (D-009/D-010/D-014).
+
+**Trade-off / follow-up:** per-request entity/group lookups (mitigated by a
+cache invalidated on writes); auto-created entities accumulate (listing + delete
++ opt-out suffice for the first cut, as in Vault); disabling an entity or
+removing an alias blocks future logins but does not retroactively revoke live,
+TTL-bounded tokens (documented, same model as Vault). Ships in phases —
+entities+aliases, then internal groups, then external groups, then identity
+templating in ACL paths (`{{identity.*}}`, its own note and ADR) — each a small
+CI-green PR.
