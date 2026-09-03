@@ -334,7 +334,7 @@ recorded dependency — only if the exec seal proves insufficient.
 
 ## D-016 — Identity (entities, aliases, groups) as barrier records with request-time policy resolution
 
-**Status:** Accepted · 2026-09-02 (phase 1 — entities + aliases + entity policies — shipped; groups and templating to follow)
+**Status:** Accepted · 2026-09-02 (phases 1–2 — entities + aliases + entity policies, internal groups — shipped; external groups and templating to follow)
 
 **Decision:** add an identity layer — *entities* (the canonical subject),
 *aliases* (per-auth-method logins that resolve to an entity), and *groups*

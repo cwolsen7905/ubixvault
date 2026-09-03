@@ -184,6 +184,12 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("POST /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
 	mux.HandleFunc("PUT /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
 	mux.HandleFunc("DELETE /v1/identity/entity-alias/id/{id}", h.authenticate(h.identityDeleteEntityAlias))
+	mux.HandleFunc("POST /v1/identity/group", h.authenticate(h.identityWriteGroup))
+	mux.HandleFunc("PUT /v1/identity/group", h.authenticate(h.identityWriteGroup))
+	mux.HandleFunc("LIST /v1/identity/group/id", h.authenticate(h.identityListGroups))
+	mux.HandleFunc("GET /v1/identity/group/id/{id}", h.authenticate(h.identityReadGroupByID))
+	mux.HandleFunc("DELETE /v1/identity/group/id/{id}", h.authenticate(h.identityDeleteGroup))
+	mux.HandleFunc("GET /v1/identity/group/name/{name}", h.authenticate(h.identityReadGroupByName))
 
 	// ACL policies (governed by the same ACL check; root or an explicit grant).
 	mux.HandleFunc("PUT /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))

@@ -367,9 +367,9 @@ func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string) (stri
 	return ent.ID, nil
 }
 
-// PoliciesFor returns the policies contributed by an entity: its own policies,
-// or nil if the entity is absent or disabled. Group policies join here in a
-// later phase.
+// PoliciesFor returns the policies contributed by an entity: its own policies
+// plus those of every group it is a transitive member of. It returns nil if the
+// entity is absent or disabled.
 func (e *Engine) PoliciesFor(ctx context.Context, entityID string) ([]string, error) {
 	if entityID == "" {
 		return nil, nil
@@ -384,5 +384,12 @@ func (e *Engine) PoliciesFor(ctx context.Context, entityID string) ([]string, er
 	if ent.Disabled {
 		return nil, nil
 	}
-	return ent.Policies, nil
+	groupPolicies, err := e.groupPoliciesForEntity(ctx, entityID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupPolicies) == 0 {
+		return ent.Policies, nil
+	}
+	return append(append([]string{}, ent.Policies...), groupPolicies...), nil
 }
