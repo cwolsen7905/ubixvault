@@ -8,6 +8,15 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Identity — internal groups (phase 2)** — collect entities into **groups**
+  that carry their own policies; a member entity's tokens pick up the group's
+  policies (unioned per-request, like entity policies). Groups nest —
+  `member_group_ids` names child groups whose members inherit this group's
+  policies, to any depth (cycles tolerated). Manage via `/v1/identity/group`
+  (create/update by name, or update by `id`), `/group/id/{id}`,
+  `/group/name/{name}`, `LIST /group/id`. Zero new dependency. External
+  (IdP-asserted) groups and identity templating are still to come.
+
 - **Identity — entities & aliases (phase 1)** — a subject layer over the auth
   methods. Every login now resolves its `(method, login-name)` to an **entity**,
   auto-creating one on first sight, and the issued token carries the entity's ID
