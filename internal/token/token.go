@@ -49,6 +49,7 @@ const DefaultTTL = 32 * 24 * time.Hour // 32 days, matching Vault's default
 type Token struct {
 	ID          string    `json:"id"`
 	Policies    []string  `json:"policies"`
+	EntityID    string    `json:"entity_id,omitempty"` // identity entity this token belongs to; empty if none
 	CreatedTime time.Time `json:"created_time"`
 	ExpiresAt   time.Time `json:"expires_at,omitempty"` // zero means never expires
 }
@@ -76,16 +77,30 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// Aliaser resolves an auth-method login to an identity entity, creating one on
+// first sight (unless auto-creation is disabled). It is the seam through which
+// the identity layer stamps an entity onto tokens minted by a login, without the
+// token store depending on the identity package. A nil aliaser (the default)
+// means no identity: tokens are minted with an empty EntityID.
+type Aliaser interface {
+	ResolveAlias(ctx context.Context, mountType, name string) (entityID string, err error)
+}
+
 // Store persists and retrieves tokens.
 type Store struct {
-	store Storage
-	now   func() time.Time
+	store   Storage
+	now     func() time.Time
+	aliaser Aliaser
 }
 
 // NewStore returns a token store over s.
 func NewStore(s Storage) *Store {
 	return &Store{store: s, now: func() time.Time { return time.Now().UTC() }}
 }
+
+// SetAliaser installs the identity resolver used by the alias-aware create
+// methods. It is wired once at startup; passing nil disables identity binding.
+func (st *Store) SetAliaser(a Aliaser) { st.aliaser = a }
 
 // CreateRoot creates a non-expiring token with the root policy.
 func (st *Store) CreateRoot(ctx context.Context) (*Token, error) {
@@ -107,12 +122,47 @@ func (st *Store) CreateWithTTL(ctx context.Context, policies []string, ttl time.
 	return st.create(ctx, policies, expiresAt)
 }
 
+// CreateWithAlias issues a token with the default TTL, binding it to the
+// identity entity that (mountType, name) resolves to. It is the alias-aware
+// counterpart of Create, called by the auth methods at login.
+func (st *Store) CreateWithAlias(ctx context.Context, policies []string, mountType, name string) (*Token, error) {
+	return st.createAlias(ctx, policies, st.now().Add(DefaultTTL), mountType, name)
+}
+
+// CreateWithTTLAndAlias is CreateWithTTL bound to an identity entity. A ttl <= 0
+// means the token never expires.
+func (st *Store) CreateWithTTLAndAlias(ctx context.Context, policies []string, ttl time.Duration, mountType, name string) (*Token, error) {
+	var expiresAt time.Time
+	if ttl > 0 {
+		expiresAt = st.now().Add(ttl)
+	}
+	return st.createAlias(ctx, policies, expiresAt, mountType, name)
+}
+
+// createAlias resolves the alias to an entity (if an aliaser is installed and a
+// name is supplied) and mints a token bound to it.
+func (st *Store) createAlias(ctx context.Context, policies []string, expiresAt time.Time, mountType, name string) (*Token, error) {
+	entityID := ""
+	if st.aliaser != nil && name != "" {
+		id, err := st.aliaser.ResolveAlias(ctx, mountType, name)
+		if err != nil {
+			return nil, fmt.Errorf("token: resolve identity: %w", err)
+		}
+		entityID = id
+	}
+	return st.createWithEntity(ctx, policies, expiresAt, entityID)
+}
+
 func (st *Store) create(ctx context.Context, policies []string, expiresAt time.Time) (*Token, error) {
+	return st.createWithEntity(ctx, policies, expiresAt, "")
+}
+
+func (st *Store) createWithEntity(ctx context.Context, policies []string, expiresAt time.Time, entityID string) (*Token, error) {
 	id, err := generateID()
 	if err != nil {
 		return nil, err
 	}
-	t := &Token{ID: id, Policies: policies, CreatedTime: st.now(), ExpiresAt: expiresAt}
+	t := &Token{ID: id, Policies: policies, EntityID: entityID, CreatedTime: st.now(), ExpiresAt: expiresAt}
 	if err := st.save(ctx, t); err != nil {
 		return nil, err
 	}

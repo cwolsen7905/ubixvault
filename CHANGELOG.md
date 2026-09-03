@@ -8,6 +8,19 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Identity — entities & aliases (phase 1)** — a subject layer over the auth
+  methods. Every login now resolves its `(method, login-name)` to an **entity**,
+  auto-creating one on first sight, and the issued token carries the entity's ID
+  (returned as `entity_id`). Policies attached to an entity are unioned with the
+  token's own **on each request** — so a policy added to a subject takes effect
+  for tokens already issued, and applies across every method that subject logs in
+  through. Manage via `/v1/identity/entity` (create/update by name, or update by
+  `id`), `/v1/identity/entity/id/{id}`, `/v1/identity/entity/name/{name}`, `LIST
+  /v1/identity/entity/id`, and `/v1/identity/entity-alias` (bind another
+  method's login to an existing entity). Groups, external-group mapping, and
+  identity templating are later phases (design: `docs/design/identity-entities-groups.md`,
+  ADR D-016). Zero new dependency.
+
 - **Cubbyhole secrets engine** — per-token private storage at `/v1/cubbyhole/`.
   Each token gets its own namespace: `POST`/`GET`/`LIST`/`DELETE
   /v1/cubbyhole/{path}` read and write plain JSON objects (no versioning), and

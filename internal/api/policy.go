@@ -136,6 +136,7 @@ func tokenAuthResponse(tok *token.Token) map[string]any {
 		"auth": map[string]any{
 			"client_token":   tok.ID,
 			"policies":       tok.Policies,
+			"entity_id":      tok.EntityID,
 			"lease_duration": leaseSeconds,
 		},
 	}

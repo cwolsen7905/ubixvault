@@ -88,8 +88,22 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 		return true, nil
 	}
 
+	// A token's effective policies are its own plus any contributed by the
+	// identity entity it belongs to (identity only ever adds). Group policies
+	// join this union in a later phase.
+	names := tok.Policies
+	if h.identity != nil && tok.EntityID != "" {
+		entityPolicies, err := h.identity.PoliciesFor(ctx, tok.EntityID)
+		if err != nil {
+			return false, err
+		}
+		if len(entityPolicies) > 0 {
+			names = append(append([]string{}, tok.Policies...), entityPolicies...)
+		}
+	}
+
 	var policies []*policy.Policy
-	for _, name := range tok.Policies {
+	for _, name := range names {
 		p, err := h.policies.Get(ctx, name)
 		switch {
 		case errors.Is(err, policy.ErrPolicyNotFound):
