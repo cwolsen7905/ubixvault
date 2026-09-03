@@ -158,9 +158,9 @@ func (m *Method) Login(ctx context.Context, username, password string) (*token.T
 		return nil, ErrDenied
 	}
 	if u.TokenTTL > 0 {
-		return m.tokens.CreateWithTTLAndAlias(ctx, u.Policies, u.TokenTTL, "userpass", username)
+		return m.tokens.CreateWithTTLAndAlias(ctx, u.Policies, u.TokenTTL, "userpass", username, nil)
 	}
-	return m.tokens.CreateWithAlias(ctx, u.Policies, "userpass", username)
+	return m.tokens.CreateWithAlias(ctx, u.Policies, "userpass", username, nil)
 }
 
 func (m *Method) load(ctx context.Context, username string) (*stored, error) {

@@ -41,6 +41,7 @@ type Config struct {
 	OIDCDiscoveryURL  string   `json:"oidc_discovery_url"`
 	ValidationPubKeys []string `json:"jwt_validation_pubkeys"` // PEM
 	BoundIssuer       string   `json:"bound_issuer"`
+	GroupsClaim       string   `json:"groups_claim"` // claim holding the caller's group names, for identity external groups
 }
 
 // Role binds JWT claims to policies.
@@ -206,10 +207,37 @@ func (m *Method) Login(ctx context.Context, roleName, rawJWT string) (*token.Tok
 	}
 
 	subject, _ := claims["sub"].(string) // the JWT subject is the identity alias name
+	groups := extractGroups(claims, cfg.GroupsClaim)
 	if role.TokenTTL > 0 {
-		return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "jwt", subject)
+		return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "jwt", subject, groups)
 	}
-	return m.tokens.CreateWithAlias(ctx, role.Policies, "jwt", subject)
+	return m.tokens.CreateWithAlias(ctx, role.Policies, "jwt", subject, groups)
+}
+
+// extractGroups reads the group-name list from the named claim. It accepts a
+// JSON array of strings (the usual OIDC shape) or a single string; anything else
+// yields no groups. An empty claim name disables group extraction.
+func extractGroups(claims map[string]any, claim string) []string {
+	if claim == "" {
+		return nil
+	}
+	switch v := claims[claim].(type) {
+	case []any:
+		var out []string
+		for _, g := range v {
+			if s, ok := g.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 // verifySignature tries the static keys and the JWKS keys; on a miss it refetches

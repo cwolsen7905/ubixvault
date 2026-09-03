@@ -53,6 +53,7 @@ type Alias struct {
 	EntityID    string            `json:"entity_id"`
 	MountType   string            `json:"mount_type"`
 	Name        string            `json:"name"`
+	Groups      []string          `json:"groups,omitempty"` // group memberships the auth method asserted at the last login
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	CreatedTime time.Time         `json:"created_time"`
 }
@@ -99,6 +100,19 @@ func (e *Engine) aliasIndexKey(mount, n string) string {
 }
 
 func validName(name string) bool { return name != "" && !strings.Contains(name, "/") }
+
+// sameStrings reports whether a and b hold the same elements in the same order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func genID() (string, error) {
 	b := make([]byte, 16)
@@ -268,15 +282,15 @@ func (e *Engine) CreateAlias(ctx context.Context, entityID, mountType, name stri
 	if _, err := e.ReadEntity(ctx, entityID); err != nil {
 		return nil, err
 	}
-	return e.putAlias(ctx, entityID, mountType, name)
+	return e.putAlias(ctx, entityID, mountType, name, nil)
 }
 
-func (e *Engine) putAlias(ctx context.Context, entityID, mountType, name string) (*Alias, error) {
+func (e *Engine) putAlias(ctx context.Context, entityID, mountType, name string, groups []string) (*Alias, error) {
 	id, err := genID()
 	if err != nil {
 		return nil, err
 	}
-	a := &Alias{ID: id, EntityID: entityID, MountType: mountType, Name: name, CreatedTime: e.now()}
+	a := &Alias{ID: id, EntityID: entityID, MountType: mountType, Name: name, Groups: groups, CreatedTime: e.now()}
 	blob, err := json.Marshal(a)
 	if err != nil {
 		return nil, fmt.Errorf("identity: marshal alias: %w", err)
@@ -288,6 +302,18 @@ func (e *Engine) putAlias(ctx context.Context, entityID, mountType, name string)
 		return nil, fmt.Errorf("identity: persist alias index: %w", err)
 	}
 	return a, nil
+}
+
+// saveAlias re-persists an existing alias record (its index is unchanged).
+func (e *Engine) saveAlias(ctx context.Context, a *Alias) error {
+	blob, err := json.Marshal(a)
+	if err != nil {
+		return fmt.Errorf("identity: marshal alias: %w", err)
+	}
+	if err := e.store.Put(ctx, &storage.Entry{Key: e.aliasKey(a.ID), Value: blob}); err != nil {
+		return fmt.Errorf("identity: persist alias: %w", err)
+	}
+	return nil
 }
 
 // ReadAlias returns the alias with the given ID, or [ErrAliasNotFound].
@@ -329,11 +355,13 @@ func (e *Engine) DeleteAlias(ctx context.Context, id string) error {
 // ResolveAlias maps an auth-method login to its entity ID. If no alias exists
 // and auto-creation is on, it materializes an entity (named "<mountType>/<name>")
 // and alias and returns the new ID; if auto-creation is off it returns "" (the
-// login proceeds with no identity). A disabled entity still resolves (so the
-// login's own role policies still apply) but contributes no policies — see
-// [Engine.PoliciesFor]; hard login-blocking on disable is a later-phase
-// refinement.
-func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string) (string, error) {
+// login proceeds with no identity). groups is the set of group memberships the
+// auth method asserted for this login; it is recorded on the alias (replacing
+// any prior assertion) so external groups can match against it. A disabled
+// entity still resolves (so the login's own role policies still apply) but
+// contributes no policies — see [Engine.PoliciesFor]; hard login-blocking on
+// disable is a later-phase refinement.
+func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string, groups []string) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -351,6 +379,13 @@ func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string) (stri
 		if err != nil {
 			return "", err
 		}
+		// Refresh the asserted groups from this login.
+		if !sameStrings(alias.Groups, groups) {
+			alias.Groups = groups
+			if err := e.saveAlias(ctx, alias); err != nil {
+				return "", err
+			}
+		}
 		return ent.ID, nil
 	}
 
@@ -361,7 +396,7 @@ func (e *Engine) ResolveAlias(ctx context.Context, mountType, name string) (stri
 	if err != nil {
 		return "", err
 	}
-	if _, err := e.putAlias(ctx, ent.ID, mountType, name); err != nil {
+	if _, err := e.putAlias(ctx, ent.ID, mountType, name, groups); err != nil {
 		return "", err
 	}
 	return ent.ID, nil

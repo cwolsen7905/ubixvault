@@ -162,3 +162,30 @@ func TestNotConfigured(t *testing.T) {
 		t.Fatalf("want ErrNotConfigured, got %v", err)
 	}
 }
+
+func TestExtractGroups(t *testing.T) {
+	cases := []struct {
+		name   string
+		claim  string
+		claims map[string]any
+		want   []string
+	}{
+		{"array", "groups", map[string]any{"groups": []any{"a", "b"}}, []string{"a", "b"}},
+		{"single string", "groups", map[string]any{"groups": "a"}, []string{"a"}},
+		{"array with non-strings", "groups", map[string]any{"groups": []any{"a", 1, "", "b"}}, []string{"a", "b"}},
+		{"missing claim", "groups", map[string]any{"sub": "x"}, nil},
+		{"empty claim name", "", map[string]any{"groups": []any{"a"}}, nil},
+		{"wrong type", "groups", map[string]any{"groups": 42}, nil},
+	}
+	for _, c := range cases {
+		got := extractGroups(c.claims, c.claim)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+			}
+		}
+	}
+}

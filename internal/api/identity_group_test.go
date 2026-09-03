@@ -54,6 +54,36 @@ func TestGroupPolicyGrantsAcrossToken(t *testing.T) {
 	}
 }
 
+// TestExternalGroupFromOIDCClaim is the phase-3 headline over HTTP: a JWT login
+// asserting a groups claim is placed in an external group, and picks up that
+// group's policy — without the entity being listed anywhere by hand.
+func TestExternalGroupFromOIDCClaim(t *testing.T) {
+	h, root, priv := configureJWTWithGroups(t)
+
+	// A policy carried by an external group tied to the "platform" jwt group.
+	doAuth(t, h, "PUT", "/v1/sys/policies/acl/platform-pol",
+		`{"path":{"secret/data/platform":{"capabilities":["read","create","update"]}}}`, root)
+	if rec := doAuth(t, h, "POST", "/v1/identity/group",
+		`{"name":"platform-team","type":"external","mount_type":"jwt","group_name":"platform","policies":["platform-pol"]}`, root); rec.Code != http.StatusOK {
+		t.Fatalf("create external group = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Log in with a JWT asserting groups: ["platform","eng"].
+	claims := jwtClaims()
+	claims["groups"] = []any{"platform", "eng"}
+	loginBody := `{"role":"web","jwt":"` + signRS256(t, priv, claims) + `"}`
+	rec := do(t, h, "POST", "/v1/auth/jwt/login", loginBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("jwt login = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	tok := decode[map[string]any](t, rec)["auth"].(map[string]any)["client_token"].(string)
+
+	// The token has access granted only through the external group.
+	if rec := doAuth(t, h, "POST", "/v1/secret/data/platform", `{"data":{"k":"v"}}`, tok); rec.Code != http.StatusOK {
+		t.Fatalf("external-group-granted write = %d, body=%s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
 func TestGroupNotFound(t *testing.T) {
 	h, root := unsealedHandler(t)
 	if rec := doAuth(t, h, "GET", "/v1/identity/group/id/nope", "", root); rec.Code != http.StatusNotFound {

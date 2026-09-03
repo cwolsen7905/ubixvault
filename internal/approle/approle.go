@@ -242,7 +242,7 @@ func (m *Method) Login(ctx context.Context, roleID, secretID string) (*token.Tok
 	}
 
 	if role.TokenTTL > 0 {
-		return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "approle", name)
+		return m.tokens.CreateWithTTLAndAlias(ctx, role.Policies, role.TokenTTL, "approle", name, nil)
 	}
-	return m.tokens.CreateWithAlias(ctx, role.Policies, "approle", name)
+	return m.tokens.CreateWithAlias(ctx, role.Policies, "approle", name, nil)
 }

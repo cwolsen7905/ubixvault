@@ -13,16 +13,30 @@ import (
 // ErrGroupNotFound is returned when a group ID or name has no record.
 var ErrGroupNotFound = errors.New("identity: group not found")
 
-// Group is an internal collection of entities (and, nested, other groups) with
-// its own policies. An entity that is a transitive member of a group picks up
-// the group's policies, on top of its own. External groups (membership asserted
-// by an auth method) are a later phase; every group here is internal.
+// Group types.
+const (
+	GroupInternal = "internal"
+	GroupExternal = "external"
+)
+
+// Group collects entities (and, nested, other groups) with its own policies. An
+// entity that is a transitive member of a group picks up the group's policies,
+// on top of its own.
+//
+// An internal group's direct members are listed in MemberEntityIDs. An external
+// group's direct membership is instead asserted by an auth method: an entity is
+// a member if it has an alias on MountType whose login-asserted groups included
+// GroupName (e.g. an OIDC groups claim). Either kind can be nested inside
+// another via MemberGroupIDs.
 type Group struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
+	Type            string            `json:"type"` // "internal" (default) or "external"
 	Policies        []string          `json:"policies,omitempty"`
-	MemberEntityIDs []string          `json:"member_entity_ids,omitempty"`
-	MemberGroupIDs  []string          `json:"member_group_ids,omitempty"` // child groups; their members inherit this group's policies
+	MemberEntityIDs []string          `json:"member_entity_ids,omitempty"` // internal groups only
+	MemberGroupIDs  []string          `json:"member_group_ids,omitempty"`  // child groups; their members inherit this group's policies
+	MountType       string            `json:"mount_type,omitempty"`        // external groups: the auth method that asserts membership
+	GroupName       string            `json:"group_name,omitempty"`        // external groups: the asserted group name to match
 	Metadata        map[string]string `json:"metadata,omitempty"`
 	CreatedTime     time.Time         `json:"created_time"`
 }
@@ -30,9 +44,20 @@ type Group struct {
 func (e *Engine) groupKey(id string) string    { return e.prefix + "/group/" + id }
 func (e *Engine) groupNameKey(n string) string { return e.prefix + "/group-name/" + n }
 
+// GroupInput carries the mutable fields of a group for a write.
+type GroupInput struct {
+	Type            string
+	Policies        []string
+	MemberEntityIDs []string
+	MemberGroupIDs  []string
+	MountType       string // external groups only
+	GroupName       string // external groups only
+	Metadata        map[string]string
+}
+
 // WriteGroup creates or updates the group named name (upsert by name),
-// replacing its policies, members, and metadata.
-func (e *Engine) WriteGroup(ctx context.Context, name string, policies, memberEntityIDs, memberGroupIDs []string, metadata map[string]string) (*Group, error) {
+// replacing its mutable fields.
+func (e *Engine) WriteGroup(ctx context.Context, name string, in GroupInput) (*Group, error) {
 	if !validName(name) {
 		return nil, ErrInvalidName
 	}
@@ -43,31 +68,41 @@ func (e *Engine) WriteGroup(ctx context.Context, name string, policies, memberEn
 		if err != nil {
 			return nil, err
 		}
-		g := &Group{ID: id, Name: name, CreatedTime: e.now()}
-		return e.saveGroup(ctx, g, policies, memberEntityIDs, memberGroupIDs, metadata)
+		return e.saveGroup(ctx, &Group{ID: id, Name: name, CreatedTime: e.now()}, in)
 	case err != nil:
 		return nil, err
 	default:
-		return e.saveGroup(ctx, existing, policies, memberEntityIDs, memberGroupIDs, metadata)
+		return e.saveGroup(ctx, existing, in)
 	}
 }
 
-// UpdateGroup replaces the policies, members, and metadata of the group
-// addressed by ID, leaving its name unchanged. Returns [ErrGroupNotFound] if the
-// ID is unknown.
-func (e *Engine) UpdateGroup(ctx context.Context, id string, policies, memberEntityIDs, memberGroupIDs []string, metadata map[string]string) (*Group, error) {
+// UpdateGroup replaces the mutable fields of the group addressed by ID, leaving
+// its name unchanged. Returns [ErrGroupNotFound] if the ID is unknown.
+func (e *Engine) UpdateGroup(ctx context.Context, id string, in GroupInput) (*Group, error) {
 	g, err := e.ReadGroup(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return e.saveGroup(ctx, g, policies, memberEntityIDs, memberGroupIDs, metadata)
+	return e.saveGroup(ctx, g, in)
 }
 
-func (e *Engine) saveGroup(ctx context.Context, g *Group, policies, memberEntityIDs, memberGroupIDs []string, metadata map[string]string) (*Group, error) {
-	g.Policies = policies
-	g.MemberEntityIDs = memberEntityIDs
-	g.MemberGroupIDs = memberGroupIDs
-	g.Metadata = metadata
+func (e *Engine) saveGroup(ctx context.Context, g *Group, in GroupInput) (*Group, error) {
+	g.Type = in.Type
+	if g.Type == "" {
+		g.Type = GroupInternal
+	}
+	if g.Type != GroupInternal && g.Type != GroupExternal {
+		return nil, fmt.Errorf("%w: group type %q", ErrInvalidName, g.Type)
+	}
+	if g.Type == GroupExternal && (in.MountType == "" || in.GroupName == "") {
+		return nil, fmt.Errorf("%w: external group needs mount_type and group_name", ErrInvalidName)
+	}
+	g.Policies = in.Policies
+	g.MemberEntityIDs = in.MemberEntityIDs
+	g.MemberGroupIDs = in.MemberGroupIDs
+	g.MountType = in.MountType
+	g.GroupName = in.GroupName
+	g.Metadata = in.Metadata
 	blob, err := json.Marshal(g)
 	if err != nil {
 		return nil, fmt.Errorf("identity: marshal group: %w", err)
@@ -160,11 +195,26 @@ func (e *Engine) groupPoliciesForEntity(ctx context.Context, entityID string) ([
 		groups = append(groups, g)
 	}
 
-	// Seed: groups that list the entity directly.
+	// The (mountType, assertedGroup) pairs this entity's logins carry, for
+	// matching external groups.
+	asserted, err := e.assertedGroups(ctx, entityID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Seed: groups the entity is a direct member of — internal groups that list
+	// it, and external groups whose (mount, name) an alias asserted.
 	applicable := make(map[string]bool)
 	for _, g := range groups {
-		if contains(g.MemberEntityIDs, entityID) {
-			applicable[g.ID] = true
+		switch g.Type {
+		case GroupExternal:
+			if asserted[g.MountType+"\x00"+g.GroupName] {
+				applicable[g.ID] = true
+			}
+		default: // internal
+			if contains(g.MemberEntityIDs, entityID) {
+				applicable[g.ID] = true
+			}
 		}
 	}
 	// Fixpoint: a group applies if it lists an already-applicable group as a child.
@@ -191,6 +241,33 @@ func (e *Engine) groupPoliciesForEntity(ctx context.Context, entityID string) ([
 		}
 	}
 	return policies, nil
+}
+
+// assertedGroups returns the set of "<mountType>\x00<groupName>" keys the
+// entity's aliases carry from their most recent logins, used to match external
+// groups.
+func (e *Engine) assertedGroups(ctx context.Context, entityID string) (map[string]bool, error) {
+	ids, err := e.store.List(ctx, e.prefix+"/alias/")
+	if err != nil {
+		return nil, fmt.Errorf("identity: list aliases: %w", err)
+	}
+	out := make(map[string]bool)
+	for _, id := range ids {
+		a, err := e.ReadAlias(ctx, id)
+		if errors.Is(err, ErrAliasNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if a.EntityID != entityID {
+			continue
+		}
+		for _, gname := range a.Groups {
+			out[a.MountType+"\x00"+gname] = true
+		}
+	}
+	return out, nil
 }
 
 func contains(s []string, v string) bool {

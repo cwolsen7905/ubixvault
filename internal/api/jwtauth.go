@@ -13,6 +13,7 @@ type jwtConfigRequest struct {
 	OIDCDiscoveryURL  string   `json:"oidc_discovery_url"`
 	ValidationPubKeys []string `json:"jwt_validation_pubkeys"`
 	BoundIssuer       string   `json:"bound_issuer"`
+	GroupsClaim       string   `json:"groups_claim"`
 }
 
 type jwtRoleRequest struct {
@@ -37,6 +38,7 @@ func (h *Handler) jwtConfigure(w http.ResponseWriter, r *http.Request) {
 		OIDCDiscoveryURL:  req.OIDCDiscoveryURL,
 		ValidationPubKeys: req.ValidationPubKeys,
 		BoundIssuer:       req.BoundIssuer,
+		GroupsClaim:       req.GroupsClaim,
 	})
 	if err != nil {
 		writeJWTError(w, err)

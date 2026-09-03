@@ -57,6 +57,34 @@ func configureJWT(t *testing.T) (http.Handler, string, *rsa.PrivateKey) {
 	return h, root, priv
 }
 
+// configureJWTWithGroups is configureJWT but with the config's groups_claim set
+// to "groups", so a login's asserted groups feed identity external groups.
+func configureJWTWithGroups(t *testing.T) (http.Handler, string, *rsa.PrivateKey) {
+	t.Helper()
+	h, root := unsealedHandler(t)
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	der, _ := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+
+	cfg, _ := json.Marshal(map[string]any{
+		"jwt_validation_pubkeys": []string{pubPEM},
+		"bound_issuer":           "https://issuer.test",
+		"groups_claim":           "groups",
+	})
+	if rec := doAuth(t, h, "POST", "/v1/auth/jwt/config", string(cfg), root); rec.Code != http.StatusNoContent {
+		t.Fatalf("jwt config = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	role := `{"bound_audiences":["vault"],"policies":["app-ro"]}`
+	if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/web", role, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("jwt role = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return h, root, priv
+}
+
 func jwtClaims() map[string]any {
 	return map[string]any{
 		"iss": "https://issuer.test",
