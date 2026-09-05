@@ -6,6 +6,13 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0-beta.12] — 2026-09-04
+
+Twelfth beta: the identity layer and LDAP close the last two Vault-Community
+gaps, plus TLS-cert auth, OIDC discovery, cubbyhole, and transit key
+derivation. This completes the Vault-Community auth-method set (token, AppRole,
+Kubernetes, userpass, JWT/OIDC, TLS cert, LDAP).
+
 ### Added
 
 - **Transit — derived keys & convergent encryption** — a transit key created
@@ -112,6 +119,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[0.2.0-beta.12]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.12
 [0.2.0-beta.11]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.11
 
 ## [0.2.0-beta.10] — 2026-08-19
