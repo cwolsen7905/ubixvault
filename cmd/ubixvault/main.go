@@ -542,7 +542,15 @@ func openStorageBackend(storageType, dataDir, dsn string) (storage.Backend, erro
 		if dsn == "" {
 			return nil, fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
 		}
-		return storage.NewMySQLBackend(dsn)
+		b, err := storage.NewMySQLBackend(dsn)
+		if err != nil {
+			return nil, err
+		}
+		// Absorb brief MySQL outages (network blips, connection drops) with bounded
+		// retry instead of failing every request; a sustained outage still fails
+		// fast as storage.ErrUnavailable so readiness drops (see health) rather than
+		// the process dying.
+		return storage.NewRetryBackend(b), nil
 	default:
 		return nil, fmt.Errorf("unknown -storage %q (want file or mysql)", storageType)
 	}

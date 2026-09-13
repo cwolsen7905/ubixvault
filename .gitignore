@@ -37,3 +37,6 @@ go.work.sum
 *~
 .DS_Store
 Thumbs.db
+
+# Live per-sandbox agent coordination state — never committed (see AGENTS-COORD.template.md)
+/AGENTS-COORD.md

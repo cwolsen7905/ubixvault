@@ -1,8 +1,11 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
 
 type healthResponse struct {
@@ -24,6 +27,13 @@ type healthResponse struct {
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	st, err := h.core.Status(r.Context())
 	if err != nil {
+		// Storage temporarily unreachable → not ready (503), not a 500. A
+		// 503 drops readiness so traffic stops, and recovers on its own when
+		// storage returns — the process must not die over a storage blip.
+		if errors.Is(err, storage.ErrUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "storage backend unavailable")
+			return
+		}
 		writeInternal(w, err)
 		return
 	}
