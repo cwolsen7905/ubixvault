@@ -6,6 +6,30 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-09-12
+
+**First stable release.** The public interface — the Vault-compatible HTTP API,
+the `ubixvault` server/operator CLI, the on-disk/SQL storage format, and the Helm
+chart values — is declared **stable under [SemVer](https://semver.org/)** from
+here. This is an **API-stability and feature-completeness** milestone; it is
+**not** a claim that the cryptography has been independently audited — that
+assurance is an open, actively-pursued milestone, tracked separately and
+deliberately **not** a version gate (`docs/VERSIONING.md`, `docs/ROADMAP.md`).
+Until it lands, the "not yet independently audited" status stands.
+
+1.0.0 is the code validated through `1.0.0-rc.1`…`rc.3` (identical to `rc.3`),
+soaked in the reference Kubernetes deployment. It rolls up the full journey from
+the `0.1.0` MVP and the `0.2.0-beta` line: the encryption barrier, in-house
+Shamir seal/unseal, KV v2, Transit (incl. key derivation & convergent
+encryption), dynamic database credentials, PKI, cubbyhole, a full identity layer
+(entities, aliases, internal + external groups, policy templating), the complete
+Vault-Community auth-method set (token, AppRole, Kubernetes, userpass, JWT/OIDC,
+TLS client-certificate, LDAP/AD), response wrapping, fail-closed audit, three
+seal modes incl. an external-command KMS/HSM seal, a MySQL/MariaDB storage
+backend, rekey, snapshots, metrics/health, and a read-only web console — over a
+Vault-compatible API, with essentially two dependencies (the MySQL driver and
+go-ldap).
+
 ### Fixed
 
 - **Survive brief storage outages.** A transient MySQL/MariaDB outage (a network
@@ -168,6 +192,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.0.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0
 [1.0.0-rc.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.1
 [0.2.0-beta.12]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.12
