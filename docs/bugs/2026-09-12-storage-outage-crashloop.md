@@ -143,13 +143,68 @@ the docs too.
 
 ## Reply from the uBixVault side
 
-> Fill this in when a fix lands. The cluster side checks for: a tag newer than
-> `v1.0.0-rc.2`, a `CHANGELOG.md` entry mentioning storage retry or probe
-> behaviour, or a commit touching `internal/storage/mysql.go`.
+**Fixed on `main` (branch `fix/storage-outage-crashloop`, PR pending); will ship in
+the next candidate after `v1.0.0-rc.2`.**
 
-- [ ] Fixed in: `<tag / commit>`
-- [ ] Which hypothesis was right: `<1 only / 1 and 2 / something else>`
-- [ ] Was `livez` storage-dependent? `<yes / no>`
-- [ ] Reseal-on-sustained-outage decision: `<stays unsealed / reseals after N / ADR link>`
-- [ ] Do the chart's probe timeouts need raising cluster-side? `<yes / no>`
-- [ ] Anything the cluster side must change when upgrading: `<notes>`
+- [x] Fixed in: `internal/storage/retry.go` (+ `cmd/ubixvault/main.go`,
+      `internal/api/health.go`); commit on branch `fix/storage-outage-crashloop`,
+      landing as `v1.0.0-rc.3`.
+- [x] Which hypothesis was right: **1 only.** Defect 1 (no retry) was real and is
+      fixed. Defect 2 (livez storage-dependent) is **wrong** — see below.
+- [x] Was `livez` storage-dependent? **No.** `internal/api/health.go` — `livez`
+      writes `200 {"alive":true}` unconditionally: no `core` call, no storage, no
+      lock. It cannot hang or fail on a storage outage. It was already correct in
+      `beta.10`. So the probe theory as written does not hold, and **the cause of
+      the SIGKILL is not in the server** — read the next section.
+- [x] Reseal-on-sustained-outage decision: **stays unsealed** (does not reseal).
+      Rationale in **ADR D-019**. The master key is already in memory; storage
+      being unreachable does not expose it, so resealing buys no confidentiality
+      and only turns a blip into manual key re-entry / an extra unseal cycle (and
+      hands a storage-disruptor a lever to force it). It stays unsealed, returns
+      503 while storage is away, and recovers on its own.
+- [x] Do the chart's probe timeouts need raising cluster-side? **No.** `livez` is
+      instant and storage-free, so `timeoutSeconds: 1` on liveness is fine; a 1s
+      readiness timeout on `health` is also fine (readiness *should* drop fast
+      during an outage). Don't paper over it with longer timeouts — the server no
+      longer dies for a storage blip.
+- [x] Anything the cluster side must change when upgrading: **verify the live
+      liveness probe path** (see below), then upgrade to `v1.0.0-rc.3`.
+
+### What actually killed the pod — please verify one thing cluster-side
+
+Since `livez` is storage-free and the **current in-repo chart** already points
+liveness *and* startup at `/v1/sys/livez` (`statefulset.yaml`), a storage outage
+should not produce a liveness SIGKILL on that chart. The most likely explanation
+for the kills you saw is that the **deployed** StatefulSet predates that wiring —
+prod is pinned to chart `ubixvault-0.1.2` / helm revision 2, and if that revision
+still has **liveness on `/v1/sys/health`** (which returns 503/errs during an
+outage), three 1s failures SIGKILL the pod. That matches exit 255 / `Unknown`
+exactly, and it is *not* something the server can fix.
+
+Please confirm and, if so, redeploy the current chart:
+
+```
+kubectl -n ubixvault-prod get statefulset ubixvault-prod \
+  -o jsonpath='{.spec.template.spec.containers[0].livenessProbe.httpGet.path}{"\n"}'
+```
+
+- If it prints `/v1/sys/livez` — good; then the kill had some other cause
+  (resource limits/OOM, or a probe config that differs from the chart). Send the
+  pod's `lastState.terminated` (`kubectl describe pod` / `-o yaml`) and I'll dig
+  further.
+- If it prints `/v1/sys/health` — that's the SIGKILL cause. Upgrade to the chart
+  version that uses `/v1/sys/livez` for liveness (current `deploy/charts/ubixvault`).
+
+### What the server-side fix changes regardless
+
+- **Brief blips are absorbed.** Storage ops retry transient errors (network,
+  `driver.ErrBadConn`, MySQL gone/shutdown codes) with bounded backoff, so a
+  sub-second outage no longer fails requests at all.
+- **A sustained outage degrades cleanly.** It surfaces as `storage.ErrUnavailable`;
+  `/v1/sys/health` returns **503** (readiness drops, traffic stops), and the vault
+  recovers on its own when storage returns — no restart, no reseal.
+- Permanent errors (malformed key, real faults) still fail fast (500), un-retried.
+- Tests: `internal/storage/retry_test.go` (fails-N-then-succeeds → success;
+  exhaustion → `ErrUnavailable`; permanent not retried; ctx-cancel stops) and
+  `internal/api/health_test.go` (`livez` stays 200 with storage hard-down; `health`
+  → 503).

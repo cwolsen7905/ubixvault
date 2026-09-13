@@ -6,6 +6,22 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Survive brief storage outages instead of crash-looping.** A transient
+  MySQL/MariaDB outage (a network blip, a dropped connection) no longer fails
+  every request and, on Kubernetes, no longer leads to the pod being killed and
+  re-unsealed. Storage operations now retry transient errors — network failures,
+  `driver.ErrBadConn`, MySQL server-gone/shutdown codes — with bounded
+  exponential backoff, classifying retryable vs permanent (a malformed key still
+  fails immediately). A sustained outage fails fast as a new
+  `storage.ErrUnavailable`, which `/v1/sys/health` maps to **503** (readiness
+  drops, traffic stops, the vault recovers on its own when storage returns) —
+  rather than the process dying. `/v1/sys/livez` remains storage-independent, so
+  a liveness probe never kills the process over a storage blip. A storage outage
+  does **not** reseal the vault (ADR D-019). Fixes
+  `docs/bugs/2026-09-12-storage-outage-crashloop.md`.
+
 ## [1.0.0-rc.2] — 2026-09-12
 
 Second release candidate for **1.0.0**. Identical in behavior to `rc.1`; it exists

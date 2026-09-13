@@ -439,3 +439,37 @@ library is exactly when a dependency earns its place, as the MySQL driver did in
 D-010); otherwise **D**. Explicitly not B or C. This is a product/philosophy call
 about the "essentially no dependencies" posture — deferred to the maintainer.
 This ADR moves to Accepted once that call is made.
+
+## D-019 — Do not auto-reseal on a storage outage; stay unsealed and degrade
+
+**Status:** Accepted · 2026-09-12
+
+**Decision:** a storage-backend outage (MySQL unreachable, connection dropped)
+does **not** trigger a reseal. The vault stays unsealed, absorbs brief blips with
+bounded storage retry, and for a sustained outage returns errors / a `503` on
+`/v1/sys/health` (readiness drops, traffic stops) until storage returns — then
+recovers on its own. No operator action and no re-supply of unseal shares is
+required. Retry classifies transient vs permanent errors
+(`internal/storage/retry.go`, [ErrUnavailable]); `/v1/sys/livez` remains
+storage-independent so the process is never killed for a storage blip.
+
+**Why:** the master key is already in memory once unsealed; storage becoming
+unreachable does not expose it, so resealing buys **no** confidentiality — it only
+converts an availability blip into a manual-recovery event (on a Shamir setup,
+humans re-entering key shares; on auto-unseal, a restart+unseal cycle per blip).
+Worse, reseal-on-storage-loss hands anyone who can disrupt the storage path a
+lever to force key re-entry — an availability attack that also increases how often
+key material is handled. The security control that sealing provides is "protect
+the master key at rest / on process exit," not "react to slow storage." Remaining
+unsealed-but-erroring is the same choice HashiCorp Vault makes, and it is the
+behavior that keeps a secrets manager from being one slow query away from an
+outage. A genuine, non-transient error still surfaces (500), so this does not mask
+real faults.
+
+**Trade-off / follow-up:** while storage is down the vault cannot read or write
+secrets and returns 503 — correct, but it means availability is bounded by the
+storage layer's own HA (which is the point of the SQL backend, D-014). If a future
+requirement ever calls for resealing after a defined outage threshold, it must be
+its own ADR superseding this one, with the threshold and the re-unseal story
+documented — not emergent behavior. Fixes the crash-loop in
+`docs/bugs/2026-09-12-storage-outage-crashloop.md`.
