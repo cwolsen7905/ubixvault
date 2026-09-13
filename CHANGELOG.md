@@ -6,6 +6,14 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm chart `appVersion` tracks the release.** The chart's `appVersion` was
+  stuck at `0.2.0-beta.11` while `values.yaml` defaults `image.tag` to
+  `.Chart.AppVersion` when empty — so a `helm upgrade` without an explicit
+  `--set image.tag` deployed beta.11. Bumped to `1.0.0` (chart `0.1.13` →
+  `0.1.14`) so the default now matches the current release.
+
 ## [1.0.0] — 2026-09-12
 
 **First stable release.** The public interface — the Vault-compatible HTTP API,
