@@ -6,13 +6,25 @@ sealed barrier: an encryption barrier, Shamir seal/unseal, token auth with ACL
 policies, versioned KV secrets, encryption-as-a-service, and dynamic database
 credentials — over a Vault-API-compatible HTTP interface.
 
-> **Status: beta (`v0.2.0-beta`) — not yet production-hardened.** Usable for real
-> workloads — token TTLs, auto-unseal, backups/restore, health checks, and TLS
-> enforcement (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)) — but it has not
-> had the external security review a production secrets store needs. For
-> production today, use [HashiCorp Vault](https://www.vaultproject.io/) or
-> [OpenBao](https://openbao.org/). Why uBix Vault exists alongside them:
-> [`docs/POSITIONING.md`](docs/POSITIONING.md).
+![API: stable (SemVer)](https://img.shields.io/badge/API-stable%20(SemVer)-brightgreen)
+![security: not yet independently audited](https://img.shields.io/badge/security-not%20yet%20independently%20audited-orange)
+
+> **`1.0` — API-stable and feature-complete; not yet independently audited.**
+> uBix Vault versions the *interface* with [SemVer](https://semver.org/): `1.0`
+> means the HTTP API, CLI, storage format, and chart values are stable and the
+> feature set is complete. It says nothing about a security audit — that is a
+> separate axis (see [`docs/VERSIONING.md`](docs/VERSIONING.md)).
+>
+> **Security assurance:** uBix Vault has **not** yet undergone an independent
+> third-party security audit. Its cryptography and trust path are standard-library
+> Go, written in-house, fuzzed, and property-tested — but that is not a substitute
+> for outside review, which is an active, open milestone
+> ([`docs/ROADMAP.md`](docs/ROADMAP.md)). Until it lands, weigh that before
+> placing high-blast-radius secrets here: prefer running it alongside an audited
+> store such as [HashiCorp Vault](https://www.vaultproject.io/) or
+> [OpenBao](https://openbao.org/), start with low-criticality secrets, and make
+> the risk visible to whoever owns security. See [`SECURITY.md`](SECURITY.md) and
+> why uBix Vault exists alongside them: [`docs/POSITIONING.md`](docs/POSITIONING.md).
 
 ## Capabilities
 
