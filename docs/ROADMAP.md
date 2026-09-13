@@ -80,6 +80,16 @@ correctness is a trap** — HA on top of un-hardened crypto is just a reliable w
 or leak secrets — so the hardening ran *alongside* the storage work, not after it. **All
 of it has landed**, which is what makes the `1.0` API-stability milestone honest.
 
+### Found in the field — open
+
+- [ ] **Survive a storage outage instead of crash-looping.** Reported from
+      production 2026-09-12: when the external MySQL is briefly unreachable,
+      uBixVault fails every request and the container is then killed (exit 255),
+      which on an auto-unseal deployment means an unseal cycle per blip. No retry
+      or error classification exists in `internal/storage/`. Wanted in `1.0`.
+      Full report, evidence and what is already ruled out:
+      [`docs/bugs/2026-09-12-storage-outage-crashloop.md`](bugs/2026-09-12-storage-outage-crashloop.md).
+
 ### Tier 0 — production safety (do first; small) — **done**
 - [x] **Automated, off-node backups.** Chart CronJob runs `snapshot save` to a separate
       (network-backed) PVC. *Follow-up:* timestamped history + direct object-storage upload
