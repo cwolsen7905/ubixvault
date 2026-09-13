@@ -3,7 +3,7 @@
 # --- build stage -----------------------------------------------------------
 # Pin to the build host's native arch and cross-compile to the target arch, so
 # multi-arch builds don't emulate the Go toolchain under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Cache module downloads before copying the full tree.

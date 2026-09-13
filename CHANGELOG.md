@@ -6,6 +6,20 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] — 2026-09-12
+
+Second release candidate for **1.0.0**. Identical in behavior to `rc.1`; it exists
+because `rc.1`'s container image never built.
+
+### Fixed
+
+- **Container image build.** The Dockerfile pinned `golang:1.24-alpine`, but the
+  `go-ldap` dependency added in `beta.12` raised the `go.mod` directive to
+  `go 1.25.0`, so `go mod download` failed inside the image (the `Build & Test`
+  CI job uses Go 1.26 and stayed green, masking it — only the tag/`main` image
+  build broke). Bumped the build stage to `golang:1.26-alpine`. This also
+  restores the `:edge` image published on `main`, broken since `beta.12`.
+
 ## [1.0.0-rc.1] — 2026-09-12
 
 Release candidate for **1.0.0**. No functional changes since `0.2.0-beta.12` —
@@ -137,6 +151,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.0.0-rc.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.1
 [0.2.0-beta.12]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.12
 [0.2.0-beta.11]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.11
