@@ -1,6 +1,7 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-08-27 · Current release `v0.2.0-beta.11`
+> **Status:** Active · Last updated 2026-09-12 · Current release `v1.0.0-rc.1`
+> (release candidate for `1.0.0`)
 
 uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
 minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
@@ -8,19 +9,28 @@ barrier, Shamir seal/unseal, all cryptography — is standard-library Go written
 in-house, so the entire trust path can be read in an afternoon. It speaks a
 Vault-compatible HTTP API so existing clients work unchanged.
 
-The **feature core is essentially complete**, and as of `v0.2.0-beta.11` the
-engineering gates for `1.0` have landed: **durable storage** (a MySQL/MariaDB backend),
-**hardened correctness** (parser fuzzing, crypto property tests, a crash-recovery fix,
-signed images + SBOM), and the **cloud-KMS/HSM seal** (an external-command seal, ADR
-D-015). What remains for `1.0` is the one gate that is **not ours to build**: an
-**external security review**. This roadmap is sequenced around that.
+The **feature core is complete** and the interface is stable, so uBix Vault has
+reached **`1.0` — an API-stability and feature-completeness milestone
+([SemVer](https://semver.org/)):** the HTTP API, CLI, storage format, and chart
+values are stable and we commit to SemVer compatibility rules from here. All the
+engineering that got here landed through the betas — **durable storage** (a
+MySQL/MariaDB backend), **hardened correctness** (parser fuzzing, crypto property
+tests, a crash-recovery fix, signed images + SBOM), the **cloud-KMS/HSM seal**
+(ADR D-015), and the full identity/auth surface.
+
+`1.0` is **not** a claim that the cryptography has been audited — that is a
+separate axis. An **independent external security review** is an open,
+actively-pursued **assurance milestone**, tracked below and in
+[`docs/VERSIONING.md`](VERSIONING.md); it is deliberately **not a version gate**,
+because SemVer versions the interface, not the audit status.
 
 ## Honest positioning (read before deploying)
 
-uBix Vault matches HashiCorp Vault's *core feature surface* but **not** its *assurance*.
-Until the items in "Path to production 1.0" below are done — in particular an external
-security review — it is suitable for sandbox, dev, and internal/low-blast-radius use, not
-as a drop-in replacement for an audited secrets manager holding critical secrets.
+uBix Vault matches HashiCorp Vault's *core feature surface* but **not** its *assurance*:
+it has **not** had an independent third-party security audit. Regardless of the version
+number, until that review lands it is best suited for sandbox, dev, and
+internal/low-blast-radius use, not as a drop-in replacement for an audited secrets
+manager holding critical secrets.
 
 **Recommended adoption path** for anyone (including the maintainer) moving real workloads
 onto it:
@@ -62,12 +72,13 @@ Core — complete, tested, documented:
 
 ---
 
-## Path to production 1.0
+## Engineering gates for 1.0 — done
 
-Ordered by what actually makes it safe to run, not by what is most fun to build. The
-guiding rule: **durability without correctness is a trap** — HA on top of un-hardened
-crypto is just a reliable way to lose or leak secrets — so the hardening work runs
-*alongside* the storage work, not after it.
+These were the work that made uBix Vault safe to *run* — sequenced by what actually
+reduces risk, not by what is most fun to build. The guiding rule: **durability without
+correctness is a trap** — HA on top of un-hardened crypto is just a reliable way to lose
+or leak secrets — so the hardening ran *alongside* the storage work, not after it. **All
+of it has landed**, which is what makes the `1.0` API-stability milestone honest.
 
 ### Tier 0 — production safety (do first; small) — **done**
 - [x] **Automated, off-node backups.** Chart CronJob runs `snapshot save` to a separate
@@ -98,9 +109,17 @@ crypto is just a reliable way to lose or leak secrets — so the hardening work 
       works with no provider SDK in the vault ([`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md) ·
       ADR D-015). *Follow-up:* Helm `sealExternal` chart wiring.
 - [x] **`SECURITY.md`** + coordinated-disclosure policy, supported-versions, and scope;
-      threat-model refresh in `docs/DESIGN.md` §5 (current as of beta.11).
-- [ ] **External security review** — the real gate. Full paid audit (Trail of Bits / NCC /
-      Cure53) when feasible; at minimum a scoped external look + the hardening above first.
+      threat-model refresh in `docs/DESIGN.md` §5.
+
+### Assurance — the open milestone (NOT a version gate)
+- [ ] **External security review.** The single thing that separates "carefully engineered"
+      from "independently trusted," and the one item on this roadmap that is **not ours to
+      build**. Full paid audit (Trail of Bits / NCC / Cure53 class) when feasible, or a
+      funded/coordinated audit via a program such as OSTIF or NLnet, or at minimum a scoped
+      independent-researcher pass. It is tracked as an **assurance milestone, not a `1.0`
+      gate** — SemVer versions the interface, not the audit status
+      ([`docs/VERSIONING.md`](VERSIONING.md)). When it lands, the assurance badge/disclaimer
+      flips in the README, `SECURITY.md`, and release notes; no version bump is implied.
 
 ### Optional — only if a single durable node isn't enough
 - [ ] **Integrated Storage (Raft)** — multi-writer HA with no external dependency. Deliberately

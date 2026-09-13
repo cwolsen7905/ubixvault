@@ -6,6 +6,24 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] — 2026-09-12
+
+Release candidate for **1.0.0**. No functional changes since `0.2.0-beta.12` —
+this candidate declares the public interface (the Vault-compatible HTTP API, the
+`ubixvault` server/operator CLI, the storage format, and the Helm chart values)
+**stable under [SemVer](https://semver.org/)** and rolls up the accumulated beta
+work into the first `1.0` line.
+
+### Changed
+
+- **Version and security assurance are now decoupled.** `1.0` is an API-stability
+  and feature-completeness milestone; it is **not** a claim that the cryptography
+  has been independently audited. An external security review is tracked as an
+  open **assurance milestone, not a version gate** (`docs/VERSIONING.md`,
+  `docs/ROADMAP.md`). Until it lands, the README and `SECURITY.md` carry an
+  explicit "not yet independently audited" status. New `docs/VERSIONING.md`
+  states the policy; the roadmap and README were reframed accordingly.
+
 ## [0.2.0-beta.12] — 2026-09-04
 
 Twelfth beta: the identity layer and LDAP close the last two Vault-Community
@@ -119,6 +137,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.0.0-rc.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.1
 [0.2.0-beta.12]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.12
 [0.2.0-beta.11]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.11
 
