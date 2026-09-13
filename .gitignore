@@ -40,3 +40,6 @@ Thumbs.db
 
 # Live per-sandbox agent coordination state — never committed (see AGENTS-COORD.template.md)
 /AGENTS-COORD.md
+
+# Local per-workflow agent guide — kept local, not part of the public repo
+/CLAUDE.md

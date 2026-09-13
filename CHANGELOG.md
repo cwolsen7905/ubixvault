@@ -8,19 +8,20 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Fixed
 
-- **Survive brief storage outages instead of crash-looping.** A transient
-  MySQL/MariaDB outage (a network blip, a dropped connection) no longer fails
-  every request and, on Kubernetes, no longer leads to the pod being killed and
-  re-unsealed. Storage operations now retry transient errors — network failures,
-  `driver.ErrBadConn`, MySQL server-gone/shutdown codes — with bounded
-  exponential backoff, classifying retryable vs permanent (a malformed key still
-  fails immediately). A sustained outage fails fast as a new
-  `storage.ErrUnavailable`, which `/v1/sys/health` maps to **503** (readiness
-  drops, traffic stops, the vault recovers on its own when storage returns) —
-  rather than the process dying. `/v1/sys/livez` remains storage-independent, so
-  a liveness probe never kills the process over a storage blip. A storage outage
-  does **not** reseal the vault (ADR D-019). Fixes
-  `docs/bugs/2026-09-12-storage-outage-crashloop.md`.
+- **Survive brief storage outages.** A transient MySQL/MariaDB outage (a network
+  blip, a dropped connection) no longer fails every request: storage operations
+  retry transient errors — network failures, `driver.ErrBadConn`, MySQL
+  server-gone/shutdown codes — with bounded exponential backoff, classifying
+  retryable vs permanent (a malformed key still fails immediately). A sustained
+  outage fails fast as a new `storage.ErrUnavailable`, which `/v1/sys/health`
+  maps to **503** (readiness drops, traffic stops, the vault recovers on its own
+  when storage returns) instead of a 500. `/v1/sys/livez` is (and remains)
+  storage-independent, so a liveness probe cannot kill the process during a
+  storage outage. A storage outage does **not** reseal the vault (ADR D-019).
+  Hardening prompted by `docs/bugs/2026-09-12-storage-outage-crashloop.md`;
+  investigation there found the production restarts that surfaced this were a
+  node/runtime-level cause, not storage, but the missing retry/degradation was a
+  real defect worth fixing regardless.
 
 ## [1.0.0-rc.2] — 2026-09-12
 
