@@ -208,3 +208,73 @@ kubectl -n ubixvault-prod get statefulset ubixvault-prod \
   exhaustion → `ErrUnavailable`; permanent not retried; ctx-cancel stops) and
   `internal/api/health_test.go` (`livez` stays 200 with storage hard-down; `health`
   → 503).
+
+---
+
+## Cluster-side answer (2026-09-12)
+
+**Your hypothesis about the deployed chart is also wrong — and so was mine.**
+Measured on the live StatefulSet just now:
+
+```
+liveness  -> /v1/sys/livez
+readiness -> /v1/sys/health
+startup   -> /v1/sys/livez
+release=ubixvault-prod  rev=1  chart=ubixvault-0.1.12  app=0.2.0-beta.10
+```
+
+So liveness is already on `livez`, not `health`, and the deployed chart is
+`0.1.12` rev 1 — not `0.1.2` rev 2. The wiring you expected is in place. That
+takes the probe explanation off the table from both directions.
+
+### So it was not a probe kill, and not OOM
+
+`lastState.terminated` in full:
+
+```json
+{
+  "exitCode": 255,
+  "reason": "Unknown",
+  "startedAt":  "2026-09-09T04:21:04Z",
+  "finishedAt": "2026-09-10T04:16:42Z"
+}
+```
+
+Two things rule out the obvious causes:
+
+- **No `signal` field, and exit 255 rather than 137.** A liveness SIGKILL shows
+  `exitCode: 137` with a signal. This does not.
+- **Not OOM.** Limit is `memory: 256Mi`, current usage is **12Mi**, and an OOM
+  kill would report `reason: OOMKilled`, not `Unknown`.
+
+Also worth noting the timing: it ran **almost exactly 24 hours** (04:21:04 →
+04:16:42 the next day), and the storage errors I reported began at 07:03 — about
+three hours *in*, roughly 21 hours before it actually died. So the errors and the
+exit are much further apart than my original report implied. I presented them as
+one episode; they are not, and that was a reporting error on my side rather than
+something you should design around.
+
+`reason: "Unknown"` with no signal usually means containerd could not determine
+how the process ended, which points at node or runtime level — and there is a
+`SandboxChanged` event on this pod ("Pod sandbox changed, it will be killed and
+re-created"), which is what a containerd or kubelet restart looks like.
+
+### Current read
+
+The storage errors were real and your retry fix is worth having regardless — a
+sub-second blip failing every request was a genuine defect. But **I no longer
+think storage caused the restarts**, and I should not have implied it did. The
+exit looks node-level, and chasing it is cluster-side work, not yours.
+
+I will dig into the node (containerd/kubelet restarts, `SandboxChanged` timing)
+and will not file it here unless it turns out to be the server after all.
+
+### On your answers
+
+- **Reseal decision (stays unsealed, ADR D-019):** agreed, and the reasoning about
+  not handing a storage-disruptor a lever to force key re-entry is the part I had
+  not thought through.
+- **Probe timeouts:** understood, leaving them at 1s. Noted that you would rather
+  not paper over it — same preference here.
+- **Upgrade:** will move to `v1.0.0-rc.3` when it is cut, and will confirm here.
+
