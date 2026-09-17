@@ -473,3 +473,33 @@ requirement ever calls for resealing after a defined outage threshold, it must b
 its own ADR superseding this one, with the threshold and the re-unseal story
 documented — not emergent behavior. Fixes the crash-loop in
 `docs/bugs/2026-09-12-storage-outage-crashloop.md`.
+
+## D-020 — Resource quotas (rate-limit + lease-count), in-house, Vault-compatible
+
+**Status:** Accepted · 2026-09-17
+
+**Decision:** add Vault-compatible **resource quotas** — path-prefix-scoped,
+API-managed **rate-limit** quotas and **lease-count** quotas under
+`sys/quotas/*` — built in-house with **no new dependency**, extending the existing
+`internal/ratelimit` limiter and the lease/expiration subsystem. Longest-prefix
+match; quotas stored in the barrier and loaded at unseal; rate limits enforced in
+the HTTP middleware before auth (429), lease caps enforced at lease creation.
+Shipped in phases: rate-limit quotas first (the current global `--rate-limit` flag
+becomes the built-in default quota), then lease-count, then finer role/mount scope.
+This is the first slice of the Vault-Enterprise-parity push. Design:
+`docs/design/resource-quotas.md`.
+
+**Why:** rate limiting today is a single global, flag-only knob and there is no cap
+on active leases at all — both are real single-org abuse/exhaustion modes and both
+are features clients and operators expect from a Vault-compatible API (D-003). It is
+the right *first* Enterprise feature because it is self-contained (no barrier or
+request-path changes) and additive through existing interfaces, and its prefix-based
+model folds cleanly into **per-namespace** quotas when namespaces land — so it de-
+risks the larger items rather than blocking on them. Building it in-house keeps the
+one-readable-trust-path / minimal-dependency ethos (the same reasoning as D-014/D-015).
+
+**Trade-off / follow-up:** counts and rate buckets are **local** to the node; a
+shared/distributed counter is only meaningful once replication exists, so
+cross-replica quota accuracy is explicitly deferred (noted in the design). Per-
+namespace scoping is deferred to the namespaces work, which the prefix model already
+anticipates.
