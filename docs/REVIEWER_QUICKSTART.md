@@ -7,7 +7,7 @@ and the threat model in [`docs/DESIGN.md`](DESIGN.md) §5.
 ## Build
 
 ```sh
-make build                                   # -> bin/ubixvault (Go 1.24, static, CGO-free)
+make build                                   # -> bin/ubixvault (Go 1.25, static, CGO-free)
 # equivalently: CGO_ENABLED=0 go build -trimpath -o bin/ubixvault ./cmd/ubixvault
 ```
 
@@ -86,6 +86,7 @@ go test -run=x -fuzz=FuzzSplitJWT -fuzztime=60s ./internal/jwtauth/
 | Seals (KEK / transit / external) | `internal/seal` |
 | ACL + in-house HCL parser | `internal/policy` |
 | Tokens & leases | `internal/token` |
-| Auth methods (JWT/OIDC, AppRole, userpass, k8s) | `internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth` |
+| Auth methods (JWT/OIDC, AppRole, userpass, k8s, TLS-cert, LDAP/AD) | `internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth`, `internal/certauth`, `internal/ldapauth` |
+| Identity (entities, aliases, groups, templating) | `internal/identity` |
 | Audit (fail-closed, HMAC) | `internal/audit` |
 | Storage (file, MySQL) | `internal/storage` |
