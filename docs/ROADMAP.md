@@ -1,7 +1,9 @@
 # uBix Vault — Roadmap
 
-> **Status:** Active · Last updated 2026-09-12 · Current release `v1.0.0-rc.1`
-> (release candidate for `1.0.0`)
+> **Status:** Active · Last updated 2026-09-17 · Current release **`v1.0.0`**
+> (shipped — the official 1.0). The external security review is an assurance
+> milestone, **not** a version gate, and does **not** hold back v1 or later
+> releases (see `docs/VERSIONING.md`).
 
 uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
 minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
@@ -80,14 +82,16 @@ correctness is a trap** — HA on top of un-hardened crypto is just a reliable w
 or leak secrets — so the hardening ran *alongside* the storage work, not after it. **All
 of it has landed**, which is what makes the `1.0` API-stability milestone honest.
 
-### Found in the field — open
+### Found in the field — done
 
-- [ ] **Survive a storage outage instead of crash-looping.** Reported from
-      production 2026-09-12: when the external MySQL is briefly unreachable,
-      uBixVault fails every request and the container is then killed (exit 255),
-      which on an auto-unseal deployment means an unseal cycle per blip. No retry
-      or error classification exists in `internal/storage/`. Wanted in `1.0`.
-      Full report, evidence and what is already ruled out:
+- [x] **Survive a storage outage instead of crash-looping.** Reported from
+      production 2026-09-12; **fixed and shipped in 1.0.0.** Transient storage
+      errors (dial failures, `driver.ErrBadConn`, specific MySQL codes) are now
+      classified and retried with bounded backoff in `internal/storage/retry.go`
+      (`RetryBackend`), a sustained outage surfaces as `storage.ErrUnavailable` →
+      HTTP 503 on `/v1/sys/health` instead of a crash, and `/v1/sys/livez` is
+      storage-free so Kubernetes no longer kills (and re-unseals) the pod during a
+      blip. No reseal on outage (ADR D-019). Report + resolution:
       [`docs/bugs/2026-09-12-storage-outage-crashloop.md`](bugs/2026-09-12-storage-outage-crashloop.md).
 
 ### Tier 0 — production safety (do first; small) — **done**
@@ -141,12 +145,27 @@ of it has landed**, which is what makes the `1.0` API-stability milestone honest
 
 ## Beyond 1.0 — the catch-up backlog (not committed scope)
 
-The long path toward broader Vault parity, recorded so the gap is explicit and can be
-chipped away at slowly. **This is not committed 1.0 scope** — 1.0 is gated only on the
-external review (above). These are undertaken as they earn their place, never at the expense
-of the finished core, and each larger item gets its own design note + ADR first (as the SQL
-backend and the KMS seal did), with any new dependency recorded there. Rough priority:
-Community-parity gaps before Enterprise-tier features.
+The long path toward broader Vault parity — **the standing goal is to close the gap
+to HashiCorp Vault Enterprise's feature set** — recorded so the gap is explicit and
+can be chipped away at. **1.0 already shipped;** none of this gated it, and none of
+it gates future releases — the external review is a separate *assurance* milestone,
+never a version gate. These are undertaken as they earn their place, never at the
+expense of the finished core, and each larger item gets its own design note + ADR
+first (as the SQL backend and the KMS seal did), with any new dependency recorded
+there. Rough priority: Community-parity gaps (small, quick wins) interleaved with
+the Enterprise push below.
+
+**Enterprise push — suggested build order** (each design-note + ADR first; revisit
+as we learn): **1.** Resource quotas (self-contained, extends the existing rate
+limiter — a good first Enterprise slice). **2.** Namespaces (foundational — quotas,
+policy scoping, and replication all key off it). **3.** Policy-as-code / ABAC
+(Sentinel-style). **4.** Control Groups (M-of-N approval, step-up MFA). **5.**
+Transform engine (tokenization / FPE / masking). **6.** Managed Keys + Key
+Management engine (cloud-KMS offload). **7.** KMIP server engine. **8.** Replication
+(performance / DR / standbys — largest). **9.** FIPS 140-3 compliance builds (gated
+on a validated crypto module — hardest for a stdlib-only tree). Seal-wrap of
+individual entries and object-storage snapshot upload fold in alongside as the two
+partial analogs are completed.
 
 ### Toward Vault Community parity (free-tier gaps)
 - [ ] **Integrated Storage (Raft)** — multi-writer HA (also in "Path to 1.0 · Optional"; the SQL backend already gives a durable, replaceable node, so this may never be needed).
