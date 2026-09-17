@@ -2,18 +2,21 @@
 
 > A scoping brief for anyone assessing uBix Vault's security — a firm, an
 > independent reviewer, or a funded-OSS program. It gives the hard scoping facts,
-> a pass/fail definition of the 1.0 gate, the crown-jewels scope, the specific
-> questions we care about, and the working model. An external review is the one
-> remaining gate on the road to `1.0` (`docs/ROADMAP.md`); this brief makes it
-> easy to scope and kick off.
+> a pass/fail definition of the assurance bar, the crown-jewels scope, the specific
+> questions we care about, and the working model. uBix Vault has reached
+> **`1.0.0`** (API stability under SemVer); an independent external review is the
+> open **assurance milestone** that the version deliberately does *not* gate on —
+> the number communicates interface stability, not audit status
+> (`docs/VERSIONING.md`, `docs/ROADMAP.md`). This brief makes it easy to scope and
+> kick off.
 
 ## At a glance (scoping facts)
 
 | | |
 |---|---|
-| **Review target** | Set at outreach — `1.0.0-rc.1` · commit `<sha>` · frozen `<YYYY-MM-DD>`, docs frozen to the same tag. Until then, the current reviewable release is `v0.2.0-beta.11`. |
-| **Language / toolchain** | Go 1.24 (`go.mod`), standard library + **one** third-party dependency (`github.com/go-sql-driver/mysql`). |
-| **Size** | ~10.5k LoC production (55 non-test `.go` files) + ~7.4k LoC tests. |
+| **Review target** | `v1.0.0` is released; the review runs against `v1.0.0` (or a later frozen tag) · commit `<sha>` · frozen `<YYYY-MM-DD>` at outreach, docs frozen to the same tag. |
+| **Language / toolchain** | Go 1.25 (`go.mod`), standard library + **two** direct third-party modules — `github.com/go-ldap/ldap/v3` (LDAP/AD auth) and `github.com/go-sql-driver/mysql` (MySQL storage). go-ldap pulls a small transitive set (`go-asn1-ber/asn1-ber`, `Azure/go-ntlmssp`); all module hashes are pinned in `go.sum`. |
+| **Size** | ~13.1k LoC production (67 non-test `.go` files) + ~9.4k LoC tests. |
 | **Build** | Single **static** binary, **CGO disabled** (`CGO_ENABLED=0`), multi-arch (amd64/arm64), distroless runtime image. |
 | **Entry points** | `cmd/ubixvault/main.go` (server + `operator` CLI); HTTP API under `internal/api` (routes in `internal/api/sys.go`, Vault-compatible `/v1/*` paths). |
 | **Attack surface** | The HTTP API; the storage backend (file or MySQL); the auto-unseal seal (KEK, transit, or external command); operator CLI/flags/env. **`net/http/pprof` is not exposed.** |
@@ -23,19 +26,25 @@
 
 A self-hosted, single-node secrets manager in Go (HashiCorp Vault–style): an
 AES-256-GCM encryption barrier, in-house Shamir seal/unseal, KV v2, Transit
-(crypto-as-a-service), dynamic MySQL/MariaDB credentials, PKI, five auth methods,
-ACL policies, and a fail-closed audit log, over a Vault-compatible HTTP API. All
-cryptography is Go standard-library primitives wrapped in in-house logic; the only
-third-party dependency is the MySQL driver. Architecture in `docs/DESIGN.md` §3;
-decisions in `docs/DECISIONS.md`.
+(crypto-as-a-service, incl. HKDF-derived keys and convergent encryption), dynamic
+MySQL/MariaDB credentials, PKI, cubbyhole, an **identity** layer (entities,
+aliases, internal + external groups, templated policies), **seven auth methods**
+(token, userpass, AppRole, JWT/OIDC, Kubernetes, TLS client-certificate, and
+LDAP/AD), ACL policies, and a fail-closed audit log, over a Vault-compatible HTTP
+API. All cryptography is Go standard-library primitives wrapped in in-house logic;
+the only third-party modules are the LDAP and MySQL drivers. Architecture in
+`docs/DESIGN.md` §3; decisions in `docs/DECISIONS.md`.
 
-**Status:** pre-1.0 beta, not production-hardened, **not previously reviewed**.
-The engineering gates for 1.0 (durable storage, hardening, KMS/HSM seal) have
-landed; this review is the remaining gate.
+**Status:** **`1.0.0` released** — the public API is stable under SemVer. It has
+**not** been independently reviewed or audited; the version communicates interface
+stability, not assurance (`docs/VERSIONING.md`). The engineering gates for 1.0
+(durable storage, hardening, KMS/HSM seal, identity, the full auth set) have
+landed; this external review is the open **assurance milestone**.
 
-## The 1.0 gate (pass/fail)
+## The assurance bar (pass/fail)
 
-The gate is satisfied when, against the frozen review tag:
+A clean review — the assurance milestone — is achieved when, against the frozen
+review tag:
 
 - **No open Critical or High findings on the crown-jewels scope** (below).
 - The **fail-closed audit** guarantee is verified (an unwritable audit sink stops the vault serving).
@@ -74,10 +83,17 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
    path/**glob** semantics, token hierarchy/scoping. The policy parser is an
    **in-house HCL parser (not `hashicorp/hcl`)** — it needs a parser
    differential / injection review.
-4b. **`internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth`**
+4b. **`internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth`, `internal/certauth`, `internal/ldapauth`**
    — JWS/JWT verification (**algorithm confusion**, `kid`/JWKS handling,
    `exp`/`aud`/issuer checks), AppRole secret-id **constant-time** hash compare,
-   userpass PBKDF2 parameters + timing, Kubernetes TokenReview handling.
+   userpass PBKDF2 parameters + timing, Kubernetes TokenReview handling, TLS
+   client-certificate chain / SAN verification, and LDAP/AD bind — the `go-ldap`
+   dependency surface, DN / search-filter injection, and referral handling.
+4c. **`internal/identity`** — entity/alias resolution, **group → policy**
+   attachment (internal and external/auth-mapped groups), and **policy templating**
+   (identity data interpolated into ACL paths). An entity mapped to the wrong
+   groups, or a template that expands to an over-broad path, is an authorization
+   bypass — the alias-matching and the templating expansion are the parts to press.
 
 ## Scope — Secondary (important; High if broken)
 
@@ -93,7 +109,8 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
 9. **Token lifetime / revocation / lease GC** — can a stale token or lease bypass
    ACL or outlive a revocation?
 10. **`internal/audit`** — fail-closed guarantees and HMAC'ing of sensitive fields.
-11. **`internal/pki`**, and the **supply chain** (cosign signing + SBOM; one-dependency posture).
+11. **`internal/pki`**, and the **supply chain** (cosign signing + SBOM;
+   minimal-dependency posture — two direct modules plus go-ldap's small transitive set).
 
 ## External seal — process model
 
@@ -153,9 +170,12 @@ auto-unseal works without a provider SDK. The exact model to review:
 
 ## Supply chain
 
-- **Toolchain:** Go 1.24; `go.sum` pins all module hashes; standard Go module
-  resolution (module proxy), **not vendored**. **No `replace` directives, no
-  vendoring, `go.sum` committed.** `govulncheck ./...` runs in CI on every change.
+- **Toolchain:** Go 1.25; two direct modules (`go-ldap/ldap/v3`,
+  `go-sql-driver/mysql`) plus their transitive set (`go-asn1-ber/asn1-ber`,
+  `Azure/go-ntlmssp`, `google/uuid`, `filippo.io/edwards25519`, `golang.org/x/crypto`).
+  `go.sum` pins all module hashes; standard Go module resolution (module proxy),
+  **not vendored**. **No `replace` directives, no vendoring, `go.sum` committed.**
+  `govulncheck ./...` runs in CI on every change.
 - **Releases:** multi-arch images are **keyless-signed with cosign** and carry an
   **SPDX SBOM attestation**; both are stored in the registry (OCI) alongside the
   image and logged to the Rekor transparency log, verifiable via the GitHub OIDC
