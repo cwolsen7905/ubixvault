@@ -1,7 +1,7 @@
 # Design note: Resource Quotas (rate-limit + lease-count)
 
-> **Status:** Proposed · 2026-09-17 · first slice of the Vault-**Enterprise**-parity
-> push (`docs/ROADMAP.md`). ADR: D-020.
+> **Status:** Phase 1 (rate-limit quotas) **implemented** · 2026-09-17 · first slice
+> of the Vault-**Enterprise**-parity push (`docs/ROADMAP.md`). ADR: D-020.
 
 ## Goal
 
@@ -87,9 +87,13 @@ per the API-compatibility ADR (D-003).
 
 ## Phasing (small reviewed slices)
 
-1. **Rate-limit quotas** — quota manager + storage + `sys/quotas/rate-limit*` API +
-   middleware wiring; fold the existing global flag in as the default quota.
-   (Reuses `internal/ratelimit`; lowest risk; ships value on its own.)
+1. **Rate-limit quotas** — ✅ **shipped.** Quota manager (`internal/quota`) + barrier
+   storage + `sys/quotas/rate-limit*` API (`internal/api/quota.go`) + middleware
+   enforcement (`internal/api/audit.go`, longest-prefix match, 429 + `Retry-After`).
+   The existing global `-rate-limit` flag still applies as a separate global limit;
+   folding it into a first-class default quota (and `sys/quotas/config`) is a small
+   follow-up. Violations surface as 429s in the request-status metric and the audit
+   log; a dedicated `ubixvault_quota_exceeded_total{name}` counter is deferred.
 2. **Lease-count quotas** — the lease-manager count hook + `sys/quotas/lease-count*`
    API + unseal-time recount.
 3. **Finer scope** — `role` / `auth_mount` scoping and `block_interval` penalty.

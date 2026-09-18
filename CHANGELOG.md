@@ -6,6 +6,19 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Resource quotas — rate-limit quotas (phase 1).** Path-scoped, API-managed
+  request-rate limits under `sys/quotas/rate-limit/:name` (LIST/GET/POST/DELETE),
+  Vault-compatible and root/ACL-gated. Each quota is a per-client token bucket over
+  a logical API path prefix (`""` = global); the most specific matching quota
+  (longest prefix) is enforced in the request middleware, returning `429` with
+  `Retry-After` when a client exceeds it. Quotas persist in the barrier and load at
+  unseal; they apply in addition to the existing global `-rate-limit` flag. First
+  slice of the Vault-Enterprise-parity work (design:
+  `docs/design/resource-quotas.md`, ADR D-020). Lease-count quotas and finer
+  role/mount scope follow in later phases.
+
 ### Fixed
 
 - **Helm chart `appVersion` tracks the release.** The chart's `appVersion` was

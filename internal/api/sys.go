@@ -28,6 +28,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/metrics"
 	"github.com/cwolsen7905/ubixvault/internal/pki"
 	"github.com/cwolsen7905/ubixvault/internal/policy"
+	"github.com/cwolsen7905/ubixvault/internal/quota"
 	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/transit"
@@ -67,7 +68,8 @@ type Handler struct {
 	policies       *policy.Store
 	audit          *audit.Broker
 	metrics        *metrics.Metrics
-	limiter        *ratelimit.Limiter // nil disables rate limiting
+	quotas         *quota.Manager     // path-scoped rate-limit quotas (always non-nil)
+	limiter        *ratelimit.Limiter // nil disables the global rate limit
 	trustForwarded bool               // key rate limits by X-Forwarded-For
 	version        string
 	startTime      time.Time
@@ -121,6 +123,7 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		wrapping:   wrapping.NewStore(c.Barrier()),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
+		quotas:     quota.New(c.Barrier(), nil),
 		metrics:    metrics.New(),
 		startTime:  time.Now().UTC(),
 	}
@@ -200,6 +203,14 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("GET /v1/sys/policies/acl/{name}", h.authenticate(h.policyRead))
 	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
+
+	// Resource quotas — rate-limit quotas (path-scoped request-rate limits).
+	// Root/ACL-gated like policies; enforced in the request middleware.
+	mux.HandleFunc("PUT /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaWrite))
+	mux.HandleFunc("POST /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaWrite))
+	mux.HandleFunc("GET /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaRead))
+	mux.HandleFunc("DELETE /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaDelete))
+	mux.HandleFunc("LIST /v1/sys/quotas/rate-limit", h.authenticate(h.quotaList))
 
 	// Token creation, renewal, and revocation (revoke cascades to the token's
 	// dynamic-database leases and destroys its cubbyhole).
