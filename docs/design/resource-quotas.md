@@ -87,13 +87,16 @@ per the API-compatibility ADR (D-003).
 
 ## Phasing (small reviewed slices)
 
-1. **Rate-limit quotas** — ✅ **shipped.** Quota manager (`internal/quota`) + barrier
-   storage + `sys/quotas/rate-limit*` API (`internal/api/quota.go`) + middleware
-   enforcement (`internal/api/audit.go`, longest-prefix match, 429 + `Retry-After`).
-   The existing global `-rate-limit` flag still applies as a separate global limit;
-   folding it into a first-class default quota (and `sys/quotas/config`) is a small
-   follow-up. Violations surface as 429s in the request-status metric and the audit
-   log; a dedicated `ubixvault_quota_exceeded_total{name}` counter is deferred.
+1. **Rate-limit quotas** — ✅ **shipped, complete.** Quota manager (`internal/quota`)
+   + barrier storage + `sys/quotas/rate-limit*` API (`internal/api/quota.go`) +
+   middleware enforcement (`internal/api/audit.go`, longest-prefix match, 429 +
+   `Retry-After`). The global `-rate-limit` flag is now **folded in as the default
+   quota** (via the manager), overridable at runtime by **`sys/quotas/config`**
+   (`default_rate`/`default_burst`); the default applies even while sealed (so
+   init/unseal can't be brute-forced), named quotas take effect after unseal. A
+   named quota is the most-specific match and governs its path alone. Denials
+   increment **`ubixvault_quota_exceeded_total{quota}`** (`"default"` for the
+   default) and surface as 429s in the request-status metric + audit log.
 2. **Lease-count quotas** — the lease-manager count hook + `sys/quotas/lease-count*`
    API + unseal-time recount.
 3. **Finer scope** — `role` / `auth_mount` scoping and `block_interval` penalty.

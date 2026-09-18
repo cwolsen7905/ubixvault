@@ -70,6 +70,31 @@ func (h *Handler) quotaList(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"keys": names})
 }
 
+// quotaConfigRead returns the global quota config (the default quota's rate/burst).
+func (h *Handler) quotaConfigRead(w http.ResponseWriter, r *http.Request) {
+	_ = h.quotas.EnsureLoaded(r.Context())
+	rate, burst := h.quotas.DefaultConfig()
+	writeData(w, map[string]any{"default_rate": rate, "default_burst": burst})
+}
+
+// quotaConfigWrite sets the default (global) quota. A non-positive default_rate
+// clears it. burst defaults to rate when omitted.
+func (h *Handler) quotaConfigWrite(w http.ResponseWriter, r *http.Request) {
+	_ = h.quotas.EnsureLoaded(r.Context())
+	var req struct {
+		DefaultRate  float64 `json:"default_rate"`
+		DefaultBurst float64 `json:"default_burst"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.quotas.SetConfig(r.Context(), req.DefaultRate, req.DefaultBurst); err != nil {
+		writeQuotaError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeQuotaError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, quota.ErrNotFound):

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,72 @@ func TestQuota_EnforcedInMiddleware(t *testing.T) {
 	// A request on an unrelated path is not governed by the secret/ quota.
 	if rec := doAuth(t, h, "GET", "/v1/sys/quotas/rate-limit/secretcap", "", root); rec.Code == http.StatusTooManyRequests {
 		t.Error("unrelated path should not be throttled by the secret/ quota")
+	}
+}
+
+type quotaConfigResp struct {
+	Data struct {
+		DefaultRate  float64 `json:"default_rate"`
+		DefaultBurst float64 `json:"default_burst"`
+	}
+}
+
+// TestQuota_ConfigCRUD sets and clears the global default via sys/quotas/config.
+// A generous rate keeps the admin requests themselves from being throttled.
+func TestQuota_ConfigCRUD(t *testing.T) {
+	h, root := unsealedHandler(t)
+
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/config", `{"default_rate":1000,"default_burst":2000}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("set config: code=%d body=%s", rec.Code, rec.Body)
+	}
+	cfg := decode[quotaConfigResp](t, doAuth(t, h, "GET", "/v1/sys/quotas/config", "", root))
+	if cfg.Data.DefaultRate != 1000 || cfg.Data.DefaultBurst != 2000 {
+		t.Errorf("config read = %+v, want rate 1000 burst 2000", cfg.Data)
+	}
+
+	// Clearing the default (rate 0) removes it.
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/config", `{"default_rate":0}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("clear config: code=%d", rec.Code)
+	}
+	cfg = decode[quotaConfigResp](t, doAuth(t, h, "GET", "/v1/sys/quotas/config", "", root))
+	if cfg.Data.DefaultRate != 0 {
+		t.Errorf("after clear, default_rate = %v, want 0", cfg.Data.DefaultRate)
+	}
+}
+
+// TestQuota_DefaultEnforced verifies the config default governs a path that has
+// no named quota (a strict default throttles within a short burst).
+func TestQuota_DefaultEnforced(t *testing.T) {
+	h, root := unsealedHandler(t)
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/config", `{"default_rate":1,"default_burst":2}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("set config: code=%d body=%s", rec.Code, rec.Body)
+	}
+	got429 := false
+	for i := 0; i < 6; i++ {
+		if do(t, h, "GET", "/v1/sys/seal-status", "").Code == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+	}
+	if !got429 {
+		t.Error("default quota (burst 2) should throttle within 6 rapid requests")
+	}
+}
+
+// TestQuota_ExceededMetric verifies a denial increments the exceeded counter,
+// visible on the metrics endpoint.
+func TestQuota_ExceededMetric(t *testing.T) {
+	h, root := unsealedHandler(t)
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/rate-limit/secretcap",
+		`{"path":"secret/","rate":1,"burst":1}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("create quota: code=%d body=%s", rec.Code, rec.Body)
+	}
+	// burst 1 → the second request is denied and counted.
+	for i := 0; i < 3; i++ {
+		doAuth(t, h, "GET", "/v1/secret/data/x", "", root)
+	}
+	body := do(t, h, "GET", "/v1/sys/metrics", "").Body.String()
+	if !strings.Contains(body, `ubixvault_quota_exceeded_total{quota="secretcap"}`) {
+		t.Errorf("metrics missing the quota-exceeded counter; body:\n%s", body)
 	}
 }

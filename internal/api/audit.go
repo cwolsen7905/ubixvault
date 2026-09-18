@@ -20,22 +20,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Rate limiting: throttle authenticated/lifecycle endpoints (health, metrics,
 	// and the console are exempt so probes/scrapers/browsers aren't blocked).
-	if h.limiter != nil && !publicEndpoint(r.URL.Path) {
-		if !h.limiter.Allow(h.clientKey(r)) {
-			rec.Header().Set("Retry-After", "1")
-			writeError(rec, http.StatusTooManyRequests, "rate limit exceeded")
-			return
+	// Rate-limit quotas: the default (global) quota applies to every non-public
+	// path — even while sealed, so init/unseal can't be brute-forced — while
+	// named, path-scoped quotas live in the barrier and take effect once the
+	// vault is unsealed (EnsureLoaded is a cheap no-op after its first success).
+	if !publicEndpoint(r.URL.Path) {
+		if !h.core.Barrier().Sealed() {
+			_ = h.quotas.EnsureLoaded(r.Context())
 		}
-	}
-
-	// Path-scoped rate-limit quotas (in addition to the global limit above).
-	// Quotas live in the barrier, so they only apply once the vault is unsealed;
-	// EnsureLoaded is a cheap no-op after the first successful load.
-	if !publicEndpoint(r.URL.Path) && !h.core.Barrier().Sealed() {
-		_ = h.quotas.EnsureLoaded(r.Context())
 		if ok, name := h.quotas.Allow(apiPath(r), h.clientKey(r)); !ok {
 			rec.Header().Set("Retry-After", "1")
-			writeError(rec, http.StatusTooManyRequests, "rate-limit quota exceeded: "+name)
+			if name == "" {
+				writeError(rec, http.StatusTooManyRequests, "rate limit exceeded")
+			} else {
+				writeError(rec, http.StatusTooManyRequests, "rate-limit quota exceeded: "+name)
+			}
 			return
 		}
 	}

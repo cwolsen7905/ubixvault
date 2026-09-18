@@ -68,9 +68,8 @@ type Handler struct {
 	policies       *policy.Store
 	audit          *audit.Broker
 	metrics        *metrics.Metrics
-	quotas         *quota.Manager     // path-scoped rate-limit quotas (always non-nil)
-	limiter        *ratelimit.Limiter // nil disables the global rate limit
-	trustForwarded bool               // key rate limits by X-Forwarded-For
+	quotas         *quota.Manager // rate-limit quotas incl. the default (always non-nil)
+	trustForwarded bool           // key rate limits by X-Forwarded-For
 	version        string
 	startTime      time.Time
 	mux            *http.ServeMux
@@ -89,10 +88,12 @@ func WithVersion(v string) Option {
 	return func(h *Handler) { h.version = v }
 }
 
-// WithRateLimit throttles API requests through l, keyed by client. Health,
-// metrics, and the console are exempt.
+// WithRateLimit installs l as the default (global) rate-limit quota, applied to
+// any path with no more-specific named quota and keyed by client. Health,
+// metrics, and the console are exempt. A persisted default (sys/quotas/config)
+// overrides this once the vault is unsealed.
 func WithRateLimit(l *ratelimit.Limiter) Option {
-	return func(h *Handler) { h.limiter = l }
+	return func(h *Handler) { h.quotas.SetDefaultLimiter(l) }
 }
 
 // WithTrustForwardedFor keys rate limits by the leftmost X-Forwarded-For entry
@@ -123,10 +124,11 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 		wrapping:   wrapping.NewStore(c.Barrier()),
 		tokens:     c.Tokens(),
 		policies:   policy.NewStore(c.Barrier()),
-		quotas:     quota.New(c.Barrier(), nil),
 		metrics:    metrics.New(),
 		startTime:  time.Now().UTC(),
 	}
+	// Quota manager reports denials to the metrics registry created above.
+	h.quotas = quota.New(c.Barrier(), h.metrics.ObserveQuotaExceeded)
 	// Route auth-method logins through the identity resolver so their tokens carry
 	// an entity (auto-created on first login) and pick up the entity's policies.
 	c.Tokens().SetAliaser(h.identity)
@@ -211,6 +213,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("GET /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaRead))
 	mux.HandleFunc("DELETE /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaDelete))
 	mux.HandleFunc("LIST /v1/sys/quotas/rate-limit", h.authenticate(h.quotaList))
+	mux.HandleFunc("GET /v1/sys/quotas/config", h.authenticate(h.quotaConfigRead))
+	mux.HandleFunc("POST /v1/sys/quotas/config", h.authenticate(h.quotaConfigWrite))
+	mux.HandleFunc("PUT /v1/sys/quotas/config", h.authenticate(h.quotaConfigWrite))
 
 	// Token creation, renewal, and revocation (revoke cascades to the token's
 	// dynamic-database leases and destroys its cubbyhole).
