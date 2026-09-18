@@ -141,6 +141,48 @@ func TestQuota_DefaultEnforced(t *testing.T) {
 	}
 }
 
+// TestQuota_LeaseCountCRUD exercises the lease-count quota endpoints.
+func TestQuota_LeaseCountCRUD(t *testing.T) {
+	h, root := unsealedHandler(t)
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/lease-count/dbcap", `{"path":"database/","max_leases":25}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("create: code=%d body=%s", rec.Code, rec.Body)
+	}
+	got := decode[struct {
+		Data struct {
+			Name, Type, Path string
+			MaxLeases        int `json:"max_leases"`
+		}
+	}](t, doAuth(t, h, "GET", "/v1/sys/quotas/lease-count/dbcap", "", root))
+	if got.Data.Type != "lease-count" || got.Data.Path != "database/" || got.Data.MaxLeases != 25 {
+		t.Errorf("read fields: %+v", got.Data)
+	}
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/lease-count/bad", `{"path":"database/","max_leases":0}`, root); rec.Code != http.StatusBadRequest {
+		t.Errorf("zero max_leases: code=%d, want 400", rec.Code)
+	}
+	if rec := doAuth(t, h, "DELETE", "/v1/sys/quotas/lease-count/dbcap", "", root); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: code=%d", rec.Code)
+	}
+}
+
+// TestQuota_LeaseCountEnforced caps active DB leases and verifies the (N+1)th
+// issuance is refused before a credential is created.
+func TestQuota_LeaseCountEnforced(t *testing.T) {
+	h, root, _ := unsealedDBHandler(t)
+	configureAndRole(t, h, root)
+	if rec := doAuth(t, h, "POST", "/v1/sys/quotas/lease-count/dbcap", `{"path":"database/","max_leases":2}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("create lease quota: code=%d body=%s", rec.Code, rec.Body)
+	}
+	c1 := doAuth(t, h, "GET", "/v1/database/creds/app", "", root).Code
+	c2 := doAuth(t, h, "GET", "/v1/database/creds/app", "", root).Code
+	c3 := doAuth(t, h, "GET", "/v1/database/creds/app", "", root)
+	if c1 != http.StatusOK || c2 != http.StatusOK {
+		t.Fatalf("first two creds should issue; got %d, %d", c1, c2)
+	}
+	if c3.Code != http.StatusTooManyRequests {
+		t.Errorf("3rd cred should hit the lease-count cap; got %d body=%s", c3.Code, c3.Body)
+	}
+}
+
 // TestQuota_ExceededMetric verifies a denial increments the exceeded counter,
 // visible on the metrics endpoint.
 func TestQuota_ExceededMetric(t *testing.T) {

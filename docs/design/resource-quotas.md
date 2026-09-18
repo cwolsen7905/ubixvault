@@ -1,7 +1,7 @@
 # Design note: Resource Quotas (rate-limit + lease-count)
 
-> **Status:** Phase 1 (rate-limit quotas) **implemented** · 2026-09-17 · first slice
-> of the Vault-**Enterprise**-parity push (`docs/ROADMAP.md`). ADR: D-020.
+> **Status:** Phases 1 (rate-limit) and 2 (lease-count) **implemented** · 2026-09-17
+> · first slice of the Vault-**Enterprise**-parity push (`docs/ROADMAP.md`). ADR: D-020.
 
 ## Goal
 
@@ -97,8 +97,14 @@ per the API-compatibility ADR (D-003).
    named quota is the most-specific match and governs its path alone. Denials
    increment **`ubixvault_quota_exceeded_total{quota}`** (`"default"` for the
    default) and surface as 429s in the request-status metric + audit log.
-2. **Lease-count quotas** — the lease-manager count hook + `sys/quotas/lease-count*`
-   API + unseal-time recount.
+2. **Lease-count quotas** — ✅ **shipped.** `sys/quotas/lease-count/*` CRUD
+   (barrier-persisted, loaded at unseal) + longest-prefix `MatchLeaseCount`.
+   Enforced at DB-credential issuance (`dbCredentials`): the matched quota's path
+   is counted live via `database.CountLeasesUnder` (leases mapped to their issuing
+   path `database/creds/<role>`) and a new lease is refused with `429` at the cap,
+   before any credential is created. Counting is on-demand (correct, no drift); a
+   cached counter is a later optimization. Currently covers DB leases — the only
+   lease type today. Denials increment `ubixvault_quota_exceeded_total{quota}`.
 3. **Finer scope** — `role` / `auth_mount` scoping and `block_interval` penalty.
 
 Each phase is independently shippable and CI-green.
