@@ -18,9 +18,10 @@ import (
 // Metrics collects the vault's operational series. The zero value is not usable;
 // call [New].
 type Metrics struct {
-	mu       sync.Mutex
-	requests map[int]uint64 // HTTP requests by status code
-	gauges   []gauge        // gathered at scrape time, in registration order
+	mu            sync.Mutex
+	requests      map[int]uint64    // HTTP requests by status code
+	quotaExceeded map[string]uint64 // rate-limit quota denials by quota name
+	gauges        []gauge           // gathered at scrape time, in registration order
 }
 
 type gauge struct {
@@ -32,7 +33,7 @@ type gauge struct {
 
 // New returns an empty registry.
 func New() *Metrics {
-	return &Metrics{requests: make(map[int]uint64)}
+	return &Metrics{requests: make(map[int]uint64), quotaExceeded: make(map[string]uint64)}
 }
 
 // RegisterGauge adds a gauge whose value is read from fn each time metrics are
@@ -47,6 +48,14 @@ func (m *Metrics) RegisterGauge(name, help string, fn func() float64, labels ...
 func (m *Metrics) ObserveRequest(code int) {
 	m.mu.Lock()
 	m.requests[code]++
+	m.mu.Unlock()
+}
+
+// ObserveQuotaExceeded records one request denied by a rate-limit quota, labeled
+// by quota name ("default" for the default/global limit).
+func (m *Metrics) ObserveQuotaExceeded(name string) {
+	m.mu.Lock()
+	m.quotaExceeded[name]++
 	m.mu.Unlock()
 }
 
@@ -73,6 +82,20 @@ func (m *Metrics) WriteProm(w io.Writer) {
 		sort.Ints(codes)
 		for _, code := range codes {
 			_, _ = fmt.Fprintf(w, "%s{code=\"%d\"} %d\n", name, code, m.requests[code])
+		}
+	}
+
+	if len(m.quotaExceeded) > 0 {
+		const name = "ubixvault_quota_exceeded_total"
+		_, _ = fmt.Fprintf(w, "# HELP %s Total requests denied by a rate-limit quota, by quota name.\n", name)
+		_, _ = fmt.Fprintf(w, "# TYPE %s counter\n", name)
+		quotas := make([]string, 0, len(m.quotaExceeded))
+		for q := range m.quotaExceeded {
+			quotas = append(quotas, q)
+		}
+		sort.Strings(quotas)
+		for _, q := range quotas {
+			_, _ = fmt.Fprintf(w, "%s{quota=\"%s\"} %d\n", name, escapeLabelValue(q), m.quotaExceeded[q])
 		}
 	}
 }

@@ -23,6 +23,9 @@ import (
 // storePrefix is the barrier key prefix for rate-limit quota records.
 const storePrefix = "sys/quotas/rate-limit/"
 
+// configKey is the barrier key for the global quota config (the default quota).
+const configKey = "sys/quotas/config"
+
 // Errors returned by the manager.
 var (
 	// ErrNotFound is returned for an unknown quota name.
@@ -68,20 +71,86 @@ type liveQuota struct {
 	limiter *ratelimit.Limiter
 }
 
+// rlConfig is the persisted global quota config (the default quota).
+type rlConfig struct {
+	DefaultRate  float64 `json:"default_rate"`
+	DefaultBurst float64 `json:"default_burst"`
+}
+
 // Manager holds the rate-limit quotas and enforces them. Safe for concurrent use.
 type Manager struct {
 	store      Storage
 	onExceeded func(name string) // optional metrics hook
 
 	mu     sync.RWMutex
-	quotas map[string]*liveQuota // by name
+	quotas map[string]*liveQuota // named quotas, by name
 	loaded bool
+	// defaultLimiter is the global default quota applied to any path with no more
+	// specific named quota. Seeded from the -rate-limit flag at startup and, when
+	// present, overridden by the persisted config at unseal. nil disables it.
+	defaultLimiter *ratelimit.Limiter
+	defaultRate    float64
+	defaultBurst   float64
 }
 
 // New returns a manager over store. onExceeded, if non-nil, is called with the
-// quota name each time a request is denied (for metrics); it must not block.
+// quota name ("default" for the default quota) each time a request is denied
+// (for metrics); it must not block.
 func New(store Storage, onExceeded func(name string)) *Manager {
 	return &Manager{store: store, onExceeded: onExceeded, quotas: map[string]*liveQuota{}}
+}
+
+// SetDefaultLimiter installs l as the default (global) quota, applied when no
+// named quota matches. Used to seed the default from the -rate-limit flag at
+// startup; nil disables the default. Persisted config (loaded at unseal) takes
+// precedence over this.
+func (m *Manager) SetDefaultLimiter(l *ratelimit.Limiter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.defaultLimiter = l
+	if l != nil {
+		m.defaultRate, m.defaultBurst = l.Rate(), l.Burst()
+	} else {
+		m.defaultRate, m.defaultBurst = 0, 0
+	}
+}
+
+// setDefaultRate installs a default quota from rate/burst (burst defaults to
+// rate). rate <= 0 clears the default. Caller holds no lock.
+func (m *Manager) setDefaultRate(rate, burst float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rate <= 0 {
+		m.defaultLimiter, m.defaultRate, m.defaultBurst = nil, 0, 0
+		return
+	}
+	if burst <= 0 {
+		burst = rate
+	}
+	m.defaultLimiter = ratelimit.New(rate, burst)
+	m.defaultRate, m.defaultBurst = rate, burst
+}
+
+// DefaultConfig returns the current default quota's rate and burst (0, 0 when no
+// default is set).
+func (m *Manager) DefaultConfig() (rate, burst float64) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.defaultRate, m.defaultBurst
+}
+
+// SetConfig persists the global quota config and applies the default quota. A
+// non-positive rate clears the default.
+func (m *Manager) SetConfig(ctx context.Context, rate, burst float64) error {
+	blob, err := json.Marshal(rlConfig{DefaultRate: rate, DefaultBurst: burst})
+	if err != nil {
+		return fmt.Errorf("quota: encode config: %w", err)
+	}
+	if err := m.store.Put(ctx, &storage.Entry{Key: configKey, Value: blob}); err != nil {
+		return fmt.Errorf("quota: persist config: %w", err)
+	}
+	m.setDefaultRate(rate, burst)
+	return nil
 }
 
 // EnsureLoaded loads all persisted quotas into memory once. It is a no-op after a
@@ -122,6 +191,29 @@ func (m *Manager) EnsureLoaded(ctx context.Context) error {
 	}
 	m.quotas = loadedQuotas
 	m.loaded = true
+
+	// Load the persisted config's default quota, if any; it overrides a
+	// flag-seeded default. Done under the same lock via the fields directly.
+	cfgEntry, err := m.store.Get(ctx, configKey)
+	if err != nil {
+		return fmt.Errorf("quota: read config: %w", err)
+	}
+	if cfgEntry != nil {
+		var cfg rlConfig
+		if err := json.Unmarshal(cfgEntry.Value, &cfg); err != nil {
+			return fmt.Errorf("quota: decode config: %w", err)
+		}
+		if cfg.DefaultRate > 0 {
+			burst := cfg.DefaultBurst
+			if burst <= 0 {
+				burst = cfg.DefaultRate
+			}
+			m.defaultLimiter = ratelimit.New(cfg.DefaultRate, burst)
+			m.defaultRate, m.defaultBurst = cfg.DefaultRate, burst
+		} else {
+			m.defaultLimiter, m.defaultRate, m.defaultBurst = nil, 0, 0
+		}
+	}
 	return nil
 }
 
@@ -202,18 +294,30 @@ func (m *Manager) Allow(path, client string) (allowed bool, quota string) {
 			best, bestLen = q, len(q.spec.Path)
 		}
 	}
+	def := m.defaultLimiter
 	m.mu.RUnlock()
 
-	if best == nil {
-		return true, ""
+	// A named quota is the most specific match and governs the request alone.
+	if best != nil {
+		if best.limiter.Allow(client) {
+			return true, best.spec.Name
+		}
+		if m.onExceeded != nil {
+			m.onExceeded(best.spec.Name)
+		}
+		return false, best.spec.Name
 	}
-	if best.limiter.Allow(client) {
-		return true, best.spec.Name
+	// Otherwise fall back to the default (global) quota, when one is set.
+	if def != nil {
+		if def.Allow(client) {
+			return true, ""
+		}
+		if m.onExceeded != nil {
+			m.onExceeded("default")
+		}
+		return false, ""
 	}
-	if m.onExceeded != nil {
-		m.onExceeded(best.spec.Name)
-	}
-	return false, best.spec.Name
+	return true, ""
 }
 
 // pathMatches reports whether quotaPath is a prefix of reqPath. An empty

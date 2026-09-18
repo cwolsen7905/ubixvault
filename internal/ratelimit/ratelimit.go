@@ -40,6 +40,13 @@ func New(rate, burst float64) *Limiter {
 	}
 }
 
+// Rate returns the configured refill rate in tokens per second.
+func (l *Limiter) Rate() float64 { return l.rate }
+
+// Burst returns the configured burst ceiling (the most a single key may spend
+// at once).
+func (l *Limiter) Burst() float64 { return l.burst }
+
 // Allow reports whether a request for key may proceed, consuming one token when
 // it can.
 func (l *Limiter) Allow(key string) bool {

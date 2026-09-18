@@ -8,15 +8,18 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
-- **Resource quotas — rate-limit quotas (phase 1).** Path-scoped, API-managed
-  request-rate limits under `sys/quotas/rate-limit/:name` (LIST/GET/POST/DELETE),
-  Vault-compatible and root/ACL-gated. Each quota is a per-client token bucket over
-  a logical API path prefix (`""` = global); the most specific matching quota
-  (longest prefix) is enforced in the request middleware, returning `429` with
-  `Retry-After` when a client exceeds it. Quotas persist in the barrier and load at
-  unseal; they apply in addition to the existing global `-rate-limit` flag. First
-  slice of the Vault-Enterprise-parity work (design:
-  `docs/design/resource-quotas.md`, ADR D-020). Lease-count quotas and finer
+- **Resource quotas — rate-limit quotas.** Path-scoped, API-managed request-rate
+  limits under `sys/quotas/rate-limit/:name` (LIST/GET/POST/DELETE), Vault-compatible
+  and root/ACL-gated. Each quota is a per-client token bucket over a logical API
+  path prefix; the most specific matching quota (longest prefix) is enforced in the
+  request middleware, returning `429` + `Retry-After`. A **default (global) quota**
+  is configurable via `sys/quotas/config` (`default_rate`/`default_burst`) and the
+  existing `-rate-limit` flag now seeds it; the default applies to any path with no
+  named quota — even while sealed, so init/unseal can't be brute-forced — while
+  named quotas take effect after unseal. Denials increment
+  `ubixvault_quota_exceeded_total{quota}`. Quotas persist in the barrier and load
+  at unseal. First slice of the Vault-Enterprise-parity work (design:
+  `docs/design/resource-quotas.md`, ADR D-020); lease-count quotas and finer
   role/mount scope follow in later phases.
 
 ### Fixed
