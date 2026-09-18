@@ -26,6 +26,9 @@ const storePrefix = "sys/quotas/rate-limit/"
 // configKey is the barrier key for the global quota config (the default quota).
 const configKey = "sys/quotas/config"
 
+// leaseStorePrefix is the barrier key prefix for lease-count quota records.
+const leaseStorePrefix = "sys/quotas/lease-count/"
+
 // Errors returned by the manager.
 var (
 	// ErrNotFound is returned for an unknown quota name.
@@ -36,6 +39,8 @@ var (
 	ErrInvalidRate = errors.New("quota: rate must be greater than 0")
 	// ErrInvalidPath is returned for a path that is not a valid API path prefix.
 	ErrInvalidPath = errors.New("quota: invalid path prefix")
+	// ErrInvalidMax is returned when a lease-count quota's max is not positive.
+	ErrInvalidMax = errors.New("quota: max_leases must be greater than 0")
 )
 
 // Storage is the subset of the barrier the manager needs.
@@ -66,6 +71,15 @@ func (q RateLimitQuota) effectiveBurst() float64 {
 	return q.Rate
 }
 
+// LeaseCountQuota caps the number of active leases under a path prefix.
+type LeaseCountQuota struct {
+	Name string `json:"name"`
+	// Path is the API path prefix the quota applies to; "" matches every path.
+	Path string `json:"path"`
+	// MaxLeases is the maximum number of active leases allowed under Path.
+	MaxLeases int `json:"max_leases"`
+}
+
 type liveQuota struct {
 	spec    RateLimitQuota
 	limiter *ratelimit.Limiter
@@ -82,9 +96,10 @@ type Manager struct {
 	store      Storage
 	onExceeded func(name string) // optional metrics hook
 
-	mu     sync.RWMutex
-	quotas map[string]*liveQuota // named quotas, by name
-	loaded bool
+	mu          sync.RWMutex
+	quotas      map[string]*liveQuota       // named rate-limit quotas, by name
+	leaseQuotas map[string]*LeaseCountQuota // lease-count quotas, by name
+	loaded      bool
 	// defaultLimiter is the global default quota applied to any path with no more
 	// specific named quota. Seeded from the -rate-limit flag at startup and, when
 	// present, overridden by the persisted config at unseal. nil disables it.
@@ -97,7 +112,12 @@ type Manager struct {
 // quota name ("default" for the default quota) each time a request is denied
 // (for metrics); it must not block.
 func New(store Storage, onExceeded func(name string)) *Manager {
-	return &Manager{store: store, onExceeded: onExceeded, quotas: map[string]*liveQuota{}}
+	return &Manager{
+		store:       store,
+		onExceeded:  onExceeded,
+		quotas:      map[string]*liveQuota{},
+		leaseQuotas: map[string]*LeaseCountQuota{},
+	}
 }
 
 // SetDefaultLimiter installs l as the default (global) quota, applied when no
@@ -189,7 +209,29 @@ func (m *Manager) EnsureLoaded(ctx context.Context) error {
 		}
 		loadedQuotas[q.Name] = &liveQuota{spec: q, limiter: ratelimit.New(q.Rate, q.effectiveBurst())}
 	}
+	// Load lease-count quotas.
+	lcNames, err := m.store.List(ctx, leaseStorePrefix)
+	if err != nil {
+		return fmt.Errorf("quota: list lease-count: %w", err)
+	}
+	loadedLease := make(map[string]*LeaseCountQuota, len(lcNames))
+	for _, name := range lcNames {
+		entry, err := m.store.Get(ctx, leaseStorePrefix+name)
+		if err != nil {
+			return fmt.Errorf("quota: read lease-count %q: %w", name, err)
+		}
+		if entry == nil {
+			continue
+		}
+		var q LeaseCountQuota
+		if err := json.Unmarshal(entry.Value, &q); err != nil {
+			return fmt.Errorf("quota: decode lease-count %q: %w", name, err)
+		}
+		loadedLease[q.Name] = &q
+	}
+
 	m.quotas = loadedQuotas
+	m.leaseQuotas = loadedLease
 	m.loaded = true
 
 	// Load the persisted config's default quota, if any; it overrides a
@@ -276,6 +318,86 @@ func (m *Manager) List() []RateLimitQuota {
 		out = append(out, q.spec)
 	}
 	return out
+}
+
+// SetLeaseCount creates or replaces a lease-count quota (validate, persist,
+// update in memory).
+func (m *Manager) SetLeaseCount(ctx context.Context, q LeaseCountQuota) error {
+	if !validName(q.Name) {
+		return ErrInvalidName
+	}
+	if q.MaxLeases <= 0 {
+		return ErrInvalidMax
+	}
+	if !validPath(q.Path) {
+		return ErrInvalidPath
+	}
+	blob, err := json.Marshal(q)
+	if err != nil {
+		return fmt.Errorf("quota: encode lease-count: %w", err)
+	}
+	if err := m.store.Put(ctx, &storage.Entry{Key: leaseStorePrefix + q.Name, Value: blob}); err != nil {
+		return fmt.Errorf("quota: persist lease-count: %w", err)
+	}
+	m.mu.Lock()
+	m.leaseQuotas[q.Name] = &q
+	m.mu.Unlock()
+	return nil
+}
+
+// GetLeaseCount returns the named lease-count quota, or [ErrNotFound].
+func (m *Manager) GetLeaseCount(name string) (LeaseCountQuota, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	q, ok := m.leaseQuotas[name]
+	if !ok {
+		return LeaseCountQuota{}, ErrNotFound
+	}
+	return *q, nil
+}
+
+// DeleteLeaseCount removes the named lease-count quota. Absent is not an error.
+func (m *Manager) DeleteLeaseCount(ctx context.Context, name string) error {
+	if !validName(name) {
+		return ErrInvalidName
+	}
+	if err := m.store.Delete(ctx, leaseStorePrefix+name); err != nil {
+		return fmt.Errorf("quota: delete lease-count: %w", err)
+	}
+	m.mu.Lock()
+	delete(m.leaseQuotas, name)
+	m.mu.Unlock()
+	return nil
+}
+
+// ListLeaseCount returns all lease-count quota specs, unordered.
+func (m *Manager) ListLeaseCount() []LeaseCountQuota {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]LeaseCountQuota, 0, len(m.leaseQuotas))
+	for _, q := range m.leaseQuotas {
+		out = append(out, *q)
+	}
+	return out
+}
+
+// MatchLeaseCount returns the single most-specific lease-count quota (longest
+// path prefix) matching path, if any. The caller counts active leases under the
+// returned quota's Path and rejects a new lease when the count is at the max.
+func (m *Manager) MatchLeaseCount(path string) (LeaseCountQuota, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var best *LeaseCountQuota
+	bestLen := -1
+	for _, q := range m.leaseQuotas {
+		if pathMatches(q.Path, path) && len(q.Path) > bestLen {
+			best, bestLen = q, len(q.Path)
+		}
+	}
+	if best == nil {
+		return LeaseCountQuota{}, false
+	}
+	return *best, true
 }
 
 // Allow reports whether a request to path from client may proceed. It applies

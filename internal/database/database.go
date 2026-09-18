@@ -385,6 +385,27 @@ func (e *Engine) RevokeExpired(ctx context.Context) (int, error) {
 	return revoked, nil
 }
 
+// CountLeasesUnder returns the number of active leases whose issuing path
+// (database/creds/<role>) has pathPrefix as a prefix. It backs lease-count
+// quota enforcement; an empty prefix counts every lease in this engine.
+func (e *Engine) CountLeasesUnder(ctx context.Context, pathPrefix string) (int, error) {
+	ids, err := e.store.List(ctx, e.prefix+"/lease/")
+	if err != nil {
+		return 0, fmt.Errorf("database: list leases: %w", err)
+	}
+	n := 0
+	for _, id := range ids {
+		l, err := e.loadLease(ctx, id)
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(e.prefix+"/creds/"+l.Role, pathPrefix) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (e *Engine) saveLease(ctx context.Context, l lease) error {
 	blob, err := json.Marshal(l)
 	if err != nil {

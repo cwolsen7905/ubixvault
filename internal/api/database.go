@@ -95,6 +95,22 @@ func (h *Handler) dbDeleteRole(w http.ResponseWriter, r *http.Request) {
 // dbCredentials issues a fresh short-lived database credential for a role. The
 // lease is attributed to the requesting token so it can be revoked with it.
 func (h *Handler) dbCredentials(w http.ResponseWriter, r *http.Request) {
+	// Lease-count quota: refuse to issue a new lease when the matching quota is
+	// already at its cap. Checked before issuance so no credential is created.
+	_ = h.quotas.EnsureLoaded(r.Context())
+	if lq, ok := h.quotas.MatchLeaseCount(apiPath(r)); ok {
+		n, err := h.database.CountLeasesUnder(r.Context(), lq.Path)
+		if err != nil {
+			writeInternal(w, err)
+			return
+		}
+		if n >= lq.MaxLeases {
+			h.metrics.ObserveQuotaExceeded(lq.Name)
+			writeError(w, http.StatusTooManyRequests, "lease-count quota exceeded: "+lq.Name)
+			return
+		}
+	}
+
 	var createdBy string
 	if tok, ok := tokenFromContext(r.Context()); ok {
 		createdBy = tok.ID

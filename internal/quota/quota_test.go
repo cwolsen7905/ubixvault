@@ -178,3 +178,53 @@ func mustSet(t *testing.T, m *Manager, q RateLimitQuota) {
 		t.Fatalf("set %q: %v", q.Name, err)
 	}
 }
+
+func TestManager_LeaseCount_CRUDAndMatch(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+	m := New(store, nil)
+
+	if err := m.SetLeaseCount(ctx, LeaseCountQuota{Name: "db", Path: "database/", MaxLeases: 100}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := m.SetLeaseCount(ctx, LeaseCountQuota{Name: "role", Path: "database/creds/app", MaxLeases: 5}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got, err := m.GetLeaseCount("role"); err != nil || got.MaxLeases != 5 {
+		t.Fatalf("get role: %+v err=%v", got, err)
+	}
+	if l := m.ListLeaseCount(); len(l) != 2 {
+		t.Errorf("list len = %d, want 2", len(l))
+	}
+
+	// Longest-prefix match: creds/app path resolves to the role quota; another
+	// role path resolves to the mount-wide quota.
+	if q, ok := m.MatchLeaseCount("database/creds/app"); !ok || q.Name != "role" {
+		t.Errorf("match creds/app = %q ok=%v, want role", q.Name, ok)
+	}
+	if q, ok := m.MatchLeaseCount("database/creds/other"); !ok || q.Name != "db" {
+		t.Errorf("match creds/other = %q ok=%v, want db", q.Name, ok)
+	}
+	if _, ok := m.MatchLeaseCount("transit/keys"); ok {
+		t.Error("unrelated path should not match a database lease-count quota")
+	}
+
+	// Persistence: a fresh manager recovers them.
+	m2 := New(store, nil)
+	if err := m2.EnsureLoaded(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if l := m2.ListLeaseCount(); len(l) != 2 {
+		t.Errorf("reloaded list len = %d, want 2", len(l))
+	}
+
+	if err := m.SetLeaseCount(ctx, LeaseCountQuota{Name: "bad", Path: "database/", MaxLeases: 0}); err != ErrInvalidMax {
+		t.Errorf("zero max err = %v, want ErrInvalidMax", err)
+	}
+	if err := m.DeleteLeaseCount(ctx, "db"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := m.GetLeaseCount("db"); err != ErrNotFound {
+		t.Errorf("after delete err = %v, want ErrNotFound", err)
+	}
+}

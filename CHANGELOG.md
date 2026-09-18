@@ -8,19 +8,22 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
-- **Resource quotas — rate-limit quotas.** Path-scoped, API-managed request-rate
-  limits under `sys/quotas/rate-limit/:name` (LIST/GET/POST/DELETE), Vault-compatible
-  and root/ACL-gated. Each quota is a per-client token bucket over a logical API
-  path prefix; the most specific matching quota (longest prefix) is enforced in the
-  request middleware, returning `429` + `Retry-After`. A **default (global) quota**
-  is configurable via `sys/quotas/config` (`default_rate`/`default_burst`) and the
-  existing `-rate-limit` flag now seeds it; the default applies to any path with no
-  named quota — even while sealed, so init/unseal can't be brute-forced — while
-  named quotas take effect after unseal. Denials increment
-  `ubixvault_quota_exceeded_total{quota}`. Quotas persist in the barrier and load
-  at unseal. First slice of the Vault-Enterprise-parity work (design:
-  `docs/design/resource-quotas.md`, ADR D-020); lease-count quotas and finer
-  role/mount scope follow in later phases.
+- **Resource quotas** — the first Vault-Enterprise-parity feature (design:
+  `docs/design/resource-quotas.md`, ADR D-020). Vault-compatible, root/ACL-gated,
+  barrier-persisted, loaded at unseal.
+  - **Rate-limit quotas** (`sys/quotas/rate-limit/:name`, LIST/GET/POST/DELETE):
+    path-scoped per-client token buckets over a logical API path prefix; the most
+    specific matching quota (longest prefix) is enforced in the request middleware
+    with `429` + `Retry-After`. A **default (global) quota** is set via
+    `sys/quotas/config` (`default_rate`/`default_burst`) and the `-rate-limit` flag
+    now seeds it — the default applies to any path with no named quota, even while
+    sealed (so init/unseal can't be brute-forced), while named quotas take effect
+    after unseal.
+  - **Lease-count quotas** (`sys/quotas/lease-count/:name`): cap the number of
+    active leases under a path prefix; a new dynamic DB credential is refused with
+    `429` at the cap, before any credential is created.
+  - Denials increment `ubixvault_quota_exceeded_total{quota}`. Finer role/mount
+    scope is a later phase.
 
 ### Fixed
 
