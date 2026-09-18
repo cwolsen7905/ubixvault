@@ -233,8 +233,5 @@ func validName(name string) bool {
 // validPath allows an empty prefix (global) or any prefix without control
 // characters; it is a match prefix for request paths, not a storage key.
 func validPath(p string) bool {
-	if strings.ContainsAny(p, "\x00\n\r") {
-		return false
-	}
-	return true
+	return !strings.ContainsAny(p, "\x00\n\r")
 }
