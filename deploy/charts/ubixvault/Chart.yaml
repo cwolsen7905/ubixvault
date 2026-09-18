@@ -6,12 +6,12 @@ description: |
   sandbox / dev / internal use, not a production HA story.
 type: application
 # Chart version — bump on chart changes, independent of the app.
-version: 0.1.14
+version: 0.1.15
 # The uBix Vault release this chart targets. values.yaml image.tag defaults to
 # this when empty, so it must track the current release (a stale appVersion means
 # a plain `helm upgrade` deploys the wrong image).
 # NOTE: liveness/startup probes use GET /v1/sys/livez — requires >= 0.2.0-beta.10.
-appVersion: "1.0.0"
+appVersion: "1.1.0"
 kubeVersion: ">=1.24.0-0"
 home: https://github.com/cwolsen7905/ubixvault
 sources:
