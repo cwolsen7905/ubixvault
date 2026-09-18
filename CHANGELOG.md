@@ -6,6 +6,12 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-18
+
+First post-1.0 feature release: **resource quotas**, the first step toward
+HashiCorp Vault **Enterprise** feature parity. Additive and backward-compatible
+with the 1.0 API.
+
 ### Added
 
 - **Resource quotas** — the first Vault-Enterprise-parity feature (design:
@@ -219,6 +225,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0
 [1.0.0-rc.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.1
