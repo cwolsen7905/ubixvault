@@ -28,6 +28,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Path-scoped rate-limit quotas (in addition to the global limit above).
+	// Quotas live in the barrier, so they only apply once the vault is unsealed;
+	// EnsureLoaded is a cheap no-op after the first successful load.
+	if !publicEndpoint(r.URL.Path) && !h.core.Barrier().Sealed() {
+		_ = h.quotas.EnsureLoaded(r.Context())
+		if ok, name := h.quotas.Allow(apiPath(r), h.clientKey(r)); !ok {
+			rec.Header().Set("Retry-After", "1")
+			writeError(rec, http.StatusTooManyRequests, "rate-limit quota exceeded: "+name)
+			return
+		}
+	}
+
 	// Public endpoints (health, metrics, console) are not audited.
 	if h.audit == nil || publicEndpoint(r.URL.Path) {
 		h.mux.ServeHTTP(rec, r)
