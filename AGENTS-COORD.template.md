@@ -3,8 +3,7 @@
 > **This is the committed template.** The LIVE file is the **untracked**
 > `AGENTS-COORD.md` at the repo root — per-sandbox session state, never pushed.
 > Committing live coordination state causes cross-lane merge races and spliced log
-> entries (decision ported from `ubixcore`, which ported it from
-> `project-neptune`). On a fresh sandbox:
+> entries (decision ported from `ubixcore`). On a fresh sandbox:
 >
 > ```bash
 > cp AGENTS-COORD.template.md AGENTS-COORD.md
