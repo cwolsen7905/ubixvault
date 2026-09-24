@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "github.com/go-sql-driver/mysql" // registers the "mysql" driver
 
@@ -24,7 +25,18 @@ const mysqlTimeLayout = "2006-01-02 15:04:05"
 
 // Plugin is a database.Plugin backed by a MariaDB/MySQL connection.
 type Plugin struct {
+	mu sync.RWMutex // guards db, which Initialize and Close replace
 	db *sql.DB
+}
+
+// conn returns the current pool, or an error if the plugin is not initialized.
+func (p *Plugin) conn() (*sql.DB, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.db == nil {
+		return nil, fmt.Errorf("mariadb: not initialized")
+	}
+	return p.db, nil
 }
 
 // New returns an unconnected plugin. Call Initialize before use.
@@ -44,7 +56,13 @@ func (p *Plugin) Initialize(ctx context.Context, connectionURL string) error {
 		_ = db.Close()
 		return fmt.Errorf("mariadb: ping: %w", err)
 	}
+	p.mu.Lock()
+	old := p.db
 	p.db = db
+	p.mu.Unlock()
+	if old != nil {
+		_ = old.Close() // reconfigured: release the previous pool
+	}
 	return nil
 }
 
@@ -56,8 +74,9 @@ func (p *Plugin) Initialize(ctx context.Context, connectionURL string) error {
 // metacharacters — are substituted textually. This is inherent to the
 // database-secrets pattern and matches HashiCorp Vault.
 func (p *Plugin) CreateUser(ctx context.Context, req database.CreateUserRequest) error {
-	if p.db == nil {
-		return fmt.Errorf("mariadb: not initialized")
+	db, err := p.conn()
+	if err != nil {
+		return err
 	}
 	replacer := strings.NewReplacer(
 		"{{username}}", req.Username,
@@ -66,7 +85,7 @@ func (p *Plugin) CreateUser(ctx context.Context, req database.CreateUserRequest)
 		"{{expiration}}", req.Expiration.UTC().Format(mysqlTimeLayout),
 	)
 
-	tx, err := p.db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("mariadb: begin: %w", err)
 	}
@@ -91,10 +110,11 @@ func (p *Plugin) CreateUser(ctx context.Context, req database.CreateUserRequest)
 // credential stops working regardless of the host clause in the creation
 // statement.
 func (p *Plugin) RevokeUser(ctx context.Context, username string) error {
-	if p.db == nil {
-		return fmt.Errorf("mariadb: not initialized")
+	db, err := p.conn()
+	if err != nil {
+		return err
 	}
-	rows, err := p.db.QueryContext(ctx, "SELECT Host FROM mysql.user WHERE User = ?", username)
+	rows, err := db.QueryContext(ctx, "SELECT Host FROM mysql.user WHERE User = ?", username)
 	if err != nil {
 		return fmt.Errorf("mariadb: find user hosts: %w", err)
 	}
@@ -117,7 +137,7 @@ func (p *Plugin) RevokeUser(ctx context.Context, username string) error {
 		stmt := fmt.Sprintf("DROP USER IF EXISTS '%s'@'%s'",
 			strings.ReplaceAll(username, "'", "''"),
 			strings.ReplaceAll(host, "'", "''"))
-		if _, err := p.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("mariadb: drop user: %w", err)
 		}
 	}
@@ -126,8 +146,12 @@ func (p *Plugin) RevokeUser(ctx context.Context, username string) error {
 
 // Close closes the underlying connection pool.
 func (p *Plugin) Close() error {
-	if p.db == nil {
+	p.mu.Lock()
+	db := p.db
+	p.db = nil
+	p.mu.Unlock()
+	if db == nil {
 		return nil
 	}
-	return p.db.Close()
+	return db.Close()
 }

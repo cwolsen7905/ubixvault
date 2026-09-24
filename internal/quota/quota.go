@@ -106,6 +106,9 @@ type Manager struct {
 	defaultLimiter *ratelimit.Limiter
 	defaultRate    float64
 	defaultBurst   float64
+	// seedLimiter is the flag-seeded default, restored by Reset so a persisted
+	// config that has since been removed does not outlive a seal.
+	seedLimiter *ratelimit.Limiter
 }
 
 // New returns a manager over store. onExceeded, if non-nil, is called with the
@@ -127,6 +130,7 @@ func New(store Storage, onExceeded func(name string)) *Manager {
 func (m *Manager) SetDefaultLimiter(l *ratelimit.Limiter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.seedLimiter = l
 	m.defaultLimiter = l
 	if l != nil {
 		m.defaultRate, m.defaultBurst = l.Rate(), l.Burst()
@@ -171,6 +175,23 @@ func (m *Manager) SetConfig(ctx context.Context, rate, burst float64) error {
 	}
 	m.setDefaultRate(rate, burst)
 	return nil
+}
+
+// Reset drops everything loaded from the barrier and restores the flag-seeded
+// default, so the next [Manager.EnsureLoaded] reads storage afresh. Called when
+// the vault is sealed.
+func (m *Manager) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.quotas = map[string]*liveQuota{}
+	m.leaseQuotas = map[string]*LeaseCountQuota{}
+	m.loaded = false
+	m.defaultLimiter = m.seedLimiter
+	if m.seedLimiter != nil {
+		m.defaultRate, m.defaultBurst = m.seedLimiter.Rate(), m.seedLimiter.Burst()
+	} else {
+		m.defaultRate, m.defaultBurst = 0, 0
+	}
 }
 
 // EnsureLoaded loads all persisted quotas into memory once. It is a no-op after a

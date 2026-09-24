@@ -145,6 +145,17 @@ func (e *Engine) Configure(ctx context.Context, connectionURL string) error {
 	return nil
 }
 
+// Reset closes the plugin's connection and forgets it, so the next use
+// re-reads the stored config. Called when the vault is sealed.
+func (e *Engine) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ready {
+		_ = e.plugin.Close()
+		e.ready = false
+	}
+}
+
 // ensureReady initializes the plugin from the stored connection URL if it has
 // not been initialized in this process yet (e.g. after a restart). It returns
 // [ErrNotConfigured] if the engine was never configured.

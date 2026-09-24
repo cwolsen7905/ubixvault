@@ -155,6 +155,43 @@ func TestLoginViaJWKS(t *testing.T) {
 	}
 }
 
+// TestResetDropsJWKSCache: after Reset (a seal) the next login fetches the JWKS
+// again instead of trusting keys cached before the seal.
+func TestResetDropsJWKSCache(t *testing.T) {
+	ctx := context.Background()
+	m := newMethod(t)
+	priv, _ := genRSA(t)
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
+	jwks, _ := json.Marshal(map[string]any{"keys": []any{map[string]any{
+		"kty": "RSA", "kid": "k1", "alg": "RS256",
+		"n": b64(priv.N.Bytes()), "e": b64(eBytes),
+	}}})
+	fetches := 0
+	m.fetch = func(context.Context, string) ([]byte, error) { fetches++; return jwks, nil }
+	if err := m.Configure(ctx, Config{JWKSURL: "https://issuer.test/jwks", BoundIssuer: "https://issuer.test"}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if err := m.WriteRole(ctx, "web", Role{BoundAudiences: []string{"vault"}, Policies: []string{"p"}}); err != nil {
+		t.Fatalf("WriteRole: %v", err)
+	}
+
+	for range 2 {
+		if _, err := m.Login(ctx, "web", makeRS256(t, priv, stdClaims())); err != nil {
+			t.Fatalf("Login: %v", err)
+		}
+	}
+	if fetches != 1 {
+		t.Fatalf("fetches = %d after two logins, want 1 (cached)", fetches)
+	}
+	m.Reset()
+	if _, err := m.Login(ctx, "web", makeRS256(t, priv, stdClaims())); err != nil {
+		t.Fatalf("Login after Reset: %v", err)
+	}
+	if fetches != 2 {
+		t.Fatalf("fetches = %d after Reset, want 2", fetches)
+	}
+}
+
 func TestNotConfigured(t *testing.T) {
 	m := newMethod(t)
 	_ = m.WriteRole(context.Background(), "web", Role{Policies: []string{"p"}})

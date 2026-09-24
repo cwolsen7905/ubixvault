@@ -122,3 +122,62 @@ func TestNoAuditByDefault(t *testing.T) {
 		t.Fatalf("no-audit handler status = %d, want 200", rec.Code)
 	}
 }
+
+// TestAuditTokenHMACStableAcrossRestartAndSeal: the audit HMAC key lives in the
+// barrier, so the same token HMACs identically after a restart (or on another
+// replica over the same storage) and after a seal/unseal. While sealed there is
+// no key, and the token is omitted rather than HMAC'd under a throwaway key.
+func TestAuditTokenHMACStableAcrossRestartAndSeal(t *testing.T) {
+	ctx := context.Background()
+	mem := storage.NewMemoryBackend()
+	kek := make([]byte, 32)
+	kek[0] = 1
+
+	start := func() (*core.Core, *Handler, string) {
+		path := filepath.Join(t.TempDir(), "audit.log")
+		device, err := audit.NewFileDevice(path)
+		if err != nil {
+			t.Fatalf("NewFileDevice: %v", err)
+		}
+		c := core.New(mem, core.WithAutoUnsealKey(kek))
+		return c, NewHandler(c, WithAudit(audit.NewBroker(device))), path
+	}
+	lastHMAC := func(path string) any {
+		lines := auditLines(t, path)
+		return lines[len(lines)-1]["token_hmac"]
+	}
+
+	_, h1, path1 := start()
+	init := decode[initResponse](t, do(t, h1, "POST", "/v1/sys/init", `{}`))
+	doAuth(t, h1, "GET", "/v1/sys/policies/acl/default", "", init.RootToken)
+	first := lastHMAC(path1)
+	if first == nil || first == "" {
+		t.Fatal("no token_hmac on an unsealed request")
+	}
+
+	// Restart: a new process over the same storage.
+	c2, h2, path2 := start()
+	if err := c2.AutoUnseal(ctx); err != nil {
+		t.Fatalf("AutoUnseal: %v", err)
+	}
+	doAuth(t, h2, "GET", "/v1/sys/policies/acl/default", "", init.RootToken)
+	if got := lastHMAC(path2); got != first {
+		t.Fatalf("token_hmac after restart = %v, want %v", got, first)
+	}
+
+	// Sealed: the token is omitted.
+	doAuth(t, h2, "POST", "/v1/sys/seal", "", init.RootToken)
+	doAuth(t, h2, "GET", "/v1/sys/policies/acl/default", "", init.RootToken)
+	if got := lastHMAC(path2); got != nil {
+		t.Fatalf("token_hmac while sealed = %v, want none", got)
+	}
+
+	// Unsealed again: same HMAC as before.
+	if err := c2.AutoUnseal(ctx); err != nil {
+		t.Fatalf("AutoUnseal: %v", err)
+	}
+	doAuth(t, h2, "GET", "/v1/sys/policies/acl/default", "", init.RootToken)
+	if got := lastHMAC(path2); got != first {
+		t.Fatalf("token_hmac after seal/unseal = %v, want %v", got, first)
+	}
+}

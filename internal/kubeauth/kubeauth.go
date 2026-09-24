@@ -116,6 +116,14 @@ func (m *Method) Configure(ctx context.Context, cfg Config) error {
 	return nil
 }
 
+// Reset forgets the TokenReview client, so the next login rebuilds it from the
+// stored config. Called when the vault is sealed.
+func (m *Method) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reviewer = nil
+}
+
 // ensureReady rebuilds the reviewer from stored config if needed (e.g. restart).
 func (m *Method) ensureReady(ctx context.Context) error {
 	m.mu.Lock()

@@ -6,6 +6,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Audit token HMACs are stable across restarts.** The key used to HMAC client
+  tokens in the audit log was random per process, so the same token hashed
+  differently after every restart and activity could not be correlated across
+  them. The key is now generated once and kept in the barrier
+  (`sys/audit/hmac-key`), so one vault — and, once HA lands, every replica —
+  produces the same `token_hmac` for a token. Entries written while the vault is
+  sealed omit `token_hmac` (nothing authenticated can happen while sealed). HMACs
+  in logs written before this release will not match new ones.
+
 ### Fixed
 
 - **Auto-unseal retries instead of giving up.** The server tried auto-unseal once
@@ -16,6 +27,12 @@ All notable changes to uBix Vault are documented here. The format is based on
   `livez` answers and `health` reports sealed (503) while it waits. A
   configuration that can never auto-unseal (a Shamir vault started with an
   auto-unseal flag) is logged once as an error and not retried.
+- **Sealing drops cached state.** Loaded quotas, the database engine's connection
+  pool, the Kubernetes auth TokenReview client, and cached JWKS keys survived a
+  seal/unseal in the same process, so config changed in storage in between was
+  not picked up. They are now cleared on seal and reloaded on first use after
+  unseal. Reconfiguring the database engine also no longer leaks the previous
+  connection pool.
 
 ### Security
 

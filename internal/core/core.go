@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"io"
@@ -170,6 +171,7 @@ type Core struct {
 	progress    [][]byte      // unseal shares gathered so far (in-memory only)
 	rootAttempt *rootGen      // in-progress root regeneration, if any
 	rekey       *rekeyAttempt // in-progress rekey, if any
+	sealHooks   []func()      // run by Seal, outside mu
 }
 
 // Option configures a Core.
@@ -701,12 +703,28 @@ func (c *Core) RekeyStatus(ctx context.Context) (*RekeyStatus, error) {
 	}, nil
 }
 
-// Seal re-seals the barrier and discards any in-progress unseal shares.
+// Seal re-seals the barrier, discards any in-progress unseal shares, and then
+// runs the hooks registered with [Core.OnSeal].
 func (c *Core) Seal() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.barrier.Seal()
 	c.resetProgress()
+	hooks := slices.Clone(c.sealHooks)
+	c.mu.Unlock()
+
+	for _, fn := range hooks {
+		fn()
+	}
+}
+
+// OnSeal registers fn to run each time [Core.Seal] seals the vault, after the
+// barrier is sealed and outside the core's lock. Upper layers use it to drop
+// state they cached from the barrier, so the next unseal starts from what
+// storage holds then rather than from what this process saw before.
+func (c *Core) OnSeal(fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sealHooks = append(c.sealHooks, fn)
 }
 
 // Status returns the current seal status.

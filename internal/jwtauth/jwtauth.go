@@ -109,6 +109,15 @@ func (m *Method) Configure(ctx context.Context, cfg Config) error {
 	return nil
 }
 
+// Reset drops the cached JWKS keys and OIDC discovery result, so the next login
+// fetches them again. Called when the vault is sealed.
+func (m *Method) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.jwksURL, m.jwksCache = "", nil
+	m.discoveryURL, m.resolvedJWKSURL = "", ""
+}
+
 func (m *Method) config(ctx context.Context) (*Config, error) {
 	entry, err := m.store.Get(ctx, m.configKey())
 	if err != nil {

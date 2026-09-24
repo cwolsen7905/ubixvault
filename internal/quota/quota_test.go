@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
 
@@ -87,6 +88,45 @@ func TestManager_EnsureLoaded_Persists(t *testing.T) {
 	}
 	if got.Rate != 10 || got.Burst != 20 {
 		t.Errorf("loaded quota mismatch: %+v", got)
+	}
+}
+
+// TestManager_Reset: after Reset (a seal) the manager forgets what it loaded and
+// falls back to the flag-seeded default, so the next load reflects storage as it
+// is then — including quotas and config another writer has since removed.
+func TestManager_Reset(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore()
+	m := New(store, nil)
+	m.SetDefaultLimiter(ratelimit.New(5, 5)) // the -rate-limit flag
+	if err := m.Set(ctx, RateLimitQuota{Name: "api", Path: "secret/", Rate: 10}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := m.SetConfig(ctx, 50, 50); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	if err := m.EnsureLoaded(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// Another writer removes both.
+	store.m = map[string][]byte{}
+
+	m.Reset()
+	if rate, burst := m.DefaultConfig(); rate != 5 || burst != 5 {
+		t.Fatalf("default after Reset = %v/%v, want the flag-seeded 5/5", rate, burst)
+	}
+	if _, err := m.Get("api"); err != ErrNotFound {
+		t.Fatalf("Get after Reset = %v, want ErrNotFound", err)
+	}
+	if err := m.EnsureLoaded(ctx); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if _, err := m.Get("api"); err != ErrNotFound {
+		t.Fatalf("Get after reload = %v, want ErrNotFound (deleted in storage)", err)
+	}
+	if rate, _ := m.DefaultConfig(); rate != 5 {
+		t.Fatalf("default after reload = %v, want 5", rate)
 	}
 }
 

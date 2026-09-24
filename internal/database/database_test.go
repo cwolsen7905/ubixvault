@@ -12,6 +12,7 @@ import (
 // mockPlugin records the calls made to it, standing in for a real database.
 type mockPlugin struct {
 	initURL   string
+	closes    int
 	created   []CreateUserRequest
 	revoked   []string
 	createErr error
@@ -29,7 +30,7 @@ func (m *mockPlugin) RevokeUser(_ context.Context, username string) error {
 	m.revoked = append(m.revoked, username)
 	return nil
 }
-func (m *mockPlugin) Close() error { return nil }
+func (m *mockPlugin) Close() error { m.closes++; return nil }
 
 func newEngine(t *testing.T) (*Engine, *mockPlugin) {
 	t.Helper()
@@ -53,6 +54,47 @@ func configured(t *testing.T) (*Engine, *mockPlugin) {
 		t.Fatalf("WriteRole: %v", err)
 	}
 	return e, p
+}
+
+// TestResetReinitializesFromStorage: after Reset (a seal), the engine closes its
+// connection and, on next use, initializes from the config storage holds now —
+// not the one this process last saw, which another replica may have replaced.
+func TestResetReinitializesFromStorage(t *testing.T) {
+	ctx := context.Background()
+	mem := storage.NewMemoryBackend()
+	p := &mockPlugin{}
+	e := New(mem, "database", p)
+	if err := e.Configure(ctx, "mariadb://old"); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if err := e.WriteRole(ctx, "app", Role{
+		CreationStatements: []string{"CREATE USER '{{username}}';"}, DefaultTTL: time.Hour,
+	}); err != nil {
+		t.Fatalf("WriteRole: %v", err)
+	}
+
+	// Another writer replaces the config behind this engine's back.
+	other := New(mem, "database", &mockPlugin{})
+	if err := other.Configure(ctx, "mariadb://new"); err != nil {
+		t.Fatalf("other Configure: %v", err)
+	}
+
+	e.Reset()
+	if p.closes != 1 {
+		t.Fatalf("Reset closed the plugin %d times, want 1", p.closes)
+	}
+	if _, err := e.GenerateCredentials(ctx, "app", "test"); err != nil {
+		t.Fatalf("GenerateCredentials after Reset: %v", err)
+	}
+	if p.initURL != "mariadb://new" {
+		t.Fatalf("plugin re-initialized with %q, want the stored mariadb://new", p.initURL)
+	}
+
+	e.Reset()
+	e.Reset() // idempotent: nothing open to close the second time
+	if p.closes != 2 {
+		t.Fatalf("closes = %d after a second and third Reset, want 2", p.closes)
+	}
 }
 
 func TestConfigureInitializesPlugin(t *testing.T) {
