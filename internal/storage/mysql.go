@@ -17,7 +17,7 @@ import (
 const (
 	mysqlKVTable       = "ubixvault_kv"
 	mysqlSchemaTable   = "ubixvault_schema"
-	mysqlSchemaVersion = 2 // 2: adds the HA lock table (ADR D-021)
+	mysqlSchemaVersion = 2 // len(mysqlMigrations); see there for what each adds
 	// mysqlMaxKeyLen bounds a key to the VARBINARY(768) primary key. Keys are
 	// paths, so this is generous; longer keys are rejected rather than truncated.
 	mysqlMaxKeyLen = 768
@@ -63,14 +63,21 @@ func NewMySQLBackend(dsn string) (*MySQLBackend, error) {
 	return b, nil
 }
 
-func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
-	stmts := []string{
+// mysqlMigrations[i] takes the schema from version i to i+1. Every statement
+// must be idempotent (IF NOT EXISTS and the like): MySQL commits DDL
+// implicitly, so a process that dies partway through a migration leaves it
+// half-applied and unrecorded, and the next start runs it again from the top.
+// Append new versions here; never edit or reorder a released one.
+var mysqlMigrations = [][]string{
+	// 1: the key/value table and the schema-version table.
+	{
 		"CREATE TABLE IF NOT EXISTS " + mysqlKVTable + " (" +
 			"vault_key VARBINARY(768) NOT NULL, " +
 			"value LONGBLOB NOT NULL, " +
 			"PRIMARY KEY (vault_key)) ENGINE=InnoDB ROW_FORMAT=DYNAMIC",
-		"CREATE TABLE IF NOT EXISTS " + mysqlSchemaTable + " (" +
-			"version INT NOT NULL, PRIMARY KEY (version))",
+	},
+	// 2: the HA lock table (ADR D-021).
+	{
 		"CREATE TABLE IF NOT EXISTS " + mysqlLockTable + " (" +
 			"name VARBINARY(64) NOT NULL, " +
 			"holder_id VARBINARY(255) NOT NULL, " +
@@ -78,15 +85,64 @@ func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
 			"generation BIGINT UNSIGNED NOT NULL, " +
 			"expires_at DATETIME(6) NOT NULL, " +
 			"PRIMARY KEY (name)) ENGINE=InnoDB",
+	},
+}
+
+// mysqlSchemaLock is the MySQL named lock (GET_LOCK) that serializes
+// migrations, so replicas starting together cannot run them concurrently.
+const mysqlSchemaLock = "ubixvault_schema_migrate"
+
+// ErrSchemaTooNew is returned when the database was migrated by a newer uBix
+// Vault than this one: its schema may hold data this binary would misread or
+// clobber, so it refuses to start rather than guess.
+var ErrSchemaTooNew = errors.New("storage: database schema is newer than this uBix Vault supports")
+
+// ensureSchema brings the database to [mysqlSchemaVersion], applying each
+// missing migration in order and recording it, and refuses a database that is
+// already past it.
+func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
+	// GET_LOCK is held by a connection, so take one for the duration.
+	conn, err := b.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("storage: schema: %w", err)
 	}
-	for _, s := range stmts {
-		if _, err := b.db.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("storage: ensure schema: %w", err)
+	defer func() { _ = conn.Close() }()
+
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 60)", mysqlSchemaLock).Scan(&got); err != nil {
+		return fmt.Errorf("storage: schema lock: %w", err)
+	}
+	if !got.Valid || got.Int64 != 1 {
+		return fmt.Errorf("storage: schema lock: timed out waiting for another replica's migration")
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT RELEASE_LOCK(?)", mysqlSchemaLock)
+	}()
+
+	if _, err := conn.ExecContext(ctx,
+		"CREATE TABLE IF NOT EXISTS "+mysqlSchemaTable+" (version INT NOT NULL, PRIMARY KEY (version))"); err != nil {
+		return fmt.Errorf("storage: schema: %w", err)
+	}
+	var current int
+	if err := conn.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(version), 0) FROM "+mysqlSchemaTable).Scan(&current); err != nil {
+		return fmt.Errorf("storage: read schema version: %w", err)
+	}
+	if current > mysqlSchemaVersion {
+		return fmt.Errorf("%w: database is at version %d, this binary knows up to %d — "+
+			"upgrade uBix Vault, or restore a snapshot taken before the newer version first ran",
+			ErrSchemaTooNew, current, mysqlSchemaVersion)
+	}
+	for v := current + 1; v <= mysqlSchemaVersion; v++ {
+		for _, stmt := range mysqlMigrations[v-1] {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("storage: migrate schema to version %d: %w", v, err)
+			}
 		}
-	}
-	if _, err := b.db.ExecContext(ctx,
-		"INSERT IGNORE INTO "+mysqlSchemaTable+" (version) VALUES (?)", mysqlSchemaVersion); err != nil {
-		return fmt.Errorf("storage: record schema version: %w", err)
+		if _, err := conn.ExecContext(ctx,
+			"INSERT INTO "+mysqlSchemaTable+" (version) VALUES (?)", v); err != nil {
+			return fmt.Errorf("storage: record schema version %d: %w", v, err)
+		}
 	}
 	return nil
 }

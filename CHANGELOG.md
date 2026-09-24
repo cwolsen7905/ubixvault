@@ -17,10 +17,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Changed
 
-- **MySQL schema version 2.** At startup the MySQL backend now also creates an
-  `ubixvault_lock` table (used by HA). The database user therefore needs
-  `CREATE` on the schema at first start after upgrading, as it already did at
-  first install; nothing else changes for single-replica deployments.
+- **MySQL schema is versioned and checked at startup.** The MySQL backend used to
+  record a schema version it never read. It now applies numbered migrations in
+  order, recording each once, under a MySQL named lock so replicas starting
+  together cannot run them twice. It **refuses to start** against a database a
+  newer uBix Vault has already migrated past what it knows, naming both versions,
+  instead of running against a schema it may misread. Rolling back across a
+  schema change therefore means restoring a snapshot taken before the newer
+  version first ran.
+- **MySQL schema version 2** adds the `ubixvault_lock` table (used by HA),
+  created by the same startup step that already creates the tables, so existing
+  database grants cover it. Nothing else changes for single-replica deployments.
 
 - **Audit token HMACs are stable across restarts.** The key used to HMAC client
   tokens in the audit log was random per process, so the same token hashed
