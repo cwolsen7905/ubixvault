@@ -55,6 +55,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Fixed
 
+- **MySQL startup no longer queues replicas behind each other.** Every start
+  took the schema-migration lock and ran DDL, even against an up-to-date
+  schema, and the whole schema step shared the 10s connection-check timeout.
+  Replicas restarting together therefore waited on one another, and on a
+  database where DDL is slow the last one failed to start; a future migration
+  over a large table would have hit the same 10s limit. A start now reads the
+  schema version first and, when it is current, takes no lock and runs no DDL.
+  Only a start that must migrate takes the lock (waiting up to 10 minutes for
+  another replica's migration) and runs migrations under their own 30-minute
+  limit.
+
 - **Auto-unseal retries instead of giving up.** The server tried auto-unseal once
   at startup; if the KMS, transit vault, external seal command, or storage was
   briefly unreachable, it stayed sealed until restarted. It now retries in the

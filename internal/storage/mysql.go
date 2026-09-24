@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL/MariaDB driver (the project's sole dependency, D-010)
+	"github.com/go-sql-driver/mysql" // MySQL/MariaDB driver (D-010); importing it registers "mysql"
 )
 
 // MySQL/MariaDB backend schema. Values are opaque barrier ciphertext, so the
@@ -56,7 +56,8 @@ func NewMySQLBackend(dsn string) (*MySQLBackend, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("storage: connect mysql: %w", err)
 	}
-	if err := b.ensureSchema(ctx); err != nil {
+	// Not ctx: a migration may legitimately outlast a connection check.
+	if err := b.ensureSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -92,6 +93,19 @@ var mysqlMigrations = [][]string{
 // migrations, so replicas starting together cannot run them concurrently.
 const mysqlSchemaLock = "ubixvault_schema_migrate"
 
+// Schema-step time limits. Reading the version is quick; a migration is DDL,
+// which can take minutes on a large table, and a replica that finds another
+// one migrating waits for it rather than failing its own start.
+const (
+	mysqlSchemaReadTimeout = 10 * time.Second
+	mysqlSchemaLockWaitSec = 600 // GET_LOCK timeout, in seconds
+	mysqlMigrateTimeout    = 30 * time.Minute
+)
+
+// mysqlErrNoSuchTable is ER_NO_SUCH_TABLE: a database uBix Vault never started
+// against has no schema table yet.
+const mysqlErrNoSuchTable = 1146
+
 // ErrSchemaTooNew is returned when the database was migrated by a newer uBix
 // Vault than this one: its schema may hold data this binary would misread or
 // clobber, so it refuses to start rather than guess.
@@ -100,7 +114,25 @@ var ErrSchemaTooNew = errors.New("storage: database schema is newer than this uB
 // ensureSchema brings the database to [mysqlSchemaVersion], applying each
 // missing migration in order and recording it, and refuses a database that is
 // already past it.
+//
+// Every start reads the version first, without the migration lock and without
+// DDL: a database that is already current — every ordinary restart — needs
+// neither, so replicas restarting together do not queue behind one another.
+// Only when a migration is due does a replica take the lock, read the version
+// again under it (another replica may have just migrated), and migrate.
 func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
+	readCtx, cancel := context.WithTimeout(ctx, mysqlSchemaReadTimeout)
+	current, err := schemaVersion(readCtx, b.db)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if err := checkNotTooNew(current); err != nil || current == mysqlSchemaVersion {
+		return err
+	}
+
+	ctx, cancel = context.WithTimeout(ctx, mysqlMigrateTimeout)
+	defer cancel()
 	// GET_LOCK is held by a connection, so take one for the duration.
 	conn, err := b.db.Conn(ctx)
 	if err != nil {
@@ -109,7 +141,7 @@ func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
 	defer func() { _ = conn.Close() }()
 
 	var got sql.NullInt64
-	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 60)", mysqlSchemaLock).Scan(&got); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", mysqlSchemaLock, mysqlSchemaLockWaitSec).Scan(&got); err != nil {
 		return fmt.Errorf("storage: schema lock: %w", err)
 	}
 	if !got.Valid || got.Int64 != 1 {
@@ -123,15 +155,11 @@ func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
 		"CREATE TABLE IF NOT EXISTS "+mysqlSchemaTable+" (version INT NOT NULL, PRIMARY KEY (version))"); err != nil {
 		return fmt.Errorf("storage: schema: %w", err)
 	}
-	var current int
-	if err := conn.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(version), 0) FROM "+mysqlSchemaTable).Scan(&current); err != nil {
-		return fmt.Errorf("storage: read schema version: %w", err)
+	if current, err = schemaVersion(ctx, conn); err != nil {
+		return err
 	}
-	if current > mysqlSchemaVersion {
-		return fmt.Errorf("%w: database is at version %d, this binary knows up to %d — "+
-			"upgrade uBix Vault, or restore a snapshot taken before the newer version first ran",
-			ErrSchemaTooNew, current, mysqlSchemaVersion)
+	if err := checkNotTooNew(current); err != nil {
+		return err
 	}
 	for v := current + 1; v <= mysqlSchemaVersion; v++ {
 		for _, stmt := range mysqlMigrations[v-1] {
@@ -143,6 +171,32 @@ func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
 			"INSERT INTO "+mysqlSchemaTable+" (version) VALUES (?)", v); err != nil {
 			return fmt.Errorf("storage: record schema version %d: %w", v, err)
 		}
+	}
+	return nil
+}
+
+// schemaVersion reads the recorded schema version; 0 when the schema table does
+// not exist yet.
+func schemaVersion(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) (int, error) {
+	var v int
+	err := q.QueryRowContext(ctx, "SELECT COALESCE(MAX(version), 0) FROM "+mysqlSchemaTable).Scan(&v)
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) && myErr.Number == mysqlErrNoSuchTable {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("storage: read schema version: %w", err)
+	}
+	return v, nil
+}
+
+func checkNotTooNew(current int) error {
+	if current > mysqlSchemaVersion {
+		return fmt.Errorf("%w: database is at version %d, this binary knows up to %d — "+
+			"upgrade uBix Vault, or restore a snapshot taken before the newer version first ran",
+			ErrSchemaTooNew, current, mysqlSchemaVersion)
 	}
 	return nil
 }

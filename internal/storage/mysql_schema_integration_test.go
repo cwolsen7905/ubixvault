@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 )
@@ -176,6 +177,84 @@ func TestSchemaConcurrentStartsMigrateOnce(t *testing.T) {
 		if err != nil {
 			t.Fatalf("concurrent start: %v", err)
 		}
+	}
+	wantVersions(t, db)
+}
+
+// holdSchemaLock takes the migration lock on its own connection, as a replica
+// in the middle of a migration would, and returns a func releasing it.
+func holdSchemaLock(t *testing.T, db *sql.DB) func() {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	var got int
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 5)", mysqlSchemaLock).Scan(&got); err != nil || got != 1 {
+		t.Fatalf("GET_LOCK = %d, %v", got, err)
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			_, _ = conn.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", mysqlSchemaLock)
+			_ = conn.Close()
+		})
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// TestSchemaCurrentStartSkipsLock: an ordinary restart against a current
+// schema needs neither the migration lock nor DDL, so it is not held up by
+// another replica holding the lock.
+func TestSchemaCurrentStartSkipsLock(t *testing.T) {
+	dsn, db := freshDatabase(t)
+	b, err := NewMySQLBackend(dsn)
+	if err != nil {
+		t.Fatalf("first start: %v", err)
+	}
+	_ = b.Close()
+
+	holdSchemaLock(t, db)
+	start := time.Now()
+	b, err = NewMySQLBackend(dsn)
+	if err != nil {
+		t.Fatalf("restart while another replica holds the migration lock: %v", err)
+	}
+	_ = b.Close()
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("restart against a current schema took %v; it should not wait for the lock", took)
+	}
+}
+
+// TestSchemaMigrationWaitsForLockHolder: a replica that needs to migrate while
+// another holds the lock waits for it, then finds the work done or does it.
+func TestSchemaMigrationWaitsForLockHolder(t *testing.T) {
+	dsn, db := freshDatabase(t)
+	release := holdSchemaLock(t, db)
+
+	done := make(chan error, 1)
+	go func() {
+		b, err := NewMySQLBackend(dsn)
+		if err == nil {
+			_ = b.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("migrated while another replica held the lock (err %v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("start after the lock was released: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("start did not proceed after the lock was released")
 	}
 	wantVersions(t, db)
 }
