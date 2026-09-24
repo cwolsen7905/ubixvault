@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL/MariaDB driver (the project's sole dependency, D-010)
@@ -16,7 +17,7 @@ import (
 const (
 	mysqlKVTable       = "ubixvault_kv"
 	mysqlSchemaTable   = "ubixvault_schema"
-	mysqlSchemaVersion = 1
+	mysqlSchemaVersion = 2 // 2: adds the HA lock table (ADR D-021)
 	// mysqlMaxKeyLen bounds a key to the VARBINARY(768) primary key. Keys are
 	// paths, so this is generous; longer keys are rejected rather than truncated.
 	mysqlMaxKeyLen = 768
@@ -27,11 +28,14 @@ const (
 // byte-for-byte, matching the file and in-memory backends rather than MySQL's
 // case-insensitive default collation.
 //
-// Exactly one active vault process may write to a given database: barrier, lease,
-// and unseal state live in memory, so this provides durable, replaceable-node
-// storage, not multi-writer HA (ADR D-014).
+// Exactly one active vault process may write to a given database at a time.
+// Replicas sharing a database elect that writer with [MySQLBackend.HALock], and
+// once a replica has held the lock its writes are fenced to it (ADR D-021).
 type MySQLBackend struct {
 	db *sql.DB
+
+	fenceMu sync.RWMutex
+	fence   *fenceToken // nil until this replica first acquires an HA lock
 }
 
 // NewMySQLBackend opens a connection pool to the server described by dsn (a
@@ -67,6 +71,13 @@ func (b *MySQLBackend) ensureSchema(ctx context.Context) error {
 			"PRIMARY KEY (vault_key)) ENGINE=InnoDB ROW_FORMAT=DYNAMIC",
 		"CREATE TABLE IF NOT EXISTS " + mysqlSchemaTable + " (" +
 			"version INT NOT NULL, PRIMARY KEY (version))",
+		"CREATE TABLE IF NOT EXISTS " + mysqlLockTable + " (" +
+			"name VARBINARY(64) NOT NULL, " +
+			"holder_id VARBINARY(255) NOT NULL, " +
+			"advertise VARBINARY(1024) NOT NULL, " +
+			"generation BIGINT UNSIGNED NOT NULL, " +
+			"expires_at DATETIME(6) NOT NULL, " +
+			"PRIMARY KEY (name)) ENGINE=InnoDB",
 	}
 	for _, s := range stmts {
 		if _, err := b.db.ExecContext(ctx, s); err != nil {
@@ -115,7 +126,7 @@ func (b *MySQLBackend) Put(ctx context.Context, entry *Entry) error {
 	if err := b.checkKey(entry.Key); err != nil {
 		return err
 	}
-	_, err := b.db.ExecContext(ctx,
+	err := b.exec(ctx,
 		"INSERT INTO "+mysqlKVTable+" (vault_key, value) VALUES (?, ?) "+
 			"ON DUPLICATE KEY UPDATE value = VALUES(value)", []byte(entry.Key), entry.Value)
 	if err != nil {
@@ -129,7 +140,7 @@ func (b *MySQLBackend) Delete(ctx context.Context, key string) error {
 	if err := b.checkKey(key); err != nil {
 		return err
 	}
-	if _, err := b.db.ExecContext(ctx,
+	if err := b.exec(ctx,
 		"DELETE FROM "+mysqlKVTable+" WHERE vault_key = ?", []byte(key)); err != nil {
 		return fmt.Errorf("storage: mysql delete: %w", err)
 	}

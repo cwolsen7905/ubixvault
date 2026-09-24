@@ -117,11 +117,11 @@ A new table, created by `ensureSchema` alongside `ubixvault_kv` (schema version 
 
 ```sql
 CREATE TABLE IF NOT EXISTS ubixvault_lock (
-  name        VARCHAR(64)  NOT NULL PRIMARY KEY,
-  holder_id   VARCHAR(128) NOT NULL,
-  advertise   VARCHAR(512) NOT NULL,
-  generation  BIGINT UNSIGNED NOT NULL,
-  expires_at  DATETIME(6)  NOT NULL
+  name        VARBINARY(64)   NOT NULL PRIMARY KEY,
+  holder_id   VARBINARY(255)  NOT NULL,   -- '' when nobody holds it
+  advertise   VARBINARY(1024) NOT NULL,
+  generation  BIGINT UNSIGNED NOT NULL,   -- the fencing token
+  expires_at  DATETIME(6)     NOT NULL
 ) ENGINE=InnoDB;
 ```
 
@@ -138,7 +138,9 @@ CREATE TABLE IF NOT EXISTS ubixvault_lock (
   has *succeeded* within `ha_lock_ttl − margin` measured on the replica's monotonic
   clock, the replica steps down on its own without waiting for the database.
 - **Release:** on graceful shutdown (`SIGTERM`, i.e. every drain and rolling
-  upgrade), set `expires_at` to the past for our generation. A standby picks the lock
+  upgrade), clear `holder_id` and set `expires_at` to the past for our
+  generation. Clearing the holder is what fences the releasing replica's own
+  later writes, since the generation does not change until someone acquires. A standby picks the lock
   up on its next retry — the planned-maintenance handoff is **~one retry interval**,
   not a TTL.
 - **Fenced writes:** each `Put`/`Delete` from the active replica runs in a
@@ -262,7 +264,7 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
 
 0. This design note + ADR D-021.
 1. Prerequisites 1–4.
-2. `HABackend` + MySQL lock + fencing, with conformance tests and MySQL
+2. **Done (`feat/ha-lock`).** `HABackend` + MySQL lock + fencing, with conformance tests and MySQL
    integration tests that simulate a paused holder and a partition. No runtime
    change (nothing uses it yet).
 3. Core active/standby state machine, `becomeActive`/`stepDown`, sweeper gating,

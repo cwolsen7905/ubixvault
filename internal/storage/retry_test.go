@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -118,6 +119,24 @@ func TestPermanentErrorNotRetried(t *testing.T) {
 	}
 	if fb.calls != 1 {
 		t.Fatalf("attempts = %d, want 1 (no retry on a permanent error)", fb.calls)
+	}
+}
+
+// TestFencedWriteNotRetried: a fenced write means this replica lost the HA lock.
+// Retrying cannot fix that, and must not turn it into ErrUnavailable (a 503 that
+// reads as "storage is down") — the replica has to see ErrFenced and step down.
+func TestFencedWriteNotRetried(t *testing.T) {
+	ctx := context.Background()
+	fb := &flakyBackend{inner: NewMemoryBackend(), failN: 100,
+		err: fmt.Errorf("storage: mysql put: %w", ErrFenced)} // as MySQLBackend wraps it
+	r := fastRetry(fb)
+
+	err := r.Put(ctx, &Entry{Key: "k", Value: []byte("v")})
+	if !errors.Is(err, ErrFenced) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("fenced Put = %v, want ErrFenced unwrapped by retry", err)
+	}
+	if fb.calls != 1 {
+		t.Fatalf("attempts = %d, want 1 (no retry on a fenced write)", fb.calls)
 	}
 }
 
