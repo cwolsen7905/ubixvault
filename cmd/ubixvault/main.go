@@ -120,6 +120,8 @@ func runServer(args []string) error {
 		"HA lock lease; an unplanned failover takes up to this long")
 	haRetry := fs.Duration("ha-retry-interval", storage.DefaultLockRetryInterval,
 		"how often a standby tries for the HA lock; a planned handoff takes up to this long")
+	shutdownDelay := fs.Duration("shutdown-delay", 0,
+		"on SIGTERM, keep serving this long (after an HA step-down) before closing listeners, so a load balancer stops routing here first")
 	rateLimit := fs.Float64("rate-limit", 0, "per-client API requests/second (0 disables rate limiting)")
 	rateBurst := fs.Float64("rate-limit-burst", 0, "rate-limit burst size; defaults to -rate-limit when unset")
 	rateTrustFwd := fs.Bool("rate-limit-trust-forwarded", false,
@@ -393,6 +395,14 @@ func runServer(args []string) error {
 			case <-time.After(10 * time.Second):
 				log.Printf("WARNING: HA step-down timed out; a standby takes over when the lease expires")
 			}
+		}
+		// Keep answering (as a standby, forwarding) while load balancers notice
+		// this replica is going: Kubernetes removes a terminating pod from its
+		// Service asynchronously, and closing the listener at once would refuse
+		// connections still being routed here.
+		if *shutdownDelay > 0 {
+			log.Printf("draining: still serving for %s", *shutdownDelay)
+			time.Sleep(*shutdownDelay)
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
