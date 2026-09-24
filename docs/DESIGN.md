@@ -121,7 +121,7 @@ material in the log.
 
 **Security properties:**
 - **Token accessors, not tokens** — the log references a token by its accessor handle, so the audit trail never contains a usable credential.
-- **HMAC'd sensitive fields** — request/response values are HMAC'd with a per-device key, so identical inputs yield identical hashes; you can ask "was this value seen elsewhere?" without storing the value.
+- **HMAC'd sensitive fields** — request/response values are HMAC'd with a key kept in the barrier (one per vault, stable across restarts), so identical inputs yield identical hashes; you can ask "was this value seen elsewhere?" without storing the value.
 
 **Where entries go — pluggable devices (`AuditDevice` interface):**
 - **MVP: file device** — structured **JSON, one object per request and one per response**, appended to an operator-configured path (e.g. `/var/log/ubixvault/audit.log`).

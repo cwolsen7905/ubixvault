@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/approle"
@@ -67,6 +68,8 @@ type Handler struct {
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
+	auditKeyMu     sync.Mutex // guards auditKeySet
+	auditKeySet    bool       // the barrier's audit HMAC key is installed in audit
 	metrics        *metrics.Metrics
 	quotas         *quota.Manager // rate-limit quotas incl. the default (always non-nil)
 	trustForwarded bool           // key rate limits by X-Forwarded-For
@@ -132,6 +135,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// Route auth-method logins through the identity resolver so their tokens carry
 	// an entity (auto-created on first login) and pick up the entity's policies.
 	c.Tokens().SetAliaser(h.identity)
+	// Drop everything cached from the barrier when the vault is sealed, so the
+	// next unseal starts from what storage holds then.
+	c.OnSeal(h.resetBarrierCaches)
 
 	mux := http.NewServeMux()
 
@@ -455,8 +461,7 @@ func (h *Handler) unseal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) seal(w http.ResponseWriter, _ *http.Request) {
-	// NOTE: sealing is unauthenticated until the token/ACL layer lands; it must
-	// require sudo before this is exposed beyond a trusted network.
+	// Routed through authenticate: needs a token whose policy grants sys/seal.
 	h.core.Seal()
 	w.WriteHeader(http.StatusNoContent)
 }

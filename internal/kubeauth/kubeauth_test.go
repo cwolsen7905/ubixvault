@@ -63,6 +63,35 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+// TestResetRebuildsReviewer: after Reset (a seal) the next login builds the
+// TokenReview client again from the stored config.
+func TestResetRebuildsReviewer(t *testing.T) {
+	ctx := context.Background()
+	rev := &mockReviewer{result: &ReviewResult{Authenticated: true, Namespace: "ns", ServiceAccount: "sa"}}
+	m := configuredMethod(t, rev)
+	builds := 0
+	m.newReviewer = func(Config) (TokenReviewer, error) { builds++; return rev, nil }
+	if err := m.WriteRole(ctx, "app", Role{
+		BoundServiceAccountNamespaces: []string{"ns"}, BoundServiceAccountNames: []string{"sa"},
+	}); err != nil {
+		t.Fatalf("WriteRole: %v", err)
+	}
+
+	if _, err := m.Login(ctx, "app", "jwt"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if builds != 0 {
+		t.Fatalf("reviewer rebuilt %d times before Reset, want 0 (cached from Configure)", builds)
+	}
+	m.Reset()
+	if _, err := m.Login(ctx, "app", "jwt"); err != nil {
+		t.Fatalf("Login after Reset: %v", err)
+	}
+	if builds != 1 {
+		t.Fatalf("reviewer built %d times after Reset, want 1", builds)
+	}
+}
+
 func TestLoginWrongNamespaceOrName(t *testing.T) {
 	ctx := context.Background()
 	m := configuredMethod(t, &mockReviewer{result: &ReviewResult{Authenticated: true, Namespace: "team-b", ServiceAccount: "app-sa"}})

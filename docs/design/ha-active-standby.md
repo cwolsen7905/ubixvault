@@ -50,7 +50,7 @@ The state that *is* held in memory, and what HA must do about each:
 | DB plugin connection pool | `database.Engine.ready`, `mariadb.Plugin.db` | Never re-read once ready. **Reset (and close the old pool) on becoming active.** |
 | TokenReview client | `kubeauth.Method.reviewer` | Never re-read once set. **Reset on becoming active.** |
 | JWKS / OIDC discovery cache | `jwtauth.Method` | Keyed by URL, refetches on failure. **Reset on becoming active** for simplicity. |
-| Audit HMAC key | `audit.FileDevice.hmacKey` | Random per process today, so HMACs of the same token differ across replicas and restarts. **Persist it in the barrier** (prerequisite; see below). |
+| Audit HMAC key | `audit.FileDevice.hmacKey` | Was random per process; now kept in the barrier and loaded after unseal, so every replica HMACs a token the same way (prerequisite 4, done). |
 | Per-client rate buckets, metrics | `ratelimit`, `metrics` | Per-node by design. Nothing to do. |
 
 None of these four caches is reset on **seal** today either, which is a latent bug
@@ -248,13 +248,13 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
    (`internal/wrapping/wrapping.go:109-127`); two concurrent unwraps of the same
    token can both return the payload. Serialize it in-process (a mutex, or a
    delete-that-reports-existence on the backend). Security fix, separate `fix/` MR.
-2. **Done (`fix/auto-unseal-retry`).** **Auto-unseal is a single attempt at startup** (`cmd/ubixvault/main.go:175-184`).
+2. **Done (MR !12).** **Auto-unseal is a single attempt at startup** (`cmd/ubixvault/main.go:175-184`).
    If the KMS or storage is briefly unreachable, the process stays sealed until
    restarted. A standby that silently stays sealed is no standby. Retry with
    backoff (consistent with D-019).
-3. **Reset caches on seal** (the four above), so a seal/unseal cycle in one process
+3. **Done (`fix/seal-reset-audit-hmac`).** **Reset caches on seal** (the four above), so a seal/unseal cycle in one process
    does not keep stale config. HA reuses the same hook.
-4. **Persist the audit HMAC key** in the barrier, so a token's HMAC is the same on
+4. **Done (`fix/seal-reset-audit-hmac`).** **Persist the audit HMAC key** in the barrier, so a token's HMAC is the same on
    every replica and across restarts — otherwise audit logs cannot be correlated
    after a failover.
 

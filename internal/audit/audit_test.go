@@ -72,6 +72,7 @@ func TestTokenNeverWrittenInClear(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	d, _ := NewFileDevice(path)
 	b := NewBroker(d)
+	b.SetHMACKey([]byte("0123456789abcdef0123456789abcdef"))
 
 	const token = "uv.super-secret-token-value"
 	_ = b.LogRequest(ctx, &Entry{Operation: "read", Path: "p", ClientToken: token})
@@ -83,6 +84,51 @@ func TestTokenNeverWrittenInClear(t *testing.T) {
 	line := readLines(t, path)[0]
 	if line["token_hmac"] == "" || line["token_hmac"] == nil {
 		t.Fatalf("expected a token_hmac, got %v", line)
+	}
+}
+
+// TestTokenOmittedWithoutKey: before the vault supplies its HMAC key (i.e. while
+// sealed) a token is left out entirely — never written raw, never HMAC'd under
+// a throwaway key that could not be correlated later.
+func TestTokenOmittedWithoutKey(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "audit.log")
+	d, _ := NewFileDevice(path)
+	b := NewBroker(d)
+
+	const token = "uv.super-secret-token-value"
+	_ = b.LogRequest(ctx, &Entry{Operation: "read", Path: "p", ClientToken: token})
+	b.SetHMACKey([]byte("k"))
+	b.SetHMACKey(nil) // cleared again, as on seal
+	_ = b.LogRequest(ctx, &Entry{Operation: "read", Path: "p", ClientToken: token})
+
+	raw, _ := os.ReadFile(path) //nolint:gosec // G304: test path from t.TempDir()
+	if strings.Contains(string(raw), token) {
+		t.Fatal("raw token leaked into the audit log")
+	}
+	for _, line := range readLines(t, path) {
+		if line["token_hmac"] != nil {
+			t.Fatalf("token_hmac written without a key: %v", line)
+		}
+	}
+}
+
+// TestSameKeySameHMAC: two devices given the same key — two replicas, or one
+// process before and after a restart — HMAC a token identically.
+func TestSameKeySameHMAC(t *testing.T) {
+	ctx := context.Background()
+	key := []byte("0123456789abcdef0123456789abcdef")
+	var hmacs []any
+	for range 2 {
+		path := filepath.Join(t.TempDir(), "audit.log")
+		d, _ := NewFileDevice(path)
+		b := NewBroker(d)
+		b.SetHMACKey(key)
+		_ = b.LogRequest(ctx, &Entry{Operation: "read", Path: "p", ClientToken: "uv.t"})
+		hmacs = append(hmacs, readLines(t, path)[0]["token_hmac"])
+	}
+	if hmacs[0] == nil || hmacs[0] != hmacs[1] {
+		t.Fatalf("token_hmac differs across devices with the same key: %v", hmacs)
 	}
 }
 

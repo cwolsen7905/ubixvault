@@ -1,12 +1,21 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 
 	"github.com/cwolsen7905/ubixvault/internal/audit"
+	"github.com/cwolsen7905/ubixvault/internal/storage"
 )
+
+// auditHMACKeyPath is where the audit token-HMAC key lives in the barrier. One
+// key per vault, not per process, so a token HMACs the same on every replica and
+// across restarts.
+const auditHMACKeyPath = "sys/audit/hmac-key"
 
 // ServeHTTP dispatches to the configured routes. When audit logging is enabled it
 // records a request entry before handling and a response entry after. Request
@@ -52,6 +61,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RemoteAddr:  r.RemoteAddr,
 	}
 
+	// Once unsealed, entries must carry the vault's token HMAC; if it cannot be
+	// loaded the request is refused, like any other audit failure.
+	if !h.core.Barrier().Sealed() {
+		if err := h.ensureAuditKey(r.Context()); err != nil {
+			writeError(rec, http.StatusInternalServerError, "audit logging failed")
+			return
+		}
+	}
+
 	req := base
 	if err := h.audit.LogRequest(r.Context(), &req); err != nil {
 		writeError(rec, http.StatusInternalServerError, "audit logging failed")
@@ -65,6 +83,55 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The request has already been served; a response-audit failure cannot unwind
 	// it, so it is best-effort (the fail-closed guarantee is on the request).
 	_ = h.audit.LogResponse(r.Context(), &resp)
+}
+
+// ensureAuditKey installs the barrier's audit HMAC key in the audit broker,
+// creating the key on first use. It is a no-op once installed, until a seal
+// clears it (resetBarrierCaches).
+func (h *Handler) ensureAuditKey(ctx context.Context) error {
+	h.auditKeyMu.Lock()
+	defer h.auditKeyMu.Unlock()
+	if h.auditKeySet {
+		return nil
+	}
+	b := h.core.Barrier()
+	entry, err := b.Get(ctx, auditHMACKeyPath)
+	if err != nil {
+		return fmt.Errorf("audit: read hmac key: %w", err)
+	}
+	var key []byte
+	if entry != nil {
+		key = entry.Value
+	} else {
+		key = make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return fmt.Errorf("audit: generate hmac key: %w", err)
+		}
+		if err := b.Put(ctx, &storage.Entry{Key: auditHMACKeyPath, Value: key}); err != nil {
+			return fmt.Errorf("audit: persist hmac key: %w", err)
+		}
+	}
+	h.audit.SetHMACKey(key)
+	h.auditKeySet = true
+	return nil
+}
+
+// resetBarrierCaches drops state cached from the barrier: loaded quotas, the
+// database plugin's connection, the Kubernetes TokenReview client, cached JWKS,
+// and the audit HMAC key. Registered with core.OnSeal; the HA step-down path
+// will call it too (docs/design/ha-active-standby.md). Each is reloaded lazily
+// on first use after the next unseal.
+func (h *Handler) resetBarrierCaches() {
+	h.quotas.Reset()
+	h.database.Reset()
+	h.kubernetes.Reset()
+	h.jwtauth.Reset()
+	if h.audit != nil {
+		h.auditKeyMu.Lock()
+		h.audit.SetHMACKey(nil)
+		h.auditKeySet = false
+		h.auditKeyMu.Unlock()
+	}
 }
 
 // publicEndpoint reports whether a path is an unauthenticated, non-sensitive
