@@ -6,6 +6,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-unseal retries instead of giving up.** The server tried auto-unseal once
+  at startup; if the KMS, transit vault, external seal command, or storage was
+  briefly unreachable, it stayed sealed until restarted. It now retries in the
+  background with backoff (1s doubling to 1m), logging each failure, and unseals
+  as soon as the dependency is back. The API starts listening immediately, so
+  `livez` answers and `health` reports sealed (503) while it waits. A
+  configuration that can never auto-unseal (a Shamir vault started with an
+  auto-unseal flag) is logged once as an error and not retried.
+
 ### Security
 
 - **Response-wrapping tokens are single-use under concurrency.** Two or more
