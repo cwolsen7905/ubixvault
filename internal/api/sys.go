@@ -68,8 +68,9 @@ type Handler struct {
 	tokens         *token.Store
 	policies       *policy.Store
 	audit          *audit.Broker
-	auditKeyMu     sync.Mutex // guards auditKeySet
-	auditKeySet    bool       // the barrier's audit HMAC key is installed in audit
+	forward        http.Handler // HA: carries a standby's requests to the active replica
+	auditKeyMu     sync.Mutex   // guards auditKeySet
+	auditKeySet    bool         // the barrier's audit HMAC key is installed in audit
 	metrics        *metrics.Metrics
 	quotas         *quota.Manager // rate-limit quotas incl. the default (always non-nil)
 	trustForwarded bool           // key rate limits by X-Forwarded-For
@@ -84,6 +85,13 @@ type Option func(*Handler)
 // WithAudit enables audit logging through the given broker.
 func WithAudit(b *audit.Broker) Option {
 	return func(h *Handler) { h.audit = b }
+}
+
+// WithForwarder has an HA standby hand requests it does not serve itself to f,
+// which carries them to the active replica (cluster.Forwarder). Without one a
+// standby answers them 503.
+func WithForwarder(f http.Handler) Option {
+	return func(h *Handler) { h.forward = f }
 }
 
 // WithVersion sets the build version reported by the health endpoint.
@@ -157,6 +165,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("POST /v1/sys/init", h.initialize)
 	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
 	mux.HandleFunc("POST /v1/sys/seal", h.authenticate(h.seal))
+	mux.HandleFunc("GET /v1/sys/leader", h.leader)
+	mux.HandleFunc("PUT /v1/sys/step-down", h.authenticate(h.stepDown))
+	mux.HandleFunc("POST /v1/sys/step-down", h.authenticate(h.stepDown))
 
 	// Root-token regeneration (recovery). Unauthenticated — authority is proven
 	// by supplying a quorum of unseal shares, since the root token is lost.

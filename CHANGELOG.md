@@ -11,13 +11,25 @@ All notable changes to uBix Vault are documented here. The format is based on
 - **Active/standby HA in the server (`-ha`), not yet in the Helm chart.** With
   `-storage mysql -ha`, every replica unseals and the one holding the HA lock is
   active; the rest are standbys. A standby takes over within `-ha-retry-interval`
-  (default 2s) when the active replica shuts down — every drain and rolling
-  restart — and within `-ha-lock-ttl` (default 15s) when it dies. Standbys
-  answer health, seal-status, unseal, seal and init themselves and return `503`
-  for everything else until request forwarding lands in the next release slice.
-  The lease sweeper runs only on the active replica, and two replicas cannot
-  initialize the same database. New flags: `-ha`, `-ha-advertise-addr`,
-  `-ha-lock-ttl`, `-ha-retry-interval` (ADR D-021).
+  (default 500ms) when the active replica shuts down — every drain and rolling
+  restart — and within `-ha-lock-ttl` (default 15s) when it dies. The lease
+  sweeper runs only on the active replica, and two replicas cannot initialize
+  the same database. New flags: `-ha`, `-ha-advertise-addr`, `-ha-lock-ttl`,
+  `-ha-retry-interval` (ADR D-021).
+- **Standbys forward to the active replica**, so clients can use any replica
+  (e.g. through one Kubernetes Service). Replicas talk over a dedicated cluster
+  listener (`-ha-cluster-listen`, default port 8201; `-ha-cluster-addr`) secured
+  with mutual TLS from a CA the vault keeps in its own barrier — no operator
+  certificates involved, and only replicas that unsealed the same vault can
+  connect. The active replica audits and rate-limits forwarded requests under
+  the original client's address. During a handoff a standby holds requests
+  until a replica is active (up to 5s) instead of failing them, and re-sends a
+  request without a body if the leader it reached had just gone. Standbys still
+  answer health, seal-status, unseal, seal, init and `sys/leader` themselves.
+- **`sys/leader`** (unauthenticated) and **`sys/step-down`** (authenticated),
+  Vault-compatible. A replica that steps down stays out of the election for 10s
+  so another takes over — unless none does, in which case it takes the lock back
+  rather than leave the vault with no active replica.
 - **`sys/health` takes Vault's query parameters**: `standbyok`, `activecode`,
   `standbycode` (default `429`), `sealedcode`, `uninitcode`; `perfstandbyok` is
   accepted and ignored. The body gains `standby`. Without parameters, a single

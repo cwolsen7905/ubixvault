@@ -34,6 +34,7 @@ func haCluster(t *testing.T, n int, opts ...Option) (*storagetest.HAGroup, []*ha
 		r := &haReplica{id: fmt.Sprintf("r%d", i), done: make(chan struct{})}
 		r.core = New(phys, append([]Option{WithHA(HAConfig{
 			Backend: phys, HolderID: r.id, Advertise: "https://" + r.id + ":8200",
+			Lock: storage.LockOptions{RetryInterval: 20 * time.Millisecond},
 		})}, opts...)...)
 		r.core.OnActive(func() { r.actives.Add(1) })
 		r.core.OnStandby(func() { r.standbys.Add(1) })
@@ -100,9 +101,11 @@ func TestHAExactlyOneActive(t *testing.T) {
 	if group.Holder() != active.id {
 		t.Fatalf("lock holder = %q, active replica = %q", group.Holder(), active.id)
 	}
-	h, err := rs[1].core.Leader(context.Background())
-	if err != nil || h.ID != active.id || h.Advertise != "https://"+active.id+":8200" {
-		t.Fatalf("Leader = %+v, %v; want %s", h, err, active.id)
+	for _, r := range rs {
+		h, err := r.core.Leader(context.Background())
+		if err != nil || h.HolderID != active.id || h.APIAddr != "https://"+active.id+":8200" || h.IsSelf != (r == active) {
+			t.Fatalf("Leader seen from %s = %+v, %v; want %s (self: %v)", r.id, h, err, active.id, r == active)
+		}
 	}
 	// Stays that way: no flapping.
 	time.Sleep(50 * time.Millisecond)
@@ -212,5 +215,87 @@ func TestActiveWithoutHA(t *testing.T) {
 	}
 	if err := c.RunHA(context.Background(), nil); !errors.Is(err, ErrHANotConfigured) {
 		t.Fatalf("RunHA without HA = %v, want ErrHANotConfigured", err)
+	}
+}
+
+func TestHAStepDownHandsOverAndHoldsOff(t *testing.T) {
+	_, rs := haCluster(t, 2, WithAutoUnsealKey(newKEK(t)))
+	initAndUnsealAll(t, rs)
+	eventually(t, "one active replica", func() bool { return len(activeReplicas(rs)) == 1 })
+	old := activeReplicas(rs)[0]
+	var other *haReplica
+	for _, r := range rs {
+		if r != old {
+			other = r
+		}
+	}
+	if err := other.core.StepDown(); !errors.Is(err, ErrNotActive) {
+		t.Fatalf("StepDown on a standby = %v, want ErrNotActive", err)
+	}
+	if err := old.core.StepDown(); err != nil {
+		t.Fatalf("StepDown: %v", err)
+	}
+	// The stepped-down replica holds off, so the other one — not it — wins.
+	eventually(t, "the other replica to take over", func() bool { return other.core.Active() })
+	if old.core.Active() {
+		t.Fatal("stepped-down replica won the lock straight back")
+	}
+	// Both have now stepped down. Holding off must not leave the vault without
+	// an active replica: once the lock sits free, one of them takes it.
+	if err := other.core.StepDown(); err != nil {
+		t.Fatalf("second StepDown: %v", err)
+	}
+	eventually(t, "an active replica despite both holding off", func() bool { return len(activeReplicas(rs)) == 1 })
+}
+
+func TestHALeaderReportsClusterAddrAndSelf(t *testing.T) {
+	group := storagetest.NewHAGroup(storage.NewMemoryBackend())
+	phys := group.Replica()
+	c := New(phys, WithAutoUnsealKey(newKEK(t)), WithHA(HAConfig{
+		Backend: phys, HolderID: "solo", Advertise: "https://solo:8200", ClusterAddr: "https://solo:8201",
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = c.RunHA(ctx, func(string, ...any) {}) }()
+	t.Cleanup(func() { cancel(); <-done })
+	if _, err := c.Initialize(context.Background(), InitConfig{}); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	eventually(t, "active", c.Active)
+	info, err := c.Leader(context.Background())
+	if err != nil || !info.IsSelf || info.APIAddr != "https://solo:8200" || info.ClusterAddr != "https://solo:8201" {
+		t.Fatalf("Leader = %+v, %v", info, err)
+	}
+	if c.ActiveSince().IsZero() {
+		t.Fatal("ActiveSince is zero on the active replica")
+	}
+}
+
+// TestHAHoldOffEndsWhenNobodyElseIsActive: a replica holding off after a
+// step-down must not leave the vault without an active replica — if the one
+// that took over goes away, it takes the lock back without waiting out the
+// hold-off.
+func TestHAHoldOffEndsWhenNobodyElseIsActive(t *testing.T) {
+	_, rs := haCluster(t, 2, WithAutoUnsealKey(newKEK(t)))
+	initAndUnsealAll(t, rs)
+	eventually(t, "one active replica", func() bool { return len(activeReplicas(rs)) == 1 })
+	old := activeReplicas(rs)[0]
+	var other *haReplica
+	for _, r := range rs {
+		if r != old {
+			other = r
+		}
+	}
+	if err := old.core.StepDown(); err != nil {
+		t.Fatalf("StepDown: %v", err)
+	}
+	eventually(t, "the other replica to take over", func() bool { return other.core.Active() })
+
+	start := time.Now()
+	other.stop() // the new active shuts down during old's 10s hold-off
+	<-other.done
+	eventually(t, "the held-off replica to take over", func() bool { return old.core.Active() })
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("took %v to recover; the hold-off should end once the lock stays free", took)
 	}
 }

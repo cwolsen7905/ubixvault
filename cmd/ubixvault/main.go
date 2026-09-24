@@ -26,6 +26,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/api"
 	"github.com/cwolsen7905/ubixvault/internal/audit"
 	"github.com/cwolsen7905/ubixvault/internal/client"
+	"github.com/cwolsen7905/ubixvault/internal/cluster"
 	"github.com/cwolsen7905/ubixvault/internal/core"
 	"github.com/cwolsen7905/ubixvault/internal/ratelimit"
 	"github.com/cwolsen7905/ubixvault/internal/seal"
@@ -111,6 +112,10 @@ func runServer(args []string) error {
 		"active/standby HA over -storage mysql: replicas sharing the database elect one active (or $UBIXVAULT_HA)")
 	haAdvertise := fs.String("ha-advertise-addr", os.Getenv("UBIXVAULT_HA_ADVERTISE_ADDR"),
 		"URL other replicas reach this one on (default: scheme://$POD_IP-or-hostname:listen-port)")
+	haClusterListen := fs.String("ha-cluster-listen", "",
+		"address for the replica-to-replica cluster listener (mutual TLS; default: -listen's host, port 8201)")
+	haClusterAddr := fs.String("ha-cluster-addr", os.Getenv("UBIXVAULT_HA_CLUSTER_ADDR"),
+		"URL other replicas forward to (default: https://$POD_IP-or-hostname:cluster-port)")
 	haLockTTL := fs.Duration("ha-lock-ttl", storage.DefaultLockTTL,
 		"HA lock lease; an unplanned failover takes up to this long")
 	haRetry := fs.Duration("ha-retry-interval", storage.DefaultLockRetryInterval,
@@ -188,25 +193,69 @@ func runServer(args []string) error {
 				return err
 			}
 		}
+		if *haClusterListen == "" {
+			host, _, err := net.SplitHostPort(*listen)
+			if err != nil {
+				return fmt.Errorf("-ha: derive -ha-cluster-listen from -listen %q: %w", *listen, err)
+			}
+			*haClusterListen = net.JoinHostPort(host, "8201")
+		}
+		if *haClusterAddr == "" {
+			// The cluster listener is always TLS, whatever the API does.
+			if *haClusterAddr, err = defaultAdvertise(*haClusterListen, true); err != nil {
+				return err
+			}
+		}
 		holder, err := haHolderID()
 		if err != nil {
 			return err
 		}
 		coreOpts = append(coreOpts, core.WithHA(core.HAConfig{
-			Backend:   haBackend,
-			HolderID:  holder,
-			Advertise: adv,
+			Backend:     haBackend,
+			HolderID:    holder,
+			Advertise:   adv,
+			ClusterAddr: *haClusterAddr,
 			Lock: storage.LockOptions{
 				TTL:           *haLockTTL,
 				RenewInterval: *haLockTTL / 3,
 				RetryInterval: *haRetry,
 			},
 		}))
-		log.Printf("HA enabled: replica %q, advertising %q", holder, adv) //nolint:gosec // G706: operator-configured values, %q-quoted so they cannot forge log lines
+		log.Printf("HA enabled: replica %q, advertising %q, cluster %q", holder, adv, *haClusterAddr) //nolint:gosec // G706: operator-configured values, %q-quoted so they cannot forge log lines
 	}
 	c := core.New(phys, coreOpts...)
 
 	opts := []api.Option{api.WithVersion(version)}
+
+	// HA: the cluster identity comes from the barrier. The active replica
+	// creates the CA; every replica drops its certificates when sealed; and a
+	// standby forwards what it does not serve itself to the active replica.
+	var certs *cluster.Certs
+	var forwarder *cluster.Forwarder
+	if c.HAEnabled() {
+		certs = cluster.NewCerts(c.Barrier())
+		c.OnActive(func() {
+			if ensureClusterCA(certs) {
+				return
+			}
+			// Keep trying for as long as this replica stays active: without the
+			// CA, standbys cannot forward to it.
+			go func() {
+				for {
+					time.Sleep(5 * time.Second)
+					if !c.Active() || ensureClusterCA(certs) {
+						return
+					}
+				}
+			}()
+		})
+		c.OnSeal(certs.Reset)
+		forwarder = cluster.NewForwarder(certs, func(ctx context.Context) (string, bool, error) {
+			info, err := c.Leader(ctx)
+			return info.ClusterAddr, info.IsSelf, err
+		})
+		opts = append(opts, api.WithForwarder(forwarder))
+	}
 	if *auditLog != "" {
 		device, err := audit.NewFileDevice(*auditLog)
 		if err != nil {
@@ -233,6 +282,28 @@ func runServer(args []string) error {
 	}
 
 	handler := api.NewHandler(c, opts...)
+	if forwarder != nil {
+		forwarder.ServeLocally(handler, c.Active)
+	}
+
+	var clusterSrv *http.Server
+	if certs != nil {
+		ln, err := net.Listen("tcp", *haClusterListen)
+		if err != nil {
+			return fmt.Errorf("-ha: cluster listener: %w", err)
+		}
+		clusterSrv = &http.Server{
+			Handler:           cluster.ServerHandler(handler, c.Active),
+			TLSConfig:         certs.ServerTLS(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			if err := clusterSrv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("ERROR: HA cluster listener: %v", err)
+			}
+		}()
+		log.Printf("HA cluster listener on %s (mutual TLS)", ln.Addr())
+	}
 
 	srv := &http.Server{
 		Addr:              *listen,
@@ -325,8 +396,22 @@ func runServer(args []string) error {
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if clusterSrv != nil {
+			_ = clusterSrv.Shutdown(shutdownCtx)
+		}
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// ensureClusterCA creates the HA cluster CA if missing, logging a failure.
+func ensureClusterCA(certs *cluster.Certs) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := certs.EnsureCA(ctx); err != nil {
+		log.Printf("WARNING: HA cluster CA: %v (standbys cannot forward until it exists; retrying)", err)
+		return false
+	}
+	return true
 }
 
 // defaultAdvertise derives this replica's HA advertise URL from the listen

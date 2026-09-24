@@ -28,9 +28,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { h.metrics.ObserveRequest(rec.status) }()
 
 	// An HA standby answers only lifecycle and health endpoints itself; anything
-	// else belongs to the active replica. (Forwarding to it is the next HA
-	// slice; until then the client is told to retry elsewhere.)
+	// else belongs to the active replica, which audits and rate-limits it there.
 	if h.core.Standby() && !standbyEndpoint(r.URL.Path) {
+		if h.forward != nil {
+			h.forward.ServeHTTP(rec, r)
+			return
+		}
 		writeError(rec, http.StatusServiceUnavailable, "this replica is a standby; send requests to the active replica")
 		return
 	}
@@ -167,7 +170,7 @@ func standbyEndpoint(path string) bool {
 		return true
 	}
 	switch path {
-	case "/v1/sys/seal-status", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/init":
+	case "/v1/sys/seal-status", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/init", "/v1/sys/leader":
 		return true
 	default:
 		return false

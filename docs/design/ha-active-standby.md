@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS ubixvault_lock (
   expires_at=NOW(6)+INTERVAL ? MICROSECOND WHERE name=? AND expires_at < NOW(6)`
   (plus an `INSERT IGNORE` of the row on first use). One affected row = acquired;
   the new generation is read back in the same transaction. Standbys retry every
-  `ha_retry_interval` (default 2s).
+  `ha_retry_interval` (default 500ms).
 - **Renew:** `UPDATE … SET expires_at=… WHERE name=? AND holder_id=? AND
   generation=?` every `ha_lock_ttl/3`. Zero rows = superseded → lost. If no renewal
   has *succeeded* within `ha_lock_ttl − margin` measured on the replica's monotonic
@@ -150,8 +150,11 @@ CREATE TABLE IF NOT EXISTS ubixvault_lock (
   every write after the bump fails — so the old and new active can never interleave
   writes. Writes are low-volume (reads dominate a secrets manager), so one extra
   indexed read per write is an acceptable cost; it is measured in slice 5.
-- **Defaults:** `ha_lock_ttl` 15s, renew every 5s, retry every 2s. Unplanned
-  failover (crash, node loss) is therefore ≤ ~17s; planned handoff ≤ ~2s.
+- **Defaults:** `ha_lock_ttl` 15s, renew every 5s, retry every 500ms (was 2s
+  in the first draft; a standby's retry is a handful of cheap statements, and
+  it bounds the planned-handoff gap). Unplanned failover (crash, node loss) is
+  therefore ≤ ~16s; planned handoff ≤ ~0.5s, and standbys hold requests across
+  it rather than failing them (§4).
 
 The existing `RetryBackend` keeps wrapping the MySQL backend (D-019 transient-error
 classification is unchanged). `ErrFenced` is **permanent**, never retried.
@@ -181,52 +184,84 @@ start/stop.
 receives `sys/init` acquires the lock first, so two replicas cannot initialize the
 same database concurrently.
 
-### 4. Requests on a standby: forward
+### 4. Requests on a standby: forward over the cluster listener
 
 A standby **forwards** every request it does not answer itself to the active
-replica's advertise address (from `Lock.Holder`), with a reverse proxy, and returns
-the active's response unchanged. Clients — ESO, the PHP resolver, `curl`, the
-console — need no changes and no redirect handling, and a plain Kubernetes Service
-over all ready pods works.
+replica and returns the active's response unchanged. Clients — ESO, the PHP
+resolver, `curl`, the console — need no changes and no redirect handling, and a
+plain Kubernetes Service over all ready pods works.
 
 Answered locally by a standby: `sys/health`, `sys/livez`, `sys/seal-status`,
-`sys/leader`, `sys/unseal`, `sys/seal`, `sys/metrics`, `/ui` assets. Everything else
-is forwarded, including `sys/rekey/*` and `sys/generate-root/*` so there is one
-attempt, held by the active.
+`sys/leader`, `sys/unseal`, `sys/seal`, `sys/init`, `sys/metrics`, `/ui` assets.
+Everything else is forwarded, including `sys/step-down`, `sys/rekey/*` and
+`sys/generate-root/*`, so each lands where it can act and there is one attempt,
+held by the active.
 
-- **Audit and quotas** run on the active, which handles the request. The standby
-  does not audit a forwarded request (it would be logged twice).
-- **Client IP:** the standby adds `X-Forwarded-For`; the active trusts it only from
-  replicas, identified by a shared forwarding credential derived from the barrier
-  (so only replicas that unsealed the same vault can assert a client IP). Without
-  that, rate limits would key on the standby's pod IP.
-- **TLS:** replicas dial each other over the API listener with TLS. The certificate
-  must include the per-pod headless-Service DNS names; the chart's cert-manager
-  `Certificate` adds them. With `tls.existingSecret`, the operator supplies them.
-- **No active yet** (election in progress): return `503` with Vault's standby
-  error body; clients already retry 503.
+**Transport — a dedicated cluster listener with mutual TLS** (owner decision,
+2026-09-24; implemented in `internal/cluster`). Replicas do not forward over the
+API listener: the API's certificate is the operator's (in production a
+`*.ubixsys.com` wildcard), which cannot verify a pod address. Instead, as in
+HashiCorp Vault, each replica runs a second listener (`-ha-cluster-listen`,
+default port 8201) that speaks only TLS 1.3 and requires a client certificate:
 
-Redirect (`307` to the active, Vault's legacy standby behaviour) was considered and
-rejected: it exposes pod addresses to clients and `curl`/PHP do not follow it by
-default.
+- The **active replica creates a cluster CA** (ECDSA P-256, 10 years) in the
+  barrier at `sys/ha/cluster-ca` on becoming active, retrying in the background
+  if storage fails, before it serves as active.
+- **Every unsealed replica issues itself a 24-hour leaf** from that CA, held in
+  memory only, reissued at half-life, dropped on seal. All leaves carry one fixed
+  name; replicas verify each other by CA, not by address.
+- So **only a process that unsealed the same vault can connect** — no operator
+  certificates, no cert-manager, no shared secret to distribute.
+
+The rest follows from that authentication:
+
+- **Client address:** the standby sends the original client address in a header
+  the active honours only on the cluster listener (a client sending it to the
+  API is ignored, and the standby overwrites it). `X-Forwarded-For` is passed
+  through unchanged, so `-rate-limit-trust-forwarded` behaves the same on every
+  replica.
+- **Audit and quotas** run on the active, under the original client's address.
+  The standby neither audits nor rate-limits a forwarded request.
+- **Handoffs without errors:** while no replica is active (a planned handoff
+  takes up to one retry interval) the standby holds the request for up to 5s
+  rather than answering 503; if the replica it waited on turns out to be itself,
+  it serves the request locally once active. A request without a body is also
+  re-sent when the leader it reached has just gone (connection refused, or a
+  "no longer active" answer from the old leader's cluster listener). A request
+  with a body is never sent twice. In testing, a client pinned to one replica
+  through a step-down and a SIGTERM of the new active saw no failed requests.
+- **No loops:** a forwarded request reaching a replica that is not active is
+  refused (503 with a marker header), never forwarded again.
+- **Unplanned failover** (the active dies without releasing the lock) still
+  costs up to the lock TTL; held requests time out after 5s with 503, which
+  clients retry.
+
+Redirect (`307` to the active, Vault's legacy standby behaviour) was considered
+and rejected: it exposes pod addresses to clients and `curl`/PHP do not follow it
+by default.
 
 ### 5. API surface (Vault-compatible)
 
 - **`GET /v1/sys/health`** gains Vault's query parameters: `standbyok`,
   `standbycode` (default **429**), `activecode` (200), `sealedcode` (503),
-  `uninitcode` (501), `perfstandbyok` (accepted, no-op). Body gains `standby` and
-  `cluster_id` fields. Behaviour without parameters is unchanged for a single node.
-- **`GET /v1/sys/leader`** — `ha_enabled`, `is_self`, `leader_address`,
-  `active_time`.
-- **`PUT /v1/sys/step-down`** — root/sudo; the active releases the lock and
-  becomes a standby (for draining a specific pod by hand).
+  `uninitcode` (501), `perfstandbyok` (accepted, no-op). Body gains `standby`.
+  Behaviour without parameters is unchanged for a single node.
+- **`GET /v1/sys/leader`** — unauthenticated: `ha_enabled`, `is_self`,
+  `leader_address`, `leader_cluster_address`, `active_time` (on the active).
+- **`PUT /v1/sys/step-down`** — authenticated (ACL on `sys/step-down`); the
+  active releases the lock and becomes a standby (for moving the active off a
+  specific pod by hand). It then stays out of the election for 10s so another
+  replica takes over — ending early if the lock stays free for two retry
+  intervals, so a step-down can never leave the vault with no active replica.
 - **`/v1/sys/livez`** stays storage-independent and lock-independent. A standby is
   alive.
 
 ### 6. Server flags
 
 `-ha` (enable; requires `-storage mysql`), `-ha-advertise-addr` (this replica's
-URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interval`.
+API URL, default derived from `POD_IP`/hostname), `-ha-cluster-listen` (default
+`-listen`'s host, port 8201), `-ha-cluster-addr` (URL other replicas forward to,
+default `https://$POD_IP:8201`), `-ha-lock-ttl`, `-ha-retry-interval`.
 
 ### 7. Helm chart
 
@@ -235,8 +270,10 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
 - Readiness probe → `/v1/sys/health?standbyok=true`, so unsealed standbys are ready
   and a StatefulSet rolling update can proceed pod by pod. The main Service keeps
   selecting all pods; standbys forward.
-- A headless Service for per-pod DNS (the StatefulSet's `serviceName`), whose names
-  go into the certificate SANs and `-ha-advertise-addr`.
+- A headless Service for per-pod DNS (the StatefulSet's `serviceName`), exposing
+  the cluster port 8201; `-ha-cluster-addr` and `-ha-advertise-addr` come from
+  the pod's IP (`POD_IP` via the downward API). No certificate changes: the
+  cluster listener brings its own identity (§4).
 - `PodDisruptionBudget` with `maxUnavailable: 1`, and default pod anti-affinity
   (preferred) across nodes — a drain can never take two replicas at once.
 - `terminationGracePeriodSeconds` long enough for a clean `Release`.
@@ -269,7 +306,7 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
    change (nothing uses it yet).
 3. **Done (`feat/ha-core`).** Core active/standby state machine, `becomeActive`/`stepDown`, sweeper gating,
    `-ha` flags.
-4. Standby forwarding, `sys/leader`, `sys/step-down` (the `sys/health` parameters shipped with slice 3).
+4. **Done (`feat/ha-forward`).** Standby forwarding over the mutual-TLS cluster listener, `sys/leader`, `sys/step-down` (the `sys/health` parameters shipped with slice 3).
 5. Chart (`ha.enabled`, PDB, anti-affinity, headless Service, SANs, probes).
 6. Failover test on kind: kill the active, drain its node, rolling upgrade under
    load — measure the gap, assert no write lands from a fenced replica.
@@ -293,8 +330,8 @@ covers already.
 
 ## Open questions
 
-- **Forwarding credential:** derive it from the barrier key (HKDF, no new state) or
-  store a random one in the barrier? Leaning HKDF.
+- ~~**Forwarding credential**~~ — resolved: the cluster listener's mutual TLS
+  (§4) authenticates replicas, so no separate credential exists.
 - **Standby reads:** the data model would allow standbys to answer reads locally
   (performance standbys). Deliberately out of scope; revisit with the replication
   item.
