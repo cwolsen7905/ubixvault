@@ -202,7 +202,7 @@ func runServer(args []string) error {
 				RetryInterval: *haRetry,
 			},
 		}))
-		log.Printf("HA enabled: replica %s, advertising %s", holder, adv)
+		log.Printf("HA enabled: replica %q, advertising %q", holder, adv) //nolint:gosec // G706: operator-configured values, %q-quoted so they cannot forge log lines
 	}
 	c := core.New(phys, coreOpts...)
 

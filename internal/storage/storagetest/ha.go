@@ -66,18 +66,22 @@ type Replica struct {
 
 var _ storage.HABackend = (*Replica)(nil)
 
+// Get reads the shared storage; reads are never fenced.
 func (r *Replica) Get(ctx context.Context, key string) (*storage.Entry, error) {
 	return r.g.inner.Get(ctx, key)
 }
 
+// List reads the shared storage; reads are never fenced.
 func (r *Replica) List(ctx context.Context, prefix string) ([]string, error) {
 	return r.g.inner.List(ctx, prefix)
 }
 
+// Put writes the shared storage, fenced like the MySQL backend's writes.
 func (r *Replica) Put(ctx context.Context, e *storage.Entry) error {
 	return r.write(func() error { return r.g.inner.Put(ctx, e) })
 }
 
+// Delete removes from the shared storage, fenced like Put.
 func (r *Replica) Delete(ctx context.Context, key string) error {
 	return r.write(func() error { return r.g.inner.Delete(ctx, key) })
 }
