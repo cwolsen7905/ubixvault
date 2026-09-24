@@ -506,7 +506,7 @@ anticipates.
 
 ## D-021 — High availability: active/standby over the SQL backend, with a fenced lock
 
-**Status:** Accepted · 2026-09-24
+**Status:** Accepted · 2026-09-24 · Implemented in 1.2.0
 
 **Decision:** support **multiple replicas** against one MySQL/MariaDB database in
 HashiCorp Vault's Community HA model: every replica unseals, exactly one holds a

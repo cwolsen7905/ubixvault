@@ -235,8 +235,9 @@ explicitly not defended. Reflects the implementation as of `v0.2.0-beta.11`.
 
 ### Explicitly out of scope
 
-- **Multi-writer HA and multi-tenant isolation** — single active writer per store;
-  in-vault namespaces are not implemented.
+- **Multi-active writers and multi-tenant isolation** — one active writer per store
+  (active/standby HA elects it and fences the rest, D-021; there is no multi-active
+  mode); in-vault namespaces are not implemented.
 - **Approval workflows (M-of-N control groups)** and login-enforced MFA.
 - **Nation-state memory forensics, physical extraction, and FIPS-140 physical
   requirements** — D-001 notes the escape hatch (the crypto core sits behind an
