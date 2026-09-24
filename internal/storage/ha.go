@@ -68,7 +68,7 @@ type LockOptions struct {
 const (
 	DefaultLockTTL           = 15 * time.Second
 	DefaultLockRenewInterval = 5 * time.Second
-	DefaultLockRetryInterval = 2 * time.Second
+	DefaultLockRetryInterval = 500 * time.Millisecond
 )
 
 func (o LockOptions) withDefaults() LockOptions {
