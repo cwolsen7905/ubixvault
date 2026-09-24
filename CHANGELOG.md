@@ -6,6 +6,15 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- **Response-wrapping tokens are single-use under concurrency.** Two or more
+  simultaneous `sys/wrapping/unwrap` calls with the same token could each return
+  the wrapped payload, because unwrap read the record and deleted it as separate
+  steps. Unwrap is now serialized, so exactly one call receives the payload and
+  the rest get "token not found". Affects single-node deployments; found while
+  designing HA (`docs/design/ha-active-standby.md`).
+
 ## [1.1.0] — 2026-09-18
 
 First post-1.0 feature release: **resource quotas**, the first step toward

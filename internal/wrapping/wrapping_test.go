@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,57 @@ func TestUnwrapIsSingleUse(t *testing.T) {
 	// Second unwrap of the same token must fail — it was destroyed.
 	if _, err := s.Unwrap(ctx, info.Token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second Unwrap = %v, want ErrNotFound", err)
+	}
+}
+
+// slowGetStorage widens the window between an unwrap's read and its delete, the
+// window a concurrent unwrap of the same token would race through.
+type slowGetStorage struct {
+	Storage
+}
+
+func (s slowGetStorage) Get(ctx context.Context, key string) (*storage.Entry, error) {
+	e, err := s.Storage.Get(ctx, key)
+	time.Sleep(10 * time.Millisecond)
+	return e, err
+}
+
+func TestUnwrapIsSingleUseUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(slowGetStorage{storage.NewMemoryBackend()})
+	info, err := s.Wrap(ctx, json.RawMessage(`{"k":"v"}`), time.Minute)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+
+	const racers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, racers)
+	start := make(chan struct{})
+	for range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := s.Unwrap(ctx, info.Token)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	succeeded := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case !errors.Is(err, ErrNotFound):
+			t.Fatalf("Unwrap = %v, want nil or ErrNotFound", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d concurrent unwraps returned the payload, want exactly 1", succeeded)
 	}
 }
 
