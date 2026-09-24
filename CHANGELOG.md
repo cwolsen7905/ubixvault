@@ -6,7 +6,28 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **HA lock in the storage layer (groundwork, not yet used).** A storage-level
+  `HABackend` interface and its MySQL implementation: a lease-based lock row that
+  elects one active replica, with every write from a replica that has held the
+  lock fenced to that acquisition, so a replica that lost the lock without
+  noticing (a pause, a partition) cannot write. Nothing in the server uses it yet;
+  it is the first HA slice (ADR D-021, `docs/design/ha-active-standby.md`).
+
 ### Changed
+
+- **MySQL schema is versioned and checked at startup.** The MySQL backend used to
+  record a schema version it never read. It now applies numbered migrations in
+  order, recording each once, under a MySQL named lock so replicas starting
+  together cannot run them twice. It **refuses to start** against a database a
+  newer uBix Vault has already migrated past what it knows, naming both versions,
+  instead of running against a schema it may misread. Rolling back across a
+  schema change therefore means restoring a snapshot taken before the newer
+  version first ran.
+- **MySQL schema version 2** adds the `ubixvault_lock` table (used by HA),
+  created by the same startup step that already creates the tables, so existing
+  database grants cover it. Nothing else changes for single-replica deployments.
 
 - **Audit token HMACs are stable across restarts.** The key used to HMAC client
   tokens in the audit log was random per process, so the same token hashed

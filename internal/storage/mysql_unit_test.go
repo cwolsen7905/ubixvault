@@ -40,3 +40,11 @@ func TestPrefixSuccessorBoundsRange(t *testing.T) {
 		t.Fatalf("sibling %q wrongly included in [prefix, successor)", sibling)
 	}
 }
+
+// The declared schema version must be exactly the number of migrations, or a
+// database would be recorded at a version whose migration never ran.
+func TestMySQLSchemaVersionMatchesMigrations(t *testing.T) {
+	if len(mysqlMigrations) != mysqlSchemaVersion {
+		t.Fatalf("mysqlSchemaVersion = %d but there are %d migrations", mysqlSchemaVersion, len(mysqlMigrations))
+	}
+}
