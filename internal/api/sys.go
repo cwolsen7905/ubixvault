@@ -138,6 +138,10 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// Drop everything cached from the barrier when the vault is sealed, so the
 	// next unseal starts from what storage holds then.
 	c.OnSeal(h.resetBarrierCaches)
+	// With HA, a replica's caches may have gone stale while another replica was
+	// active, and must not carry over when it stops being active.
+	c.OnActive(h.resetBarrierCaches)
+	c.OnStandby(h.resetBarrierCaches)
 
 	mux := http.NewServeMux()
 
@@ -354,7 +358,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 }
 
 // RunLeaseSweeper periodically revokes expired database leases until ctx is
-// cancelled. Errors (including "sealed") are ignored; the next tick retries.
+// cancelled. It sweeps only on the active replica — with HA, standbys would
+// race it to DROP USER and their writes are fenced anyway. Errors (including
+// "sealed") are ignored; the next tick retries.
 func (h *Handler) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -363,7 +369,9 @@ func (h *Handler) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = h.database.RevokeExpired(ctx)
+			if h.core.Active() {
+				_, _ = h.database.RevokeExpired(ctx)
+			}
 		}
 	}
 }

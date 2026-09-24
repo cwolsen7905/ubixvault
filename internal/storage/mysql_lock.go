@@ -24,8 +24,16 @@ type fenceToken struct {
 	gen    uint64
 }
 
-// HALock returns this replica's handle on the named lock. See [HABackend].
+// HALock returns this replica's handle on the named lock. See [HABackend]. The
+// first handle arms fencing: from then on this backend's writes succeed only
+// while the lock is held, so a standby that has never been active cannot write
+// either.
 func (b *MySQLBackend) HALock(name, holderID, advertise string, opts LockOptions) Lock {
+	b.fenceMu.Lock()
+	if b.fence == nil {
+		b.fence = &fenceToken{name: name, holder: holderID} // generation 0 is never held
+	}
+	b.fenceMu.Unlock()
 	return &mysqlLock{b: b, name: name, holder: holderID, advertise: advertise, opts: opts.withDefaults()}
 }
 

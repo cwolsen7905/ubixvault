@@ -8,6 +8,21 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Active/standby HA in the server (`-ha`), not yet in the Helm chart.** With
+  `-storage mysql -ha`, every replica unseals and the one holding the HA lock is
+  active; the rest are standbys. A standby takes over within `-ha-retry-interval`
+  (default 2s) when the active replica shuts down — every drain and rolling
+  restart — and within `-ha-lock-ttl` (default 15s) when it dies. Standbys
+  answer health, seal-status, unseal, seal and init themselves and return `503`
+  for everything else until request forwarding lands in the next release slice.
+  The lease sweeper runs only on the active replica, and two replicas cannot
+  initialize the same database. New flags: `-ha`, `-ha-advertise-addr`,
+  `-ha-lock-ttl`, `-ha-retry-interval` (ADR D-021).
+- **`sys/health` takes Vault's query parameters**: `standbyok`, `activecode`,
+  `standbycode` (default `429`), `sealedcode`, `uninitcode`; `perfstandbyok` is
+  accepted and ignored. The body gains `standby`. Without parameters, a single
+  replica answers exactly as before.
+
 - **HA lock in the storage layer (groundwork, not yet used).** A storage-level
   `HABackend` interface and its MySQL implementation: a lease-based lock row that
   elects one active replica, with every write from a replica that has held the

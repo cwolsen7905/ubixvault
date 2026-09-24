@@ -239,3 +239,19 @@ func TestHALockLostWhenRenewalsFail(t *testing.T) {
 		t.Fatal("holder kept the lock with renewals failing past TTL-RenewInterval")
 	}
 }
+
+// TestHALockHandleFencesBeforeAcquire: a replica that has asked for a lock
+// handle but never held the lock — a standby since startup — cannot write.
+func TestHALockHandleFencesBeforeAcquire(t *testing.T) {
+	ctx := context.Background()
+	name := lockName(t)
+	r := replica(t)
+	l := r.HALock(name, "a", "", fastLock)
+	if err := r.Put(ctx, &Entry{Key: name + "/k", Value: []byte("v")}); !errors.Is(err, ErrFenced) {
+		t.Fatalf("Put before any acquisition = %v, want ErrFenced", err)
+	}
+	acquireWithin(t, l, 5*time.Second)
+	if err := r.Put(ctx, &Entry{Key: name + "/k", Value: []byte("v")}); err != nil {
+		t.Fatalf("Put once held: %v", err)
+	}
+}
