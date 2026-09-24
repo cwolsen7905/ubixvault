@@ -65,7 +65,7 @@ Core — complete, tested, documented:
 - [x] **Leases** — renew/lookup + cascading revocation.
 - [x] **Web console** (`/ui/`) — KV, policies, tokens, PKI.
 - [x] **Operations** — Prometheus metrics, rate limiting, health/readiness, encrypted snapshot/restore.
-- [x] **Delivery** — `ubixvault server` + `operator` CLI, single-node Helm chart, multi-arch GHCR images, CI (build/test/lint/govulncheck/MariaDB integration).
+- [x] **Delivery** — `ubixvault server` + `operator` CLI, single-node Helm chart, multi-arch GHCR images, CI (build/test/lint/govulncheck/MariaDB integration, and since 1.2 a kind HA failover test).
 - [x] **Rekey** — live rotation of the Shamir unseal shares (`sys/rekey`, `operator rekey`), no downtime.
 - [x] **MySQL/MariaDB storage backend** — durable, replaceable-node storage (`-storage mysql`); the DB holds only ciphertext (ADR D-014).
 - [x] **Scheduled backups** — opt-in chart CronJob snapshotting to an off-node PVC.
@@ -170,7 +170,7 @@ individual entries and object-storage snapshot upload fold in alongside as the t
 partial analogs are completed.
 
 ### Toward Vault Community parity (free-tier gaps)
-- [ ] **HA: active/standby replicas** — multiple replicas over the MySQL backend, one active holding a fenced lock, standbys forwarding and taking over on drain or failure (Vault Community HA). Design: [`docs/design/ha-active-standby.md`](design/ha-active-standby.md) · ADR D-021.
+- [x] **HA: active/standby replicas** (1.2) — multiple replicas over the MySQL backend, one active holding a fenced lock, standbys forwarding and taking over on drain or failure (Vault Community HA). Design: [`docs/design/ha-active-standby.md`](design/ha-active-standby.md) · ADR D-021.
 - [ ] **Integrated Storage (Raft)** — HA without an external database (also in "Path to 1.0 · Optional"; builds on the D-021 `HABackend` interface, and may never be needed).
 - [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
 - [x] **LDAP / Active Directory auth** — bind + group search via `go-ldap/ldap/v3` (D-018, the project's second dependency); LDAP groups feed a group→policy map and identity external groups.

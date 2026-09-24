@@ -1,6 +1,6 @@
 # uBix Vault — Positioning & Prior Art
 
-> **Status:** Active · Last updated 2026-08-27
+> **Status:** Active · Last updated 2026-09-24
 > Why this project exists alongside HashiCorp Vault and OpenBao.
 
 ## Prior art (acknowledged up front)
@@ -64,9 +64,16 @@ that was Enterprise-gated (HSM) for years — reached without any provider SDK.
 | KMIP secrets engine | ❌ |
 | Transform engine (tokenization / FPE / masking) | ❌ |
 | FIPS 140-2/-3 builds; entropy augmentation | ❌ |
-| Lease-count / resource quotas | ❌ (per-client rate limiting — Community-tier — is present) |
+| Lease-count / resource quotas | ✅ rate-limit and lease-count quotas, path-scoped, Vault-compatible (1.1, D-020) |
 
-Of ~15 Enterprise-differentiated capabilities, uBix Vault has a partial analog of ~2 and is
-missing ~13 — **by design.** The gaps that matter more for the project are the remaining
-*Community* ones (Raft HA, more auth methods and DB plugins, identity/entities), also tracked
-in the roadmap; none is the real 1.0 blocker, which is an external security review.
+Of ~15 Enterprise-differentiated capabilities, uBix Vault has ~1 and a partial analog of ~2,
+and is missing ~12 — **by design.** The gaps that matter more for the project are the
+remaining *Community* ones (integrated Raft storage, more auth methods and DB plugins), also
+tracked in the roadmap; the real open milestone is an external security review.
+
+**High availability** is a Community feature in Vault, and uBix Vault has it since 1.2:
+active/standby replicas over MySQL/MariaDB — every replica unseals, one holds a fenced lock
+in the database and serves, standbys forward to it over their own mutual-TLS cluster port,
+and `sys/leader`, `sys/step-down` and the `sys/health` standby codes behave as Vault's do
+(D-021). What it does not have is Vault's *integrated storage* (Raft) — HA here relies on the
+database's own availability — nor Enterprise *performance standbys* that answer reads.

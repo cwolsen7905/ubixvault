@@ -35,6 +35,7 @@ credentials — over a Vault-API-compatible HTTP interface.
 - **Transit** — encryption-as-a-service: apps encrypt/decrypt over the API; keys never leave the vault, and rotate without breaking old ciphertext.
 - **Dynamic database credentials** — short-lived MariaDB users generated on demand and auto-revoked on lease expiry.
 - **Audit logging** — fail-closed; records who accessed what, with the client token HMAC'd (never logged in the clear).
+- **High availability** — active/standby replicas over MySQL/MariaDB storage (`-ha`, chart `ha.enabled`): one active replica holds a fenced lock in the database, standbys forward to it, and a node drain or rolling upgrade hands over in about half a second (no failed requests in the kind failover test). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#high-availability-activestandby).
 
 ## Quickstart
 

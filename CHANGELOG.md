@@ -6,122 +6,106 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-24
+
+**High availability.** uBix Vault runs as several replicas over MySQL/MariaDB
+storage: every replica unseals, one holds a fenced lock in the database and
+serves, and the rest are standbys that forward to it — HashiCorp Vault's
+Community HA model (ADR D-021, `docs/design/ha-active-standby.md`). Additive and
+backward-compatible with the 1.x API; single-replica deployments behave as
+before.
+
+### Upgrade notes
+
+- **MySQL schema goes to version 2** (a new lock table), applied automatically on
+  first start. Schema migrations are forward-only and a binary now refuses a
+  database migrated by a newer one, so **take a snapshot before upgrading**:
+  rolling back across this release means restoring it.
+- **Enabling HA on an existing install:** upgrade to 1.2.0 at one replica first,
+  then set `ha.enabled`, then scale. A pre-1.2 replica takes no lock and must
+  never run against the database alongside HA replicas. See
+  `docs/DEPLOYMENT.md` § Upgrades.
+- **Audit `token_hmac` values change once**: the HMAC key now lives in the
+  barrier, so HMACs from before the upgrade will not match those after it.
+
 ### Added
 
-- **`-shutdown-delay`** (chart: `ha.shutdownDelay`, default `5s` with HA). On
-  SIGTERM an HA replica hands the active role over at once, then keeps serving —
-  as a forwarding standby — for this long before closing its listeners, because
-  Kubernetes stops routing to a terminating pod asynchronously and connections
-  arriving in that window would otherwise be refused.
-- **HA failover test** (`.github/workflows/ha-e2e.yml`, `test/e2e/ha/`): three
-  replicas on kind with a client reading through the Service throughout; pod
-  deletion, node drain, rolling restart and `sys/step-down` must cost zero failed
-  requests, and a force-killed active must be replaced within the lock TTL.
-
-- **Helm chart: `ha.enabled`.** Runs several replicas in active/standby HA over
-  MySQL storage (`replicaCount: 3` recommended): passes `-ha` and the pod IP,
-  exposes the cluster port (8201), probes readiness with
-  `/v1/sys/health?standbyok=true`, and adds a PodDisruptionBudget
-  (`maxUnavailable: 1`) and soft pod anti-affinity (`ha.antiAffinity`:
-  `soft`/`hard`/`none`). `replicaCount > 1` without `ha.enabled` is still
-  refused, as is `ha.enabled` without MySQL. New `terminationGracePeriodSeconds`
-  value (default 30, Kubernetes' own default). Single-replica renders are
-  otherwise unchanged. `docs/DEPLOYMENT.md` gains the HA guide, the rolling-upgrade
-  procedure, and the order for enabling HA on an existing install.
-
-- **Active/standby HA in the server (`-ha`), not yet in the Helm chart.** With
-  `-storage mysql -ha`, every replica unseals and the one holding the HA lock is
-  active; the rest are standbys. A standby takes over within `-ha-retry-interval`
-  (default 500ms) when the active replica shuts down — every drain and rolling
-  restart — and within `-ha-lock-ttl` (default 15s) when it dies. The lease
-  sweeper runs only on the active replica, and two replicas cannot initialize
-  the same database. New flags: `-ha`, `-ha-advertise-addr`, `-ha-lock-ttl`,
-  `-ha-retry-interval` (ADR D-021).
-- **Standbys forward to the active replica**, so clients can use any replica
-  (e.g. through one Kubernetes Service). Replicas talk over a dedicated cluster
-  listener (`-ha-cluster-listen`, default port 8201; `-ha-cluster-addr`) secured
-  with mutual TLS from a CA the vault keeps in its own barrier — no operator
-  certificates involved, and only replicas that unsealed the same vault can
-  connect. The active replica audits and rate-limits forwarded requests under
-  the original client's address. During a handoff a standby holds requests
-  until a replica is active (up to 5s) instead of failing them, and re-sends a
-  request without a body if the leader it reached had just gone. Standbys still
-  answer health, seal-status, unseal, seal, init and `sys/leader` themselves.
+- **Active/standby HA** (`-ha`, requires `-storage mysql`). The active replica
+  holds a lease-based lock row in the database; expiry is judged by the
+  database's clock. **Every write is fenced** to the lock generation the replica
+  acquired, inside its own transaction, so a replica that lost the lock without
+  noticing (a pause, a partition) cannot write. A replica that is shut down —
+  every drain and rolling restart — hands the lock over and a standby is active
+  within `-ha-retry-interval` (500ms); a replica that dies is replaced within
+  `-ha-lock-ttl` (15s). Two replicas cannot initialize the same database.
+- **Standby forwarding**, so clients can use any replica (e.g. one Kubernetes
+  Service). Replicas talk over a dedicated cluster listener (`-ha-cluster-listen`,
+  port 8201; `-ha-cluster-addr`) with mutual TLS from a CA the vault keeps in its
+  own barrier — no operator certificates, and only replicas that unsealed the
+  same vault can connect. The active replica audits and rate-limits forwarded
+  requests under the original client's address. During a handoff standbys hold
+  requests (up to 5s) rather than failing them, and re-send a request without a
+  body if the leader they reached had just gone; a request with a body is never
+  sent twice.
 - **`sys/leader`** (unauthenticated) and **`sys/step-down`** (authenticated),
   Vault-compatible. A replica that steps down stays out of the election for 10s
   so another takes over — unless none does, in which case it takes the lock back
   rather than leave the vault with no active replica.
-- **`sys/health` takes Vault's query parameters**: `standbyok`, `activecode`,
+- **`sys/health` query parameters** as in Vault: `standbyok`, `activecode`,
   `standbycode` (default `429`), `sealedcode`, `uninitcode`; `perfstandbyok` is
-  accepted and ignored. The body gains `standby`. Without parameters, a single
+  accepted and ignored. The body gains `standby`. Without parameters a single
   replica answers exactly as before.
-
-- **HA lock in the storage layer (groundwork, not yet used).** A storage-level
-  `HABackend` interface and its MySQL implementation: a lease-based lock row that
-  elects one active replica, with every write from a replica that has held the
-  lock fenced to that acquisition, so a replica that lost the lock without
-  noticing (a pause, a partition) cannot write. Nothing in the server uses it yet;
-  it is the first HA slice (ADR D-021, `docs/design/ha-active-standby.md`).
+- **`-shutdown-delay`**: on SIGTERM an HA replica hands the active role over at
+  once, then keeps serving (as a forwarding standby) for this long before closing
+  its listeners, while Kubernetes stops routing to the terminating pod.
+- **Helm chart `ha.enabled`** (chart 0.1.16): `replicaCount` replicas (3
+  recommended) with `-ha`, the pod IP from the downward API, the cluster port, a
+  `standbyok` readiness probe, a PodDisruptionBudget (`maxUnavailable: 1`), pod
+  anti-affinity (`ha.antiAffinity`: `soft`/`hard`/`none`) and
+  `ha.shutdownDelay` (5s). `replicaCount > 1` without HA, and HA without MySQL,
+  are still refused. New `terminationGracePeriodSeconds` (30, Kubernetes'
+  default). Single-replica renders are otherwise unchanged.
+- **HA failover test** in CI (`.github/workflows/ha-e2e.yml`, `test/e2e/ha/`):
+  three replicas on kind with a client reading through the Service throughout.
+  Deleting the active pod, draining its node, a rolling restart, `sys/step-down`
+  and a force-delete must fail zero requests (first run: 0 of 1,512); freezing
+  the active pod's node must fail over within the lock TTL (17s) and the thawed
+  former active must step down.
+- `docs/DEPLOYMENT.md`: an HA guide, the rolling-upgrade procedure, and the order
+  for enabling HA on an existing install.
 
 ### Changed
 
-- **MySQL schema is versioned and checked at startup.** The MySQL backend used to
-  record a schema version it never read. It now applies numbered migrations in
-  order, recording each once, under a MySQL named lock so replicas starting
-  together cannot run them twice. It **refuses to start** against a database a
-  newer uBix Vault has already migrated past what it knows, naming both versions,
-  instead of running against a schema it may misread. Rolling back across a
-  schema change therefore means restoring a snapshot taken before the newer
-  version first ran.
-- **MySQL schema version 2** adds the `ubixvault_lock` table (used by HA),
-  created by the same startup step that already creates the tables, so existing
-  database grants cover it. Nothing else changes for single-replica deployments.
-
-- **Audit token HMACs are stable across restarts.** The key used to HMAC client
-  tokens in the audit log was random per process, so the same token hashed
-  differently after every restart and activity could not be correlated across
-  them. The key is now generated once and kept in the barrier
-  (`sys/audit/hmac-key`), so one vault — and, once HA lands, every replica —
-  produces the same `token_hmac` for a token. Entries written while the vault is
-  sealed omit `token_hmac` (nothing authenticated can happen while sealed). HMACs
-  in logs written before this release will not match new ones.
+- **The MySQL schema is versioned and checked at startup.** The backend used to
+  record a schema version it never read. It now reads it first: a current schema
+  needs no lock and no DDL (so replicas restarting together don't queue); a
+  behind one is migrated in order under a MySQL named lock, with its own
+  generous time limit; a newer one is refused, naming both versions.
+- **Audit token HMACs are stable across restarts and replicas**: the key is kept
+  in the barrier (`sys/audit/hmac-key`) instead of being random per process.
+  Entries written while sealed omit `token_hmac`.
+- `make lint` installs and runs golangci-lint v2.12.2, the version CI uses, and
+  CI runs on pushes to every branch mirrored from GitLab.
 
 ### Fixed
 
-- **MySQL startup no longer queues replicas behind each other.** Every start
-  took the schema-migration lock and ran DDL, even against an up-to-date
-  schema, and the whole schema step shared the 10s connection-check timeout.
-  Replicas restarting together therefore waited on one another, and on a
-  database where DDL is slow the last one failed to start; a future migration
-  over a large table would have hit the same 10s limit. A start now reads the
-  schema version first and, when it is current, takes no lock and runs no DDL.
-  Only a start that must migrate takes the lock (waiting up to 10 minutes for
-  another replica's migration) and runs migrations under their own 30-minute
-  limit.
-
-- **Auto-unseal retries instead of giving up.** The server tried auto-unseal once
-  at startup; if the KMS, transit vault, external seal command, or storage was
-  briefly unreachable, it stayed sealed until restarted. It now retries in the
-  background with backoff (1s doubling to 1m), logging each failure, and unseals
-  as soon as the dependency is back. The API starts listening immediately, so
-  `livez` answers and `health` reports sealed (503) while it waits. A
-  configuration that can never auto-unseal (a Shamir vault started with an
-  auto-unseal flag) is logged once as an error and not retried.
-- **Sealing drops cached state.** Loaded quotas, the database engine's connection
-  pool, the Kubernetes auth TokenReview client, and cached JWKS keys survived a
-  seal/unseal in the same process, so config changed in storage in between was
-  not picked up. They are now cleared on seal and reloaded on first use after
-  unseal. Reconfiguring the database engine also no longer leaks the previous
-  connection pool.
+- **Auto-unseal retries instead of giving up.** A KMS, transit vault, external
+  seal command or database briefly unreachable at startup used to leave the
+  server sealed until restarted; it now retries with backoff (1s to 1m) while the
+  API is already up (`livez` 200, `health` 503 until unsealed).
+- **Sealing drops cached state**: loaded quotas, the database engine's connection
+  pool, the Kubernetes auth TokenReview client and cached JWKS keys no longer
+  survive a seal/unseal; reconfiguring the database engine no longer leaks the
+  previous connection pool.
 
 ### Security
 
-- **Response-wrapping tokens are single-use under concurrency.** Two or more
-  simultaneous `sys/wrapping/unwrap` calls with the same token could each return
-  the wrapped payload, because unwrap read the record and deleted it as separate
-  steps. Unwrap is now serialized, so exactly one call receives the payload and
-  the rest get "token not found". Affects single-node deployments; found while
-  designing HA (`docs/design/ha-active-standby.md`).
+- **Response-wrapping tokens are single-use under concurrency.** Simultaneous
+  `sys/wrapping/unwrap` calls with the same token could each return the payload;
+  unwrap is now serialized, so exactly one does. Affected single-node
+  deployments of every earlier version.
+- The security review brief covers HA's new surface (the cluster listener and its
+  CA, the forwarded client address, fencing, and forwarding/replay).
 
 ## [1.1.0] — 2026-09-18
 
@@ -342,6 +326,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.2.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0
 [1.0.0-rc.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.2

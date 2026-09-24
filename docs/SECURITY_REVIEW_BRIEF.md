@@ -19,12 +19,13 @@
 | **Size** | ~13.1k LoC production (67 non-test `.go` files) + ~9.4k LoC tests. |
 | **Build** | Single **static** binary, **CGO disabled** (`CGO_ENABLED=0`), multi-arch (amd64/arm64), distroless runtime image. |
 | **Entry points** | `cmd/ubixvault/main.go` (server + `operator` CLI); HTTP API under `internal/api` (routes in `internal/api/sys.go`, Vault-compatible `/v1/*` paths). |
-| **Attack surface** | The HTTP API; the storage backend (file or MySQL); the auto-unseal seal (KEK, transit, or external command); operator CLI/flags/env. **`net/http/pprof` is not exposed.** |
+| **Attack surface** | The HTTP API; with HA, the **cluster listener** (replica-to-replica, mutual TLS, port 8201); the storage backend (file or MySQL); the auto-unseal seal (KEK, transit, or external command); operator CLI/flags/env. **`net/http/pprof` is not exposed.** |
 | **Storage backends** | File (local dir) and **MySQL/MariaDB** (`-storage mysql`); both hold only barrier ciphertext. |
 
 ## What uBix Vault is
 
-A self-hosted, single-node secrets manager in Go (HashiCorp Vault–style): an
+A self-hosted secrets manager in Go (HashiCorp Vault–style), single-node or
+active/standby HA over MySQL: an
 AES-256-GCM encryption barrier, in-house Shamir seal/unseal, KV v2, Transit
 (crypto-as-a-service, incl. HKDF-derived keys and convergent encryption), dynamic
 MySQL/MariaDB credentials, PKI, cubbyhole, an **identity** layer (entities,
@@ -111,6 +112,24 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
 10. **`internal/audit`** — fail-closed guarantees and HMAC'ing of sensitive fields.
 11. **`internal/pki`**, and the **supply chain** (cosign signing + SBOM;
    minimal-dependency posture — two direct modules plus go-ldap's small transitive set).
+12. **HA (`internal/cluster`, `internal/core/ha.go`, `internal/storage/mysql_lock.go`;
+   D-021)** — new in 1.2:
+   - **Cluster listener.** TLS 1.3, client certificate required, from a CA the active
+     replica creates in the barrier (`sys/ha/cluster-ca`) and every unsealed replica
+     can read; leaves are issued in-process, 24h. Is "only a process that unsealed this
+     vault can connect" true? What does holding the CA key (anyone who can read the
+     barrier) allow?
+   - **Forwarded client address.** A standby passes the original client address in
+     `X-Ubixvault-Cluster-Client-Addr`; the active honours it only on the cluster
+     listener and audits/rate-limits under it. Can a client reach the API with that
+     header honoured, or make a standby forward a spoofed one?
+   - **Fencing.** Once a replica has a lock handle, each MySQL write checks holder and
+     generation under a shared row lock in its transaction. Can a replica that lost the
+     lock (paused, partitioned) still land a write — through the retry wrapper, a
+     transaction edge, or a path that writes around `exec`?
+   - **Forwarding behaviour.** Requests are held during an election and bodyless ones
+     re-sent to a new leader; requests with a body are never re-sent. Any way to replay a
+     write, or to loop a request between replicas?
 
 ## External seal — process model
 
@@ -135,8 +154,9 @@ auto-unseal works without a provider SDK. The exact model to review:
 ## Explicitly in / out of scope
 
 - **In:** everything above; the honesty of the "ciphertext-only storage" claim.
-- **Out:** a compromised *unsealed* process (master key in memory — accepted);
-  multi-writer HA and in-vault namespaces (not implemented); nation-state memory
+- **Out:** a compromised *unsealed* process (master key in memory — accepted; with HA
+  that is any unsealed replica); multi-active writers and in-vault namespaces (not
+  implemented); nation-state memory
   forensics / physical extraction / FIPS-140 physical.
 - **DoS / resource exhaustion:** **lower priority.** A per-client token-bucket
   rate limiter exists (opt-in). Note obvious unauthenticated amplification, but a
