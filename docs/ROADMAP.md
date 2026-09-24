@@ -135,11 +135,13 @@ of it has landed**, which is what makes the `1.0` API-stability milestone honest
       ([`docs/VERSIONING.md`](VERSIONING.md)). When it lands, the assurance badge/disclaimer
       flips in the README, `SECURITY.md`, and release notes; no version bump is implied.
 
-### Optional — only if a single durable node isn't enough
-- [ ] **Integrated Storage (Raft)** — multi-writer HA with no external dependency. Deliberately
-      **last**: the SQL backend already gives durability and a replaceable node, so Raft is a
-      step this project may never need. If pursued, starts with a design doc + an ADR on
-      in-house Raft vs. `hashicorp/raft` (the latter breaks the one-dependency ethos).
+### Optional — only if the external database should go away
+- [ ] **Integrated Storage (Raft)** — HA with no external database. Deliberately **last**:
+      active/standby HA over the SQL backend (D-021) covers replicas and maintenance, so
+      Raft only earns its place if MySQL itself is to be removed. If pursued, it implements
+      the same `HABackend` interface (leadership = lock, term = fencing generation) and
+      starts with a design doc + an ADR on in-house Raft vs. `hashicorp/raft` (which would
+      add several dependencies to a tree that has two).
 
 ---
 
@@ -168,7 +170,8 @@ individual entries and object-storage snapshot upload fold in alongside as the t
 partial analogs are completed.
 
 ### Toward Vault Community parity (free-tier gaps)
-- [ ] **Integrated Storage (Raft)** — multi-writer HA (also in "Path to 1.0 · Optional"; the SQL backend already gives a durable, replaceable node, so this may never be needed).
+- [ ] **HA: active/standby replicas** — multiple replicas over the MySQL backend, one active holding a fenced lock, standbys forwarding and taking over on drain or failure (Vault Community HA). Design: [`docs/design/ha-active-standby.md`](design/ha-active-standby.md) · ADR D-021.
+- [ ] **Integrated Storage (Raft)** — HA without an external database (also in "Path to 1.0 · Optional"; builds on the D-021 `HABackend` interface, and may never be needed).
 - [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
 - [x] **LDAP / Active Directory auth** — bind + group search via `go-ldap/ldap/v3` (D-018, the project's second dependency); LDAP groups feed a group→policy map and identity external groups.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
