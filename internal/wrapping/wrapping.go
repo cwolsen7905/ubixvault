@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -71,6 +72,12 @@ type Info struct {
 type Store struct {
 	store Storage
 	now   func() time.Time
+
+	// unwrapMu makes Unwrap's read-then-delete atomic. Storage has no
+	// compare-and-delete, so without it concurrent unwraps of one token can all
+	// read the payload before any of them deletes it. It is per process: across
+	// replicas, single-use rests on there being one active writer (ADR D-021).
+	unwrapMu sync.Mutex
 }
 
 // NewStore returns a wrapping store over s.
@@ -107,6 +114,9 @@ func (s *Store) Wrap(ctx context.Context, payload json.RawMessage, ttl time.Dura
 // same token fails with [ErrNotFound]. An expired token returns [ErrExpired]
 // (and is deleted); an unknown token returns [ErrNotFound].
 func (s *Store) Unwrap(ctx context.Context, token string) (json.RawMessage, error) {
+	s.unwrapMu.Lock()
+	defer s.unwrapMu.Unlock()
+
 	key := storeKey(token)
 	entry, err := s.store.Get(ctx, key)
 	if err != nil {
