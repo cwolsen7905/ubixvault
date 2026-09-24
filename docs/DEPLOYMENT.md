@@ -42,7 +42,7 @@ database and a user:
 CREATE DATABASE ubixvault CHARACTER SET binary;
 CREATE USER 'ubixvault'@'%' IDENTIFIED BY 'a-strong-password';
 -- SELECT/INSERT/UPDATE/DELETE for normal operation; CREATE so the vault can
--- create its two tables on first boot (you may drop CREATE afterward, or
+-- create its tables on first boot (you may drop CREATE afterward, or
 -- pre-create the tables and never grant it).
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON ubixvault.* TO 'ubixvault'@'%';
 ```
@@ -50,10 +50,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON ubixvault.* TO 'ubixvault'@'%';
 The DSN is a [go-sql-driver](https://github.com/go-sql-driver/mysql#dsn-data-source-name)
 string, e.g. `ubixvault:PASSWORD@tcp(db-host:3306)/ubixvault?tls=true`.
 
-**Single active writer.** Exactly one vault process may write to a given
-database: the barrier key, leases, and unseal progress live in memory, so two
-processes on one database would race and diverge. This is durable,
-replaceable-node storage, **not** multi-writer HA (keep `replicaCount: 1`).
+**One active writer at a time.** Only one vault process may write to a given
+database. Several replicas may share it **only with `-ha`**, which elects one
+active replica through a lock in the database and fences everyone else's writes
+(see [High availability](#high-availability-activestandby) below). Without `-ha`,
+run exactly one process per database.
 
 #### Securing the database credentials
 
@@ -286,8 +287,45 @@ kubectl -n ubixvault exec vault-ubixvault-0 -- \
 ```
 
 Use `-ca-cert <pem>` instead of `-tls-skip-verify` to verify against a specific
-CA. It is single-node only — the chart refuses `replicaCount > 1`. See the chart
-[README](../deploy/charts/ubixvault/README.md) for all values.
+CA. Without HA the chart runs one replica and refuses `replicaCount > 1`. See the
+chart [README](../deploy/charts/ubixvault/README.md) for all values.
+
+### High availability (active/standby)
+
+With `-storage mysql -ha` (chart: `ha.enabled=true`), several replicas share one
+database. Every replica unseals; the one holding a lock in the database is
+**active** and the others are **standbys** that forward requests to it, so a
+client can use any replica — in Kubernetes, the ordinary Service. Design and
+trade-offs: [`docs/design/ha-active-standby.md`](design/ha-active-standby.md)
+(ADR D-021).
+
+- **Failover.** When the active replica shuts down — every drain, rolling
+  restart or `sys/step-down` — it hands the lock over and a standby is active
+  within about half a second; standbys hold requests across the handoff rather
+  than failing them. When the active replica *dies*, a standby takes over once
+  its lease lapses (`-ha-lock-ttl`, default 15s).
+- **Replica traffic.** Replicas talk to each other on the cluster port (8201)
+  with mutual TLS from a CA the vault keeps in its own barrier; there is nothing
+  to configure. If you use NetworkPolicies, allow pod-to-pod TCP 8201 between the
+  vault's pods.
+- **Unsealing.** Each replica unseals itself. Use auto-unseal; with Shamir, every
+  replica must be unsealed by hand after every restart.
+- **Who is active:** `GET /v1/sys/leader` on any replica. Move the active role off
+  a replica with `PUT /v1/sys/step-down` (needs a token whose policy grants
+  `sys/step-down`).
+- **Health.** `/v1/sys/health` returns `429` on a standby; the chart's readiness
+  probe uses `?standbyok=true` so standbys are ready too.
+
+With the chart:
+
+```sh
+helm upgrade vault ./deploy/charts/ubixvault -n ubixvault --reuse-values \
+  --set storage.type=mysql --set ha.enabled=true --set replicaCount=3
+```
+
+That also adds a PodDisruptionBudget (`maxUnavailable: 1`) and soft pod
+anti-affinity. **On an existing install, enable HA in the order in
+[Upgrades](#8-upgrades), never in one step with a version upgrade.**
 
 ## 5. Health checks
 
@@ -348,7 +386,50 @@ recovery keys and a lost root token cannot be regenerated — reinitialize.
 
 Stored entries are format-versioned, so a newer binary reads an older store.
 Upgrade in place: stop the service, replace the binary, start it, and unseal (or
-let auto-unseal run). Take a snapshot first.
+let auto-unseal run). **Take a snapshot first.**
+
+With MySQL storage the database schema is versioned too. The first new-version
+process to start applies any migrations (one at a time, under a lock, so
+replicas starting together are safe). Migrations are forward-only: a binary
+refuses to start against a database a newer version has migrated, naming both
+versions. **Rolling back across a schema change therefore means restoring the
+snapshot you took before upgrading.**
+
+### Rolling upgrade of an HA deployment
+
+1. Take a snapshot (`ubixvault operator snapshot save`, or trigger the backup
+   CronJob).
+2. `helm upgrade` with the new image. The StatefulSet replaces one pod at a
+   time, highest ordinal first, waiting for each new pod to be ready (unsealed)
+   before the next; the PodDisruptionBudget keeps a second pod from being
+   disrupted meanwhile.
+3. What you will see: when the pod being replaced is the active one, it steps
+   down first and a standby takes over within about half a second, then it
+   drains. Depending on which pod is active, the role may move more than once
+   during a rollout; each move is that same sub-second handoff, and requests to
+   any replica are held across it. The first new pod applies any schema
+   migration; older pods keep running on an additive migration.
+4. Verify: `kubectl rollout status statefulset/<release>-ubixvault`, then
+   `GET /v1/sys/leader` shows an active replica on the new version.
+
+If an old-version pod restarts *during* the rollout after a migration, it
+refuses to start against the newer schema; the rollout replaces it in turn.
+
+### Enabling HA on an existing single-replica install
+
+A replica from before HA takes no lock and fences nothing, so it must never run
+against the database at the same time as HA replicas. Do it in separate steps:
+
+1. Take a snapshot.
+2. Upgrade to an HA-capable release **as-is** — one replica, `ha.enabled=false`.
+   Confirm it is healthy.
+3. `--set ha.enabled=true`, still `replicaCount=1`. The pod restarts with `-ha`
+   and becomes active; `GET /v1/sys/leader` reports `"ha_enabled": true`.
+4. `--set replicaCount=3`. New pods unseal and join as standbys.
+5. Prove a handoff before relying on it: `PUT /v1/sys/step-down` (or delete the
+   active pod) and watch `sys/leader` move.
+
+To go back to one replica: scale to 1 first, then set `ha.enabled=false`.
 
 ## 9. Verifying released images
 

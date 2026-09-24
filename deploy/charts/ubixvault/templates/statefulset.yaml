@@ -1,5 +1,11 @@
-{{- if gt (int .Values.replicaCount) 1 -}}
-{{- fail "ubixvault is single-node (no Raft HA yet): replicaCount must be 1" -}}
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.ha.enabled) -}}
+{{- fail "replicaCount > 1 needs ha.enabled=true (active/standby over storage.type=mysql); without HA every replica would write the same storage" -}}
+{{- end -}}
+{{- if and .Values.ha.enabled (ne .Values.storage.type "mysql") -}}
+{{- fail "ha.enabled requires storage.type=mysql (the file backend cannot elect an active replica)" -}}
+{{- end -}}
+{{- if not (has .Values.ha.antiAffinity (list "soft" "hard" "none")) -}}
+{{- fail "ha.antiAffinity must be soft, hard or none" -}}
 {{- end -}}
 {{- if and .Values.tls.enabled (not .Values.tls.certManager.enabled) (not .Values.tls.existingSecret) -}}
 {{- fail "tls.enabled is true: set tls.existingSecret (a kubernetes.io/tls Secret) or enable tls.certManager" -}}
@@ -29,7 +35,7 @@ metadata:
     {{- include "ubixvault.labels" . | nindent 4 }}
 spec:
   serviceName: {{ include "ubixvault.fullname" . }}
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "ubixvault.selectorLabels" . | nindent 6 }}
@@ -44,6 +50,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ubixvault.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -97,10 +104,27 @@ spec:
             - -seal-transit-tls-skip-verify
             {{- end }}
             {{- end }}
+            {{- if .Values.ha.enabled }}
+            - -ha
+            - -ha-cluster-listen
+            - {{ printf "0.0.0.0:%d" (int .Values.ha.clusterPort) | quote }}
+            - -ha-lock-ttl
+            - {{ .Values.ha.lockTTL | quote }}
+            - -ha-retry-interval
+            - {{ .Values.ha.retryInterval | quote }}
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
+            {{- if .Values.ha.enabled }}
+            # Replicas advertise their pod IP: other replicas forward to
+            # https://$POD_IP:<clusterPort>, and sys/leader reports the API URL.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- end }}
             {{- if .Values.autoUnseal.enabled }}
             - name: UBIXVAULT_AUTO_UNSEAL_KEY
               valueFrom:
@@ -129,6 +153,11 @@ spec:
             - name: api
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
+            {{- if .Values.ha.enabled }}
+            - name: cluster
+              containerPort: {{ .Values.ha.clusterPort }}
+              protocol: TCP
+            {{- end }}
           # Liveness/startup use /v1/sys/livez, which returns 200 whenever the
           # process is serving — regardless of seal state — so a sealed vault is
           # never killed before it can be (auto-)unsealed, and (unlike a bare TCP
@@ -150,9 +179,11 @@ spec:
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          # With HA, an unsealed standby is ready too (it forwards to the active),
+          # which is also what lets a rolling update move from pod to pod.
           readinessProbe:
             httpGet:
-              path: /v1/sys/health
+              path: {{ if .Values.ha.enabled }}/v1/sys/health?standbyok=true{{ else }}/v1/sys/health{{ end }}
               port: api
               scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
@@ -198,9 +229,27 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if and .Values.ha.enabled (eq .Values.ha.antiAffinity "soft") }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "ubixvault.selectorLabels" . | nindent 20 }}
+      {{- else if and .Values.ha.enabled (eq .Values.ha.antiAffinity "hard") }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "ubixvault.selectorLabels" . | nindent 18 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

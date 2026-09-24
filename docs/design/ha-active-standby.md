@@ -270,10 +270,12 @@ default `https://$POD_IP:8201`), `-ha-lock-ttl`, `-ha-retry-interval`.
 - Readiness probe → `/v1/sys/health?standbyok=true`, so unsealed standbys are ready
   and a StatefulSet rolling update can proceed pod by pod. The main Service keeps
   selecting all pods; standbys forward.
-- A headless Service for per-pod DNS (the StatefulSet's `serviceName`), exposing
-  the cluster port 8201; `-ha-cluster-addr` and `-ha-advertise-addr` come from
-  the pod's IP (`POD_IP` via the downward API). No certificate changes: the
-  cluster listener brings its own identity (§4).
+- No new Service: replicas advertise their pod IP (`POD_IP` via the downward
+  API) and reach each other directly on the cluster port 8201, so neither DNS
+  nor certificates change (the cluster listener brings its own identity, §4).
+  (A headless Service was the first plan; it was dropped because a StatefulSet's
+  `serviceName` — like `podManagementPolicy` — cannot change on an existing
+  release, and pod IPs make it unnecessary.)
 - `PodDisruptionBudget` with `maxUnavailable: 1`, and default pod anti-affinity
   (preferred) across nodes — a drain can never take two replicas at once.
 - `terminationGracePeriodSeconds` long enough for a clean `Release`.
@@ -307,7 +309,7 @@ default `https://$POD_IP:8201`), `-ha-lock-ttl`, `-ha-retry-interval`.
 3. **Done (`feat/ha-core`).** Core active/standby state machine, `becomeActive`/`stepDown`, sweeper gating,
    `-ha` flags.
 4. **Done (`feat/ha-forward`).** Standby forwarding over the mutual-TLS cluster listener, `sys/leader`, `sys/step-down` (the `sys/health` parameters shipped with slice 3).
-5. Chart (`ha.enabled`, PDB, anti-affinity, headless Service, SANs, probes).
+5. **Done (`feat/ha-chart`).** Chart (`ha.enabled`, PDB, soft/hard anti-affinity, `POD_IP`, cluster port, `standbyok` readiness, grace period) and the rolling-upgrade / enabling-HA procedure in `docs/DEPLOYMENT.md` § Upgrades.
 6. Failover test on kind: kill the active, drain its node, rolling upgrade under
    load — measure the gap, assert no write lands from a fenced replica.
 7. Release (MINOR — additive API and flags), README/POSITIONING/DEPLOYMENT, then

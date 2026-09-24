@@ -1,8 +1,15 @@
 {{- $tls := "" }}{{- if .Values.tls.enabled }}{{- $tls = " -address https://127.0.0.1:8200 -tls-skip-verify" }}{{- end }}
 uBix Vault ({{ .Chart.AppVersion }}) deployed as {{ include "ubixvault.fullname" . }}.
 
-  ⚠  Single-node, beta. No Raft HA and no external security review. Suitable for
-     sandbox / dev / internal use — not production HA.
+{{- if .Values.ha.enabled }}
+
+  HA: {{ .Values.replicaCount }} replica(s), active/standby over MySQL. Any replica serves
+  (standbys forward to the active); GET /v1/sys/leader shows which is active.
+  Replicas talk on port {{ .Values.ha.clusterPort }} (mutual TLS) — allow it pod-to-pod if you use
+  NetworkPolicies. Upgrades and enabling HA: docs/DEPLOYMENT.md § Upgrades.
+{{- end }}
+
+  ⚠  No external security review yet (tracked separately from the version).
 
 Service (in-cluster):
   https://{{ include "ubixvault.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}

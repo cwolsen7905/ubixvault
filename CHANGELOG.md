@@ -8,6 +8,17 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **Helm chart: `ha.enabled`.** Runs several replicas in active/standby HA over
+  MySQL storage (`replicaCount: 3` recommended): passes `-ha` and the pod IP,
+  exposes the cluster port (8201), probes readiness with
+  `/v1/sys/health?standbyok=true`, and adds a PodDisruptionBudget
+  (`maxUnavailable: 1`) and soft pod anti-affinity (`ha.antiAffinity`:
+  `soft`/`hard`/`none`). `replicaCount > 1` without `ha.enabled` is still
+  refused, as is `ha.enabled` without MySQL. New `terminationGracePeriodSeconds`
+  value (default 30, Kubernetes' own default). Single-replica renders are
+  otherwise unchanged. `docs/DEPLOYMENT.md` gains the HA guide, the rolling-upgrade
+  procedure, and the order for enabling HA on an existing install.
+
 - **Active/standby HA in the server (`-ha`), not yet in the Helm chart.** With
   `-storage mysql -ha`, every replica unseals and the one holding the HA lock is
   active; the rest are standbys. A standby takes over within `-ha-retry-interval`

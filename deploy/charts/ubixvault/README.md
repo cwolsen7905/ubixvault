@@ -1,10 +1,11 @@
 # uBix Vault Helm chart
 
-Deploys a **single-node** uBix Vault to Kubernetes.
+Deploys uBix Vault to Kubernetes: one replica by default, or several in
+active/standby HA over MySQL storage (`ha.enabled`).
 
-> **Beta / single-node.** There is no Raft HA yet and no external security
-> review. This chart is for sandbox / dev / internal use, not a production HA
-> deployment. It runs exactly one replica and refuses `replicaCount > 1`.
+> The 1.x API is stable ([VERSIONING](../../../docs/VERSIONING.md)); an external
+> security review has **not** happened yet and is tracked separately. Weigh that
+> before trusting it with production secrets.
 
 ## Prerequisites
 
@@ -96,15 +97,27 @@ least-privilege `sys/snapshot` token Secret.
 
 ## Design notes
 
-- **StatefulSet, 1 replica** with a `volumeClaimTemplate` for the encrypted data
-  directory. The chart hard-fails on `replicaCount > 1` because there is no HA.
+- **StatefulSet.** With file storage: 1 replica and a `volumeClaimTemplate` for
+  the encrypted data directory. `replicaCount > 1` is refused unless
+  `ha.enabled` (which requires MySQL storage).
+- **HA (`ha.enabled`).** Every replica unseals; the one holding a lock in the
+  database is active and the others forward to it over the cluster port (8201,
+  mutual TLS from a CA the vault manages itself — no certificates to supply).
+  The chart then passes `-ha` and the pod IP (`POD_IP`), exposes the cluster
+  port, probes readiness with `/v1/sys/health?standbyok=true` (standbys are
+  ready: they serve by forwarding), adds a PodDisruptionBudget
+  (`maxUnavailable: 1`) and soft pod anti-affinity. A drain or rolling restart
+  hands the active role over in about half a second. Enabling it on an existing
+  install and upgrading it: follow the order in
+  [DEPLOYMENT.md § Upgrades](../../../docs/DEPLOYMENT.md#8-upgrades).
 - **Auto-unseal first.** In Kubernetes, Shamir unseal after every restart is
   painful, so auto-unseal (a KEK in a Secret) is the default. Shamir still works
   — set `autoUnseal.enabled=false` and unseal manually via `kubectl exec`.
 - **Probes are split on purpose.** A sealed vault returns `503` on
-  `/v1/sys/health`. Liveness is therefore a **TCP** check (process is up), so a
-  sealed-but-alive pod is not crash-looped; **readiness** is an httpGet on the
-  health endpoint, so only an unsealed vault (`200`) receives traffic.
+  `/v1/sys/health`. Liveness and startup therefore use `/v1/sys/livez`, which
+  answers `200` whenever the process serves, sealed or not, so a sealed-but-alive
+  pod is not crash-looped; **readiness** uses `/v1/sys/health`, so only an
+  unsealed vault receives traffic (with HA, `?standbyok=true`: standbys too).
 - **Kubernetes auth method.** When `kubernetesAuth.enabled` (default), the
   release's ServiceAccount is bound to `system:auth-delegator` so the vault can
   validate pod ServiceAccount tokens via TokenReview.
@@ -124,7 +137,13 @@ least-privilege `sys/snapshot` token Secret.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `replicaCount` | `1` | Must be 1 (single-node). |
+| `replicaCount` | `1` | 1 unless `ha.enabled`; then 3 is recommended. |
+| `ha.enabled` | `false` | Active/standby HA; requires `storage.type=mysql`. |
+| `ha.clusterPort` | `8201` | Replica-to-replica port (mutual TLS). |
+| `ha.lockTTL` / `ha.retryInterval` | `15s` / `500ms` | Unplanned failover bound / standby lock retry. |
+| `ha.podDisruptionBudget.enabled` / `.maxUnavailable` | `true` / `1` | PDB when HA is on. |
+| `ha.antiAffinity` | `soft` | `soft`, `hard` or `none`; ignored if `affinity` is set. |
+| `terminationGracePeriodSeconds` | `30` | Time to step down and drain on shutdown. |
 | `image.repository` | `ghcr.io/cwolsen7905/ubixvault` | Build/push your own; no official image yet. |
 | `image.tag` | `""` | Defaults to the chart `appVersion`. |
 | `persistence.enabled` / `.size` | `true` / `1Gi` | Encrypted data volume. |
