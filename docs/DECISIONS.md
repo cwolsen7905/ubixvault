@@ -503,3 +503,48 @@ shared/distributed counter is only meaningful once replication exists, so
 cross-replica quota accuracy is explicitly deferred (noted in the design). Per-
 namespace scoping is deferred to the namespaces work, which the prefix model already
 anticipates.
+
+## D-021 — High availability: active/standby over the SQL backend, with a fenced lock
+
+**Status:** Proposed · 2026-09-24
+
+**Decision:** support **multiple replicas** against one MySQL/MariaDB database in
+HashiCorp Vault's Community HA model: every replica unseals, exactly one holds a
+lock in the database and serves (**active**), the rest are **standbys** that
+forward requests to it and take over when it releases or loses the lock. The lock
+sits behind a new storage-level `HABackend` interface; every write from the active
+is **fenced** by the lock's generation, so a replica that lost the lock without
+knowing it cannot write. Opt-in with `-ha` (requires `-storage mysql`); the file
+backend and single-replica deployments are unchanged. This **supersedes the
+"`replicaCount` stays 1 / not multi-writer HA" clause of D-014**; the rest of D-014
+stands. Design: `docs/design/ha-active-standby.md`.
+
+**Why:** operations teams drain and patch nodes routinely. With one replica, every
+drain is a vault outage of a reschedule plus an unseal, for the service every other
+workload gets its credentials from. D-014's replaceable node covers crash recovery,
+not planned maintenance. Active/standby over the database we already run is the
+smallest change that fixes that: the state inventory in the design shows almost all
+state is read through from storage, so takeover is a cache reset rather than a
+state rebuild, and a single writer keeps every existing read-modify-write
+(wrapping, transit rotation, identity, the lease sweeper) correct without touching
+the engines. Fencing is non-negotiable because the storage layer is last-writer-wins
+and timing-based step-down alone fails silently under GC pauses and partitions. No
+new dependency.
+
+**Options rejected:** *Multi-active* — needs compare-and-swap in the storage
+interface and a pass over every engine; that is the Enterprise replication item.
+*Integrated storage (Raft) now* — months of work, a local storage engine per
+replica, quorum-loss recovery as a new outage mode, and several new dependencies,
+all to remove a database that is already run as an HA service. *Redirect instead of
+forward* — exposes pod addresses to clients, and `curl`/PHP clients do not follow
+`307` by default.
+
+**Trade-off / follow-up:** HA now depends on the database for coordination as well
+as data; a database outage behaves as D-019 describes, on whichever replica is
+active. Unplanned failover takes up to the lock TTL (~15s by default); planned
+handoff is one retry interval (~2s). Each write gains one indexed read inside a
+transaction. Shamir-sealed clusters must be unsealed on every replica (as in Vault);
+auto-unseal is the recommended mode. Raft remains possible later because core sees
+only `HABackend` — Raft leadership would implement it. Four prerequisites ship
+first (listed in the design), one of which — concurrent double-unwrap of a
+response-wrapping token — is a single-node security bug in its own right.
