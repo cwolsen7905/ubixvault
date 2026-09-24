@@ -1,8 +1,10 @@
 name: CI
 
+# The canonical repo is on GitLab and mirrors every branch here, so a push to
+# any branch is an MR under review: test it before it merges, not after.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 permissions:
