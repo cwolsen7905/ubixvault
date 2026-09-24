@@ -171,18 +171,6 @@ func runServer(args []string) error {
 	}
 	c := core.New(phys, coreOpts...)
 
-	// Auto-unseal on startup if configured and already initialized.
-	if c.AutoUnsealEnabled() {
-		switch err := c.AutoUnseal(context.Background()); {
-		case err == nil:
-			log.Printf("auto-unsealed")
-		case errors.Is(err, core.ErrNotInitialized):
-			log.Printf("auto-unseal configured; vault is not yet initialized")
-		default:
-			log.Printf("WARNING: auto-unseal failed, starting sealed: %v", err)
-		}
-	}
-
 	opts := []api.Option{api.WithVersion(version)}
 	if *auditLog != "" {
 		device, err := audit.NewFileDevice(*auditLog)
@@ -230,6 +218,14 @@ func runServer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Auto-unseal in the background, retrying until the seal and storage are
+	// reachable, so a brief KMS or database outage at startup does not leave the
+	// vault sealed until the next restart. The API is already up meanwhile:
+	// livez answers, and health reports sealed (503) until this succeeds.
+	if c.AutoUnsealEnabled() {
+		go runAutoUnseal(ctx, c)
+	}
+
 	// Revoke expired dynamic-database leases in the background.
 	go handler.RunLeaseSweeper(ctx, time.Minute)
 
@@ -276,6 +272,36 @@ func runServer(args []string) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// Backoff bounds for the startup auto-unseal retry.
+const (
+	autoUnsealMinWait = time.Second
+	autoUnsealMaxWait = time.Minute
+)
+
+// runAutoUnseal drives [core.Core.RunAutoUnseal] and logs its progress. An
+// uninitialized vault is reported once rather than on every retry.
+func runAutoUnseal(ctx context.Context, c *core.Core) {
+	reportedUninit := false
+	err := c.RunAutoUnseal(ctx, autoUnsealMinWait, autoUnsealMaxWait, func(err error, next time.Duration) {
+		if errors.Is(err, core.ErrNotInitialized) {
+			if !reportedUninit {
+				log.Printf("auto-unseal configured; vault is not yet initialized")
+				reportedUninit = true
+			}
+			return
+		}
+		log.Printf("WARNING: auto-unseal failed, retrying in %s: %v", next, err)
+	})
+	switch {
+	case err == nil:
+		log.Printf("auto-unsealed")
+	case ctx.Err() != nil:
+		// Shutting down.
+	default:
+		log.Printf("ERROR: auto-unseal cannot succeed with this configuration, staying sealed: %v", err)
 	}
 }
 

@@ -1,7 +1,7 @@
 # Design note: High availability — active/standby over shared storage
 
-> **Status:** Proposed · 2026-09-24 · ADR: D-021 (supersedes the "`replicaCount`
-> stays 1" clause of D-014). Nothing here is implemented yet.
+> **Status:** Accepted · 2026-09-24 · ADR: D-021 (supersedes the "`replicaCount`
+> stays 1" clause of D-014). HA itself is not built yet; prerequisites are marked as they land.
 
 ## Goal
 
@@ -243,12 +243,12 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
 
 ## Prerequisites (independent of HA, fix first)
 
-1. **Response-wrapping unwrap is not single-use under concurrency — even on one
+1. **Done (MR !11).** **Response-wrapping unwrap is not single-use under concurrency — even on one
    node today.** `wrapping.Unwrap` is Get → Delete with no lock
    (`internal/wrapping/wrapping.go:109-127`); two concurrent unwraps of the same
    token can both return the payload. Serialize it in-process (a mutex, or a
    delete-that-reports-existence on the backend). Security fix, separate `fix/` MR.
-2. **Auto-unseal is a single attempt at startup** (`cmd/ubixvault/main.go:175-184`).
+2. **Done (`fix/auto-unseal-retry`).** **Auto-unseal is a single attempt at startup** (`cmd/ubixvault/main.go:175-184`).
    If the KMS or storage is briefly unreachable, the process stays sealed until
    restarted. A standby that silently stays sealed is no standby. Retry with
    backoff (consistent with D-019).
