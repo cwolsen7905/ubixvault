@@ -17,6 +17,9 @@ ha:
   clusterPort: 8201
   lockTTL: 15s            # unplanned failover takes up to this long
   retryInterval: 500ms    # how often standbys try for the lock
+  # On shutdown, keep serving this long after handing the active role over, so
+  # the Service stops routing here before the listener closes.
+  shutdownDelay: 5s
   podDisruptionBudget:
     enabled: true
     maxUnavailable: 1     # a drain never takes two replicas at once
@@ -25,8 +28,8 @@ ha:
   # when .affinity below is set.
   antiAffinity: soft
 
-# Long enough for an HA replica to step down (hand the lock over) and then
-# drain in-flight requests; each step is bounded at 10s by the server.
+# Long enough for an HA replica to step down (hand the lock over, <=10s), keep
+# serving for ha.shutdownDelay, then drain in-flight requests (<=10s).
 terminationGracePeriodSeconds: 30
 
 image:

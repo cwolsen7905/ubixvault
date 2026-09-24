@@ -8,6 +8,16 @@ All notable changes to uBix Vault are documented here. The format is based on
 
 ### Added
 
+- **`-shutdown-delay`** (chart: `ha.shutdownDelay`, default `5s` with HA). On
+  SIGTERM an HA replica hands the active role over at once, then keeps serving —
+  as a forwarding standby — for this long before closing its listeners, because
+  Kubernetes stops routing to a terminating pod asynchronously and connections
+  arriving in that window would otherwise be refused.
+- **HA failover test** (`.github/workflows/ha-e2e.yml`, `test/e2e/ha/`): three
+  replicas on kind with a client reading through the Service throughout; pod
+  deletion, node drain, rolling restart and `sys/step-down` must cost zero failed
+  requests, and a force-killed active must be replaced within the lock TTL.
+
 - **Helm chart: `ha.enabled`.** Runs several replicas in active/standby HA over
   MySQL storage (`replicaCount: 3` recommended): passes `-ha` and the pod IP,
   exposes the cluster port (8201), probes readiness with

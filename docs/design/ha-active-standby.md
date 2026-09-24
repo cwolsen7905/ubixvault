@@ -310,7 +310,7 @@ default `https://$POD_IP:8201`), `-ha-lock-ttl`, `-ha-retry-interval`.
    `-ha` flags.
 4. **Done (`feat/ha-forward`).** Standby forwarding over the mutual-TLS cluster listener, `sys/leader`, `sys/step-down` (the `sys/health` parameters shipped with slice 3).
 5. **Done (`feat/ha-chart`).** Chart (`ha.enabled`, PDB, soft/hard anti-affinity, `POD_IP`, cluster port, `standbyok` readiness, grace period) and the rolling-upgrade / enabling-HA procedure in `docs/DEPLOYMENT.md` § Upgrades.
-6. Failover test on kind: kill the active, drain its node, rolling upgrade under
+6. **Done (`feat/ha-e2e`).** Failover test on kind: kill the active, drain its node, rolling upgrade under
    load — measure the gap, assert no write lands from a fenced replica.
 7. Release (MINOR — additive API and flags), README/POSITIONING/DEPLOYMENT, then
    `ubixsys-web`. Roll out to `ubixvault-dev` at 3 replicas before prod (a

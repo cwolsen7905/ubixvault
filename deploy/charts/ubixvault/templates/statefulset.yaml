@@ -112,6 +112,8 @@ spec:
             - {{ .Values.ha.lockTTL | quote }}
             - -ha-retry-interval
             - {{ .Values.ha.retryInterval | quote }}
+            - -shutdown-delay
+            - {{ .Values.ha.shutdownDelay | quote }}
             {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
