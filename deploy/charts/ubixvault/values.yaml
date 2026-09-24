@@ -1,7 +1,33 @@
 # Default values for the ubixvault chart.
-# uBix Vault is single-node (no HA yet) — replicaCount must stay 1.
 
+# One replica unless ha.enabled — then 3 is the recommendation: it survives a
+# planned drain plus an unplanned loss. Without HA, more than 1 is refused.
 replicaCount: 1
+
+# Active/standby high availability (ADR D-021, docs/design/ha-active-standby.md).
+# Requires storage.type=mysql. Every replica unseals; the one holding a lock in
+# the database is active and the rest forward to it, so the Service can send
+# traffic to any of them. A drain or rolling restart hands over in about half a
+# second; a crashed active is replaced within lockTTL. Replicas talk to each
+# other on clusterPort with mutual TLS from a CA the vault keeps itself — no
+# certificates to supply. Read the rolling-upgrade notes in docs/DEPLOYMENT.md
+# before enabling this on an existing single-replica install.
+ha:
+  enabled: false
+  clusterPort: 8201
+  lockTTL: 15s            # unplanned failover takes up to this long
+  retryInterval: 500ms    # how often standbys try for the lock
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1     # a drain never takes two replicas at once
+  # Spread replicas across nodes: soft (preferred; still schedules on a small
+  # cluster), hard (required; needs >= replicaCount nodes), or none. Ignored
+  # when .affinity below is set.
+  antiAffinity: soft
+
+# Long enough for an HA replica to step down (hand the lock over) and then
+# drain in-flight requests; each step is bounded at 10s by the server.
+terminationGracePeriodSeconds: 30
 
 image:
   # No official image is published yet; point this at wherever you build/push
@@ -239,10 +265,10 @@ affinity: {}
 podAnnotations: {}
 podLabels: {}
 
-# Probe tuning. Liveness is a TCP check (the process is up) — NOT an HTTP check,
-# because a sealed vault returns 503 on /v1/sys/health and an httpGet liveness
-# probe would crash-loop it forever. Readiness is httpGet on health: only a
-# 200 (initialized AND unsealed) makes the pod ready to receive traffic.
+# Probe tuning. Liveness and startup use /v1/sys/livez, which answers 200
+# whenever the process serves, sealed or not — /v1/sys/health would return 503
+# while sealed and crash-loop the pod. Readiness uses /v1/sys/health: only an
+# initialized, unsealed vault gets traffic (with HA, standbys too).
 probes:
   startup:
     failureThreshold: 30
