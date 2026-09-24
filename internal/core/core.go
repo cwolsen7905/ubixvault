@@ -172,6 +172,11 @@ type Core struct {
 	rootAttempt *rootGen      // in-progress root regeneration, if any
 	rekey       *rekeyAttempt // in-progress rekey, if any
 	sealHooks   []func()      // run by Seal, outside mu
+	// stateCh is closed and replaced on every seal and unseal, so a waiter can
+	// notice the transition (see stateChanged). Guarded by mu.
+	stateCh chan struct{}
+
+	ha ha // active/standby state; zero value when HA is off (ADR D-021)
 }
 
 // Option configures a Core.
@@ -192,10 +197,11 @@ func WithAutoUnsealKey(kek []byte) Option {
 // New returns a Core over phys.
 func New(phys storage.Backend, opts ...Option) *Core {
 	b := barrier.New(phys)
-	c := &Core{phys: phys, barrier: b, tokens: token.NewStore(b)}
+	c := &Core{phys: phys, barrier: b, tokens: token.NewStore(b), stateCh: make(chan struct{})}
 	for _, opt := range opts {
 		opt(c)
 	}
+	c.ha.init()
 	return c
 }
 
@@ -235,6 +241,23 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 	if cfg.SecretShares < 2 || cfg.SecretShares > 255 ||
 		cfg.SecretThreshold < 2 || cfg.SecretThreshold > cfg.SecretShares {
 		return nil, ErrInvalidConfig
+	}
+
+	// With HA, only the lock holder may write, so initialization takes the lock
+	// first (before c.mu: acquiring can wait on another replica). That also
+	// serializes replicas initializing the same database concurrently: the
+	// loser finds it initialized below.
+	if c.ha.enabled() {
+		if ok, err := c.barrier.Initialized(ctx); err != nil {
+			return nil, err
+		} else if ok {
+			return nil, ErrAlreadyInitialized
+		}
+		release, err := c.ha.acquireForInit(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 
 	c.mu.Lock()
@@ -307,6 +330,7 @@ func (c *Core) Initialize(ctx context.Context, cfg InitConfig) (*InitResult, err
 		}); err != nil {
 			return nil, err
 		}
+		c.notifyLocked() // left unsealed
 		return &InitResult{RootToken: root.ID, RecoveryKeys: recoveryShares}, nil
 	}
 
@@ -359,6 +383,7 @@ func (c *Core) AutoUnseal(ctx context.Context) error {
 	if err := c.barrier.Unseal(ctx, masterKey); err != nil {
 		return fmt.Errorf("core: auto-unseal barrier: %w", err)
 	}
+	c.notifyLocked()
 	return nil
 }
 
@@ -413,6 +438,7 @@ func (c *Core) Unseal(ctx context.Context, share []byte) (*SealStatus, error) {
 	}
 
 	c.resetProgress()
+	c.notifyLocked()
 	return c.statusLocked(cfg, false), nil
 }
 
@@ -709,6 +735,7 @@ func (c *Core) Seal() {
 	c.mu.Lock()
 	c.barrier.Seal()
 	c.resetProgress()
+	c.notifyLocked()
 	hooks := slices.Clone(c.sealHooks)
 	c.mu.Unlock()
 

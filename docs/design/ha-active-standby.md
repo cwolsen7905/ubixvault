@@ -267,9 +267,9 @@ URL, default derived from `POD_IP`/hostname), `-ha-lock-ttl`, `-ha-retry-interva
 2. **Done (`feat/ha-lock`).** `HABackend` + MySQL lock + fencing, with conformance tests and MySQL
    integration tests that simulate a paused holder and a partition. No runtime
    change (nothing uses it yet).
-3. Core active/standby state machine, `becomeActive`/`stepDown`, sweeper gating,
+3. **Done (`feat/ha-core`).** Core active/standby state machine, `becomeActive`/`stepDown`, sweeper gating,
    `-ha` flags.
-4. Standby forwarding, `sys/health` parameters, `sys/leader`, `sys/step-down`.
+4. Standby forwarding, `sys/leader`, `sys/step-down` (the `sys/health` parameters shipped with slice 3).
 5. Chart (`ha.enabled`, PDB, anti-affinity, headless Service, SANs, probes).
 6. Failover test on kind: kill the active, drain its node, rolling upgrade under
    load — measure the gap, assert no write lands from a fenced replica.

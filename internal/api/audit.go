@@ -27,6 +27,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	defer func() { h.metrics.ObserveRequest(rec.status) }()
 
+	// An HA standby answers only lifecycle and health endpoints itself; anything
+	// else belongs to the active replica. (Forwarding to it is the next HA
+	// slice; until then the client is told to retry elsewhere.)
+	if h.core.Standby() && !standbyEndpoint(r.URL.Path) {
+		writeError(rec, http.StatusServiceUnavailable, "this replica is a standby; send requests to the active replica")
+		return
+	}
+
 	// Rate limiting: throttle authenticated/lifecycle endpoints (health, metrics,
 	// and the console are exempt so probes/scrapers/browsers aren't blocked).
 	// Rate-limit quotas: the default (global) quota applies to every non-public
@@ -144,6 +152,22 @@ func publicEndpoint(path string) bool {
 	}
 	switch path {
 	case "/", "/ui", "/v1/sys/health", "/v1/sys/livez", "/v1/sys/metrics":
+		return true
+	default:
+		return false
+	}
+}
+
+// standbyEndpoint reports whether a standby replica serves path itself: the
+// public endpoints, and the lifecycle calls that are per replica (unsealing and
+// sealing this process, reading its seal status) or that take the HA lock
+// themselves (init).
+func standbyEndpoint(path string) bool {
+	if publicEndpoint(path) {
+		return true
+	}
+	switch path {
+	case "/v1/sys/seal-status", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/init":
 		return true
 	default:
 		return false

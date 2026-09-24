@@ -14,9 +14,9 @@ var ErrFenced = errors.New("storage: write fenced: this replica does not hold th
 // HABackend is a [Backend] that can elect a single active writer among the
 // replicas sharing it (ADR D-021, docs/design/ha-active-standby.md).
 //
-// Once a replica has acquired a [Lock] from its HABackend, every write that
+// Once a replica has taken a [Lock] handle from its HABackend, every write that
 // replica makes through the backend is fenced: it succeeds only while the
-// replica still holds that acquisition. A replica that was paused past its lease
+// replica holds the lock, and only for the acquisition it currently holds. A replica that was paused past its lease
 // and resumes still believing it is active therefore cannot write — its writes
 // fail with [ErrFenced] instead of interleaving with the new active replica's.
 //

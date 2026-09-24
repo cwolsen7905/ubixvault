@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -106,6 +107,14 @@ func runServer(args []string) error {
 	fs.Var(&sealExternalArgs, "seal-external-arg", "extra argument passed before the wrap/unwrap mode (repeatable)")
 	sealExternalTimeout := fs.Duration("seal-external-timeout", 30*time.Second,
 		"timeout for each external seal command invocation")
+	haEnabled := fs.Bool("ha", envTrue("UBIXVAULT_HA"),
+		"active/standby HA over -storage mysql: replicas sharing the database elect one active (or $UBIXVAULT_HA)")
+	haAdvertise := fs.String("ha-advertise-addr", os.Getenv("UBIXVAULT_HA_ADVERTISE_ADDR"),
+		"URL other replicas reach this one on (default: scheme://$POD_IP-or-hostname:listen-port)")
+	haLockTTL := fs.Duration("ha-lock-ttl", storage.DefaultLockTTL,
+		"HA lock lease; an unplanned failover takes up to this long")
+	haRetry := fs.Duration("ha-retry-interval", storage.DefaultLockRetryInterval,
+		"how often a standby tries for the HA lock; a planned handoff takes up to this long")
 	rateLimit := fs.Float64("rate-limit", 0, "per-client API requests/second (0 disables rate limiting)")
 	rateBurst := fs.Float64("rate-limit-burst", 0, "rate-limit burst size; defaults to -rate-limit when unset")
 	rateTrustFwd := fs.Bool("rate-limit-trust-forwarded", false,
@@ -121,9 +130,12 @@ func runServer(args []string) error {
 		return err
 	}
 
-	phys, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
+	phys, haBackend, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
 	if err != nil {
 		return err
+	}
+	if *haEnabled && haBackend == nil {
+		return fmt.Errorf("-ha requires -storage mysql (the %s backend cannot elect an active replica)", *storageType)
 	}
 
 	// At most one auto-unseal mode may be configured.
@@ -168,6 +180,29 @@ func runServer(args []string) error {
 			return fmt.Errorf("auto-unseal-key must be 64 hex characters (32 bytes)")
 		}
 		coreOpts = append(coreOpts, core.WithAutoUnsealKey(kek))
+	}
+	if *haEnabled {
+		adv := *haAdvertise
+		if adv == "" {
+			if adv, err = defaultAdvertise(*listen, tlsEnabled); err != nil {
+				return err
+			}
+		}
+		holder, err := haHolderID()
+		if err != nil {
+			return err
+		}
+		coreOpts = append(coreOpts, core.WithHA(core.HAConfig{
+			Backend:   haBackend,
+			HolderID:  holder,
+			Advertise: adv,
+			Lock: storage.LockOptions{
+				TTL:           *haLockTTL,
+				RenewInterval: *haLockTTL / 3,
+				RetryInterval: *haRetry,
+			},
+		}))
+		log.Printf("HA enabled: replica %s, advertising %s", holder, adv)
 	}
 	c := core.New(phys, coreOpts...)
 
@@ -226,7 +261,18 @@ func runServer(args []string) error {
 		go runAutoUnseal(ctx, c)
 	}
 
-	// Revoke expired dynamic-database leases in the background.
+	// With HA, take part in the election: become active when holding the lock,
+	// and step down (releasing it) when sealed or shutting down.
+	var haDone chan struct{}
+	if c.HAEnabled() {
+		haDone = make(chan struct{})
+		go func() {
+			defer close(haDone)
+			_ = c.RunHA(ctx, log.Printf)
+		}()
+	}
+
+	// Revoke expired dynamic-database leases in the background (active only).
 	go handler.RunLeaseSweeper(ctx, time.Minute)
 
 	// Periodically drop idle rate-limit buckets so memory stays bounded.
@@ -269,10 +315,53 @@ func runServer(args []string) error {
 		return err
 	case <-ctx.Done():
 		log.Println("shutting down…")
+		// Step down first, so a standby takes over while this replica drains.
+		if haDone != nil {
+			select {
+			case <-haDone:
+			case <-time.After(10 * time.Second):
+				log.Printf("WARNING: HA step-down timed out; a standby takes over when the lease expires")
+			}
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// defaultAdvertise derives this replica's HA advertise URL from the listen
+// port and $POD_IP (set by the Helm chart), falling back to the hostname.
+func defaultAdvertise(listen string, tlsEnabled bool) (string, error) {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", fmt.Errorf("-ha: derive advertise address from -listen %q: %w", listen, err)
+	}
+	host := os.Getenv("POD_IP")
+	if host == "" {
+		if host, err = os.Hostname(); err != nil {
+			return "", fmt.Errorf("-ha: set -ha-advertise-addr (no $POD_IP, hostname: %w)", err)
+		}
+	}
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), nil
+}
+
+// haHolderID names this replica process in the HA lock: the hostname plus a
+// random suffix, so a restarted pod with the same name is a new holder and
+// cannot inherit a lease its previous process held.
+func haHolderID() (string, error) {
+	host, err := os.Hostname()
+	if err != nil {
+		host = "ubixvault"
+	}
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("-ha: holder id: %w", err)
+	}
+	return host + "-" + hex.EncodeToString(b), nil
 }
 
 // Backoff bounds for the startup auto-unseal retry.
@@ -539,7 +628,7 @@ func operatorSnapshotRestore(args []string) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	backend, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
+	backend, _, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
 	if err != nil {
 		return err
 	}
@@ -557,28 +646,31 @@ func operatorSnapshotRestore(args []string) error {
 // openStorageBackend builds the physical storage backend selected by storageType
 // ("file" uses dataDir; "mysql" uses dsn). Shared by the server and the offline
 // snapshot-restore command.
-func openStorageBackend(storageType, dataDir, dsn string) (storage.Backend, error) {
+func openStorageBackend(storageType, dataDir, dsn string) (storage.Backend, storage.HABackend, error) {
 	switch storageType {
 	case "file":
 		if dataDir == "" {
-			return nil, fmt.Errorf("-storage file requires -data <dir>")
+			return nil, nil, fmt.Errorf("-storage file requires -data <dir>")
 		}
-		return storage.NewFileBackend(dataDir)
+		b, err := storage.NewFileBackend(dataDir)
+		return b, nil, err
 	case "mysql":
 		if dsn == "" {
-			return nil, fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
+			return nil, nil, fmt.Errorf("-storage mysql requires -storage-mysql-dsn (or $UBIXVAULT_STORAGE_DSN)")
 		}
 		b, err := storage.NewMySQLBackend(dsn)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// Absorb brief MySQL outages (network blips, connection drops) with bounded
 		// retry instead of failing every request; a sustained outage still fails
 		// fast as storage.ErrUnavailable so readiness drops (see health) rather than
 		// the process dying.
-		return storage.NewRetryBackend(b), nil
+		// The HA lock comes from the unwrapped backend; its fencing applies to
+		// writes that reach it through the retry wrapper too.
+		return storage.NewRetryBackend(b), b, nil
 	default:
-		return nil, fmt.Errorf("unknown -storage %q (want file or mysql)", storageType)
+		return nil, nil, fmt.Errorf("unknown -storage %q (want file or mysql)", storageType)
 	}
 }
 
