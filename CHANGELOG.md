@@ -6,6 +6,11 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-09-28
+
+A patch release: a log flood behind Kubernetes ingress, and naming and console
+touch-ups. No API, storage, or chart-values changes; upgrade in place.
+
 ### Changed
 
 - **Name is written `uBixVault`** — one word, in the console, docs, chart, and
@@ -23,7 +28,8 @@ All notable changes to uBixVault are documented here. The format is based on
   (and HTTP/2 prefaces) the peer abandons by closing or resetting the connection
   are now counted and summarized every 5 minutes. Every other handshake failure is
   still logged as it happens. New flag `-log-tls-handshake-aborts` restores the
-  per-line output.
+  per-line output — set it if anything alerts on those lines, since the summary
+  carries a count but no client addresses.
 
 ## [1.2.0] — 2026-09-24
 
@@ -345,6 +351,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.2.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.1
 [1.2.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.1.0
 [1.0.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0
