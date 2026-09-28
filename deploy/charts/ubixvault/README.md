@@ -1,6 +1,6 @@
-# uBix Vault Helm chart
+# uBixVault Helm chart
 
-Deploys uBix Vault to Kubernetes: one replica by default, or several in
+Deploys uBixVault to Kubernetes: one replica by default, or several in
 active/standby HA over MySQL storage (`ha.enabled`).
 
 > The 1.x API is stable ([VERSIONING](../../../docs/VERSIONING.md)); an external

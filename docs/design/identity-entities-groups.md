@@ -8,7 +8,7 @@
 
 ## Problem
 
-uBix Vault has six ways to authenticate — token, AppRole, Kubernetes, userpass,
+uBixVault has six ways to authenticate — token, AppRole, Kubernetes, userpass,
 JWT/OIDC, and TLS client certificate. Each is self-contained: a successful login
 mints a token carrying exactly the policies named on the role that authorized it.
 There is no notion of *who* is behind a login. Concretely:
@@ -27,7 +27,7 @@ canonical subject, *aliases* map each auth-method login to an entity, and
 *groups* collect entities (with their own policies), optionally mirroring an
 external IdP's groups. Entity and group policies are merged into the token's
 policy set at request time. This is the single largest "feels incomplete versus
-Vault Community" gap in uBix Vault (see `docs/POSITIONING.md`).
+Vault Community" gap in uBixVault (see `docs/POSITIONING.md`).
 
 ## Goals
 
@@ -35,7 +35,7 @@ Vault Community" gap in uBix Vault (see `docs/POSITIONING.md`).
 - **Entity policies** and **group policies** are added to whatever the auth role
   already grants, evaluated fresh on each request (a group edit takes effect
   without re-issuing tokens).
-- **Internal groups** (membership managed in uBix Vault) and **external groups**
+- **Internal groups** (membership managed in uBixVault) and **external groups**
   (membership asserted by the auth method — e.g. an OIDC `groups` claim, a
   Kubernetes namespace) so IdP-side grouping drives policy.
 - **Zero new dependency** — the whole thing is storage records plus a resolver on

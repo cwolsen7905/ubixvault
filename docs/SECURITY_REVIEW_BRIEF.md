@@ -1,9 +1,9 @@
-# uBix Vault — External Security Review Brief (1.0)
+# uBixVault — External Security Review Brief (1.0)
 
-> A scoping brief for anyone assessing uBix Vault's security — a firm, an
+> A scoping brief for anyone assessing uBixVault's security — a firm, an
 > independent reviewer, or a funded-OSS program. It gives the hard scoping facts,
 > a pass/fail definition of the assurance bar, the crown-jewels scope, the specific
-> questions we care about, and the working model. uBix Vault has reached
+> questions we care about, and the working model. uBixVault has reached
 > **`1.0.0`** (API stability under SemVer); an independent external review is the
 > open **assurance milestone** that the version deliberately does *not* gate on —
 > the number communicates interface stability, not audit status
@@ -22,7 +22,7 @@
 | **Attack surface** | The HTTP API; with HA, the **cluster listener** (replica-to-replica, mutual TLS, port 8201); the storage backend (file or MySQL); the auto-unseal seal (KEK, transit, or external command); operator CLI/flags/env. **`net/http/pprof` is not exposed.** |
 | **Storage backends** | File (local dir) and **MySQL/MariaDB** (`-storage mysql`); both hold only barrier ciphertext. |
 
-## What uBix Vault is
+## What uBixVault is
 
 A self-hosted secrets manager in Go (HashiCorp Vault–style), single-node or
 active/standby HA over MySQL: an

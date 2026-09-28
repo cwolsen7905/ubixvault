@@ -1,6 +1,6 @@
 # Reviewer quickstart
 
-A one-page path to a running uBix Vault and its tests, for security reviewers.
+A one-page path to a running uBixVault and its tests, for security reviewers.
 Pairs with the scope in [`docs/SECURITY_REVIEW_BRIEF.md`](SECURITY_REVIEW_BRIEF.md)
 and the threat model in [`docs/DESIGN.md`](DESIGN.md) §5.
 

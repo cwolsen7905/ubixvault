@@ -5,7 +5,7 @@
 
 ## Goal
 
-Run **more than one uBix Vault replica** against the same MySQL/MariaDB database so
+Run **more than one uBixVault replica** against the same MySQL/MariaDB database so
 that planned maintenance — node drains, kernel patching, cluster upgrades, and our
 own rolling upgrades — does not take the vault offline, and an unplanned pod or node
 loss is covered by a replica that is already unsealed.

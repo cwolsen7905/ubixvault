@@ -102,14 +102,14 @@ const (
 	mysqlMigrateTimeout    = 30 * time.Minute
 )
 
-// mysqlErrNoSuchTable is ER_NO_SUCH_TABLE: a database uBix Vault never started
+// mysqlErrNoSuchTable is ER_NO_SUCH_TABLE: a database uBixVault never started
 // against has no schema table yet.
 const mysqlErrNoSuchTable = 1146
 
 // ErrSchemaTooNew is returned when the database was migrated by a newer uBix
 // Vault than this one: its schema may hold data this binary would misread or
 // clobber, so it refuses to start rather than guess.
-var ErrSchemaTooNew = errors.New("storage: database schema is newer than this uBix Vault supports")
+var ErrSchemaTooNew = errors.New("storage: database schema is newer than this uBixVault supports")
 
 // ensureSchema brings the database to [mysqlSchemaVersion], applying each
 // missing migration in order and recording it, and refuses a database that is
@@ -195,7 +195,7 @@ func schemaVersion(ctx context.Context, q interface {
 func checkNotTooNew(current int) error {
 	if current > mysqlSchemaVersion {
 		return fmt.Errorf("%w: database is at version %d, this binary knows up to %d — "+
-			"upgrade uBix Vault, or restore a snapshot taken before the newer version first ran",
+			"upgrade uBixVault, or restore a snapshot taken before the newer version first ran",
 			ErrSchemaTooNew, current, mysqlSchemaVersion)
 	}
 	return nil

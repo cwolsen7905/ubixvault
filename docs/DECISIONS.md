@@ -1,4 +1,4 @@
-# uBix Vault — Decision Log (ADRs)
+# uBixVault — Decision Log (ADRs)
 
 > **Status:** Active · Last updated 2026-07-18
 > Architecture decision records: the trade-offs behind each significant choice, and why.
@@ -81,7 +81,7 @@ clone. See `docs/ROADMAP.md`.
 
 **Status:** Accepted · 2026-07-18
 
-**Decision:** build uBix Vault rather than adopt OpenBao — a lightweight, from-scratch,
+**Decision:** build uBixVault rather than adopt OpenBao — a lightweight, from-scratch,
 uBixCore-native implementation with full control over the design. See
 `docs/POSITIONING.md` for the prior-art acknowledgment and rationale.
 
@@ -250,7 +250,7 @@ recovery-key / root-regeneration path.
 directly." The Transit seal removes that: the wrapping key lives in another vault
 and never reaches this host, which only holds a token authorized to
 encrypt/decrypt with it. It is **self-hosted and dependency-free** — the Transit
-paths are Vault-compatible, so the seal vault can be another uBix Vault or a
+paths are Vault-compatible, so the seal vault can be another uBixVault or a
 HashiCorp Vault — consistent with the minimal-dependency posture (no cloud-KMS
 SDK). The interface also leaves a clean seam for a future cloud-KMS/HSM seal.
 
@@ -306,7 +306,7 @@ through a generic **external-command (exec) seal** — a new `Seal` implementati
 (`type: external`) that pipes the master key to an operator-supplied command
 (`<cmd> wrap` reads plaintext on stdin → wrapped on stdout; `<cmd> unwrap` the
 reverse) — rather than importing cloud provider SDKs. The provider-specific logic
-and credentials live in that command; uBix Vault adds **no new dependency**. Full
+and credentials live in that command; uBixVault adds **no new dependency**. Full
 design in [`docs/design/kms-hsm-seal.md`](design/kms-hsm-seal.md).
 
 **Why:** the last production seal gap is "the KEK is supplied directly"; the
@@ -403,7 +403,7 @@ the value map; the expander does not change. No new dependency.
 
 **Decision:** add an LDAP/AD auth method built on **`github.com/go-ldap/ldap/v3`**,
 the standard Go LDAP client — the project's **second** direct dependency. LDAP is
-the last Vault-Community auth method uBix Vault lacked; Go has no stdlib LDAP
+the last Vault-Community auth method uBixVault lacked; Go has no stdlib LDAP
 client and LDAP is ASN.1-BER over TLS, and a vetted library for a protocol-heavy,
 security-sensitive login flow is exactly when a dependency earns its place (the
 same reasoning that admitted the MySQL driver, D-010). The LDAP protocol handling
@@ -416,7 +416,7 @@ below.
 
 **Historical — the options considered:** whether to add an LDAP/AD auth method,
 and if so how.
-LDAP is the last Vault-Community auth method uBix Vault lacks, but Go's standard
+LDAP is the last Vault-Community auth method uBixVault lacks, but Go's standard
 library has no LDAP client and LDAP is ASN.1-BER over TLS, so there is no
 stdlib path. The options (full analysis in
 [`docs/design/ldap-auth.md`](design/ldap-auth.md)):

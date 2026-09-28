@@ -1,4 +1,4 @@
-// Package storage defines uBix Vault's durable persistence layer.
+// Package storage defines uBixVault's durable persistence layer.
 //
 // A [Backend] is a simple key/value blob store. It persists opaque bytes and has
 // no knowledge of encryption: the barrier encrypts every value before it reaches

@@ -1,9 +1,9 @@
-# Contributing to uBix Vault
+# Contributing to uBixVault
 
-Thanks for your interest in uBix Vault. Contributions of all kinds are welcome — code,
+Thanks for your interest in uBixVault. Contributions of all kinds are welcome — code,
 documentation, design feedback, and issue reports.
 
-> **Project status:** uBix Vault is in pre-implementation design. The best contributions
+> **Project status:** uBixVault is in pre-implementation design. The best contributions
 > right now are review and discussion of the design documents in [`docs/`](docs/) — see
 > [`docs/DESIGN.md`](docs/DESIGN.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), and
 > [`docs/ROADMAP.md`](docs/ROADMAP.md).
@@ -48,7 +48,7 @@ docs(design): clarify barrier key hierarchy
 
 ## Versioning
 
-uBix Vault follows [Semantic Versioning](https://semver.org/).
+uBixVault follows [Semantic Versioning](https://semver.org/).
 
 ## License
 

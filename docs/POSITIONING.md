@@ -1,4 +1,4 @@
-# uBix Vault — Positioning & Prior Art
+# uBixVault — Positioning & Prior Art
 
 > **Status:** Active · Last updated 2026-09-24
 > Why this project exists alongside HashiCorp Vault and OpenBao.
@@ -8,15 +8,15 @@
 Secrets management is a mature space with strong existing implementations, and it's worth
 being clear about them:
 
-- **HashiCorp Vault** — the reference implementation and uBix Vault's API-compatibility
+- **HashiCorp Vault** — the reference implementation and uBixVault's API-compatibility
   target. Relicensed from MPL 2.0 to the source-available **BUSL** in 2023; now IBM-owned.
 - **OpenBao** — the MPL 2.0, Linux Foundation fork of Vault's last open version. A drop-in,
   actively-maintained, fully open secrets manager. For a production deployment that just
   needs an open Vault, OpenBao is the right choice.
 
-## Why build uBix Vault
+## Why build uBixVault
 
-uBix Vault is a lightweight, from-scratch secrets manager with full control over its design
+uBixVault is a lightweight, from-scratch secrets manager with full control over its design
 and footprint. It originated to provide secrets management for
 [uBixCore](https://github.com/cwolsen7905/uBixCore), but it is framework-agnostic and works with
 any stack over its HTTP API. The reasons to build rather than adopt:
@@ -42,7 +42,7 @@ explicitly in `docs/ROADMAP.md`, with the reasoning in `docs/DECISIONS.md` (D-00
 
 ## Where it sits: Vault Community vs. Enterprise
 
-uBix Vault deliberately targets a **subset of Vault _Community_** (the free tier), not
+uBixVault deliberately targets a **subset of Vault _Community_** (the free tier), not
 Enterprise — and it does not yet have full Community parity either. That's the point of
 "depth over breadth." Enterprise-tier features are, with a couple of exceptions, out of
 scope; the long-term catch-up backlog is tracked in `docs/ROADMAP.md` ("Beyond 1.0").
@@ -52,7 +52,7 @@ login MFA, and rate-limit quotas all moved from Enterprise to Community. Notably
 Vault's **external-command seal already covers cloud-KMS/HSM auto-unseal** — the capability
 that was Enterprise-gated (HSM) for years — reached without any provider SDK.
 
-| Vault Enterprise capability | uBix Vault |
+| Vault Enterprise capability | uBixVault |
 | --- | --- |
 | HSM / cloud-KMS auto-unseal (+ seal-wrap) | 🟡 KMS/HSM unseal via the external-command seal; no seal-wrap |
 | Automated snapshots to cloud storage | 🟡 scheduled backup CronJob (to a PVC, not object storage yet) |
@@ -66,12 +66,12 @@ that was Enterprise-gated (HSM) for years — reached without any provider SDK.
 | FIPS 140-2/-3 builds; entropy augmentation | ❌ |
 | Lease-count / resource quotas | ✅ rate-limit and lease-count quotas, path-scoped, Vault-compatible (1.1, D-020) |
 
-Of ~15 Enterprise-differentiated capabilities, uBix Vault has ~1 and a partial analog of ~2,
+Of ~15 Enterprise-differentiated capabilities, uBixVault has ~1 and a partial analog of ~2,
 and is missing ~12 — **by design.** The gaps that matter more for the project are the
 remaining *Community* ones (integrated Raft storage, more auth methods and DB plugins), also
 tracked in the roadmap; the real open milestone is an external security review.
 
-**High availability** is a Community feature in Vault, and uBix Vault has it since 1.2:
+**High availability** is a Community feature in Vault, and uBixVault has it since 1.2:
 active/standby replicas over MySQL/MariaDB — every replica unseals, one holds a fenced lock
 in the database and serves, standbys forward to it over their own mutual-TLS cluster port,
 and `sys/leader`, `sys/step-down` and the `sys/health` standby codes behave as Vault's do

@@ -1,10 +1,10 @@
-# uBix Vault — Design Document
+# uBixVault — Design Document
 
 > **Status:** Active · Last updated 2026-07-18
 
-## 1. What uBix Vault is
+## 1. What uBixVault is
 
-uBix Vault is an open-source, self-hosted **secrets management and data-protection**
+uBixVault is an open-source, self-hosted **secrets management and data-protection**
 system — an alternative to HashiCorp Vault. It originated to provide secrets management for
 [uBixCore](https://github.com/cwolsen7905/uBixCore), but it is **framework-agnostic**: it exposes
 a standard HTTP API and works with any application, language, or platform. It is the central
@@ -42,7 +42,7 @@ Rust/C++ module could be swapped in.
 
 ## 3. Core architecture
 
-uBix Vault is layered. Everything rests on the **barrier**; the barrier rests on the
+uBixVault is layered. Everything rests on the **barrier**; the barrier rests on the
 **storage backend**.
 
 ```
@@ -245,7 +245,7 @@ explicitly not defended. Reflects the implementation as of `v0.2.0-beta.11`.
 
 ## 6. MVP definition of done
 
-A single-node uBix Vault that can: initialize, seal/unseal via Shamir, authenticate with
+A single-node uBixVault that can: initialize, seal/unseal via Shamir, authenticate with
 tokens, enforce ACL policies, store versioned KV secrets, do encryption-as-a-service via
 Transit, issue and auto-revoke dynamic MariaDB credentials (via the `DatabasePlugin`
 interface), and write an HMAC'd audit log — all reachable over a Vault-API-compatible HTTP

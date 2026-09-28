@@ -1,17 +1,17 @@
-# uBix Vault — Roadmap
+# uBixVault — Roadmap
 
 > **Status:** Active · Last updated 2026-09-17 · Current release **`v1.0.0`**
 > (shipped — the official 1.0). The external security review is an assurance
 > milestone, **not** a version gate, and does **not** hold back v1 or later
 > releases (see `docs/VERSIONING.md`).
 
-uBix Vault is a **self-hosted secrets manager for a single organization**, built on a
+uBixVault is a **self-hosted secrets manager for a single organization**, built on a
 minimal-dependency, fully-auditable ethos: the security-critical code — the encryption
 barrier, Shamir seal/unseal, all cryptography — is standard-library Go written and tested
 in-house, so the entire trust path can be read in an afternoon. It speaks a
 Vault-compatible HTTP API so existing clients work unchanged.
 
-The **feature core is complete** and the interface is stable, so uBix Vault has
+The **feature core is complete** and the interface is stable, so uBixVault has
 reached **`1.0` — an API-stability and feature-completeness milestone
 ([SemVer](https://semver.org/)):** the HTTP API, CLI, storage format, and chart
 values are stable and we commit to SemVer compatibility rules from here. All the
@@ -28,7 +28,7 @@ because SemVer versions the interface, not the audit status.
 
 ## Honest positioning (read before deploying)
 
-uBix Vault matches HashiCorp Vault's *core feature surface* but **not** its *assurance*:
+uBixVault matches HashiCorp Vault's *core feature surface* but **not** its *assurance*:
 it has **not** had an independent third-party security audit. Regardless of the version
 number, until that review lands it is best suited for sandbox, dev, and
 internal/low-blast-radius use, not as a drop-in replacement for an audited secrets
@@ -76,7 +76,7 @@ Core — complete, tested, documented:
 
 ## Engineering gates for 1.0 — done
 
-These were the work that made uBix Vault safe to *run* — sequenced by what actually
+These were the work that made uBixVault safe to *run* — sequenced by what actually
 reduces risk, not by what is most fun to build. The guiding rule: **durability without
 correctness is a trap** — HA on top of un-hardened crypto is just a reliable way to lose
 or leak secrets — so the hardening ran *alongside* the storage work, not after it. **All

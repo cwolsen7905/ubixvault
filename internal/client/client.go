@@ -1,4 +1,4 @@
-// Package client is a small HTTP client for uBix Vault's system endpoints. It
+// Package client is a small HTTP client for uBixVault's system endpoints. It
 // backs the `ubixvault operator` commands and can be reused by other tooling.
 package client
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Client talks to a uBix Vault server.
+// Client talks to a uBixVault server.
 type Client struct {
 	addr          string
 	token         string

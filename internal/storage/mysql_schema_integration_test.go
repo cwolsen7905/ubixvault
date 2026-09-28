@@ -100,7 +100,7 @@ func TestSchemaFreshDatabase(t *testing.T) {
 	wantVersions(t, db)
 }
 
-// TestSchemaUpgradesVersion1 starts against a database exactly as uBix Vault
+// TestSchemaUpgradesVersion1 starts against a database exactly as uBixVault
 // 1.1 left it: data intact, version 2 applied and recorded.
 func TestSchemaUpgradesVersion1(t *testing.T) {
 	ctx := context.Background()

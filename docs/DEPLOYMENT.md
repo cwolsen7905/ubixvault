@@ -1,15 +1,15 @@
-# uBix Vault — Deployment Guide
+# uBixVault — Deployment Guide
 
-> **Status:** beta (`v0.2.0-beta`). uBix Vault is usable for real workloads but has
+> **Status:** beta (`v0.2.0-beta`). uBixVault is usable for real workloads but has
 > not had an external security review. Read the [Security notes](#security-notes)
 > before depending on it.
 
-This guide covers running a single uBix Vault node. It assumes the `ubixvault`
+This guide covers running a single uBixVault node. It assumes the `ubixvault`
 binary (`go build -o ubixvault ./cmd/ubixvault`).
 
 ## 1. Storage
 
-uBix Vault persists everything through a pluggable storage backend. Whatever the
+uBixVault persists everything through a pluggable storage backend. Whatever the
 backend, it holds **only ciphertext** — the barrier encrypts every value before
 it is stored, so the store never sees plaintext.
 
@@ -139,7 +139,7 @@ The KEK protects the entire vault — store it in a secrets manager or KMS, not 
 the same disk as the data.
 
 **Transit auto-unseal.** Instead of holding a KEK locally, unseal by wrapping the
-master key via another Vault-compatible **Transit** engine (uBix Vault or
+master key via another Vault-compatible **Transit** engine (uBixVault or
 HashiCorp Vault). The wrapping key lives in that vault and never reaches this
 host, which only needs a token authorized to encrypt/decrypt with the key:
 
@@ -218,7 +218,7 @@ threshold of them is the *only* way to regenerate a lost root token (see
 ```ini
 # /etc/systemd/system/ubixvault.service
 [Unit]
-Description=uBix Vault
+Description=uBixVault
 After=network-online.target
 
 [Service]
