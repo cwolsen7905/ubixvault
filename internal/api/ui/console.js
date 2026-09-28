@@ -1,5 +1,5 @@
 "use strict";
-// uBix Vault console. Vanilla JS, no dependencies. Secret values are rendered via
+// uBixVault console. Vanilla JS, no dependencies. Secret values are rendered via
 // textContent only (never innerHTML), so a value can't inject markup.
 
 const $ = (id) => document.getElementById(id);

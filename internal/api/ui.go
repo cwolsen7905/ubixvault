@@ -11,7 +11,7 @@ import (
 //go:embed ui
 var uiFS embed.FS
 
-// registerUI serves the read-only web console at /ui/ and redirects / to it.
+// registerUI serves the web console at /ui/ and redirects / to it.
 // The assets are static and expose nothing sensitive; the console reads live
 // data from the API using a token the operator supplies in the browser.
 func (h *Handler) registerUI(mux *http.ServeMux) {
