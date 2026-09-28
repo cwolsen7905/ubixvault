@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"log"
+	"regexp"
 	"sync/atomic"
 	"time"
 )
@@ -21,17 +20,20 @@ import (
 // failed certificate, an unsupported TLS version, a panic in a handler — is
 // written through unchanged.
 type handshakeAbortLog struct {
-	out        io.Writer
+	out        *log.Logger
 	suppressed atomic.Uint64
 }
 
-func newHandshakeAbortLog(out io.Writer) *handshakeAbortLog {
+func newHandshakeAbortLog(out *log.Logger) *handshakeAbortLog {
 	return &handshakeAbortLog{out: out}
 }
 
-// Logger returns a *log.Logger for http.Server.ErrorLog.
+// Logger returns a *log.Logger for http.Server.ErrorLog. It adds no prefix or
+// timestamp of its own, so each line reaches Write exactly as net/http
+// formatted it and can be matched whole; out adds the timestamp on the way
+// through.
 func (l *handshakeAbortLog) Logger() *log.Logger {
-	return log.New(l, "", log.LstdFlags)
+	return log.New(l, "", 0)
 }
 
 func (l *handshakeAbortLog) Write(p []byte) (int, error) {
@@ -39,7 +41,7 @@ func (l *handshakeAbortLog) Write(p []byte) (int, error) {
 		l.suppressed.Add(1)
 		return len(p), nil
 	}
-	return l.out.Write(p)
+	return len(p), l.out.Output(2, string(p))
 }
 
 // Run logs how many aborts were held back, once per interval and only when
@@ -53,32 +55,29 @@ func (l *handshakeAbortLog) Run(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			if n := l.suppressed.Swap(0); n > 0 {
-				log.Printf("%d aborted TLS handshakes in the last %s (connections closed before completing TLS, e.g. TCP health checks; -log-tls-handshake-aborts logs each)", n, every)
+				l.out.Printf("%d aborted TLS handshakes in the last %s (connections closed before completing TLS, e.g. TCP health checks; -log-tls-handshake-aborts logs each)", n, every)
 			}
 		}
 	}
 }
 
-var (
-	tlsHandshakeError = []byte("http: TLS handshake error from ")
-	http2PrefaceError = []byte("http2: server: error reading preface from client ")
-	abortCauses       = [][]byte{
-		[]byte(": EOF\n"),
-		[]byte("connection reset by peer"),
-		[]byte("broken pipe"),
-	}
-)
+// handshakeAbortLine matches, as a whole line, a TLS handshake or HTTP/2
+// preface that failed only because the peer went away: the cause must be a
+// bare EOF or a *net.OpError reset/broken pipe on the connection itself.
+//
+// It is anchored at both ends on purpose. Some handshake errors echo
+// client-supplied bytes — an offered ALPN protocol name, a bogus HTTP/2
+// greeting — so a client could put "connection reset by peer" inside its own
+// failure. A substring match would then hide an attacker's handshake from the
+// log; a whole-line match cannot be satisfied that way, because the echoed
+// bytes are quoted and followed by more text.
+var handshakeAbortLine = regexp.MustCompile(
+	`^(?:http: TLS handshake error from|http2: server: error reading preface from client) \S+: ` +
+		`(?:EOF|(?:read|write) tcp \S+->\S+: (?:read|write): (?:connection reset by peer|broken pipe))\n?$`)
 
-// isHandshakeAbort reports whether a server log line is a TLS handshake or
-// HTTP/2 preface that failed only because the peer went away.
+// isHandshakeAbort reports whether a server log line (as net/http wrote it,
+// without a timestamp) is a TLS handshake or HTTP/2 preface abandoned by the
+// peer.
 func isHandshakeAbort(line []byte) bool {
-	if !bytes.Contains(line, tlsHandshakeError) && !bytes.Contains(line, http2PrefaceError) {
-		return false
-	}
-	for _, cause := range abortCauses {
-		if bytes.Contains(line, cause) {
-			return true
-		}
-	}
-	return false
+	return handshakeAbortLine.Match(line)
 }

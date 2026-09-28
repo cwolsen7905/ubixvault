@@ -295,7 +295,7 @@ func runServer(args []string) error {
 	var serverLog *log.Logger
 	var abortLog *handshakeAbortLog
 	if !*logTLSAborts {
-		abortLog = newHandshakeAbortLog(log.Writer())
+		abortLog = newHandshakeAbortLog(log.Default())
 		serverLog = abortLog.Logger()
 	}
 
