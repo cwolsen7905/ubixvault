@@ -1,11 +1,11 @@
 # Versioning & assurance policy
 
-uBix Vault tracks **two independent things** that are easy to conflate. Keeping
+uBixVault tracks **two independent things** that are easy to conflate. Keeping
 them separate is deliberate.
 
 ## 1. Version — what the number means
 
-uBix Vault follows [Semantic Versioning](https://semver.org/). The version
+uBixVault follows [Semantic Versioning](https://semver.org/). The version
 communicates exactly one thing: **the stability of the public interface** — the
 Vault-compatible HTTP API, the `ubixvault` server/operator CLI flags, the storage
 format, and the Helm chart values.
@@ -54,7 +54,7 @@ truth.
 Reuse this verbatim in release notes, downstream docs, and anywhere the security
 posture needs stating. Keep it current as the assurance status changes.
 
-> **Security assurance:** uBix Vault has **not** yet undergone an independent
+> **Security assurance:** uBixVault has **not** yet undergone an independent
 > third-party security audit. Its cryptography and trust path are standard-library
 > Go, written in-house, fuzzed, and property-tested — but that is not a substitute
 > for outside review. Until an audit lands, weigh that before placing

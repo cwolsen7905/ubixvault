@@ -5,7 +5,7 @@
 
 ## Problem
 
-uBix Vault persists everything through a `storage.Backend` — a flat key/value
+uBixVault persists everything through a `storage.Backend` — a flat key/value
 blob store over `/`-separated paths (`internal/storage/storage.go`). Today the
 only production backend is `FileBackend`: a single directory on one node's local
 disk. That is the project's architectural ceiling for real use:

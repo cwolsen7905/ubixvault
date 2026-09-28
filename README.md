@@ -1,7 +1,7 @@
-# uBix Vault
+# uBixVault
 
 **Open, self-hosted secrets & encryption management — a from-scratch secrets
-manager in Go.** uBix Vault stores and generates secrets behind an encrypted,
+manager in Go.** uBixVault stores and generates secrets behind an encrypted,
 sealed barrier: an encryption barrier, Shamir seal/unseal, token auth with ACL
 policies, versioned KV secrets, encryption-as-a-service, and dynamic database
 credentials — over a Vault-API-compatible HTTP interface.
@@ -10,12 +10,12 @@ credentials — over a Vault-API-compatible HTTP interface.
 ![security: not yet independently audited](https://img.shields.io/badge/security-not%20yet%20independently%20audited-orange)
 
 > **`1.0` — API-stable and feature-complete; not yet independently audited.**
-> uBix Vault versions the *interface* with [SemVer](https://semver.org/): `1.0`
+> uBixVault versions the *interface* with [SemVer](https://semver.org/): `1.0`
 > means the HTTP API, CLI, storage format, and chart values are stable and the
 > feature set is complete. It says nothing about a security audit — that is a
 > separate axis (see [`docs/VERSIONING.md`](docs/VERSIONING.md)).
 >
-> **Security assurance:** uBix Vault has **not** yet undergone an independent
+> **Security assurance:** uBixVault has **not** yet undergone an independent
 > third-party security audit. Its cryptography and trust path are standard-library
 > Go, written in-house, fuzzed, and property-tested — but that is not a substitute
 > for outside review, which is an active, open milestone
@@ -24,7 +24,7 @@ credentials — over a Vault-API-compatible HTTP interface.
 > store such as [HashiCorp Vault](https://www.vaultproject.io/) or
 > [OpenBao](https://openbao.org/), start with low-criticality secrets, and make
 > the risk visible to whoever owns security. See [`SECURITY.md`](SECURITY.md) and
-> why uBix Vault exists alongside them: [`docs/POSITIONING.md`](docs/POSITIONING.md).
+> why uBixVault exists alongside them: [`docs/POSITIONING.md`](docs/POSITIONING.md).
 
 ## Capabilities
 
@@ -99,7 +99,7 @@ ubixvault operator seal -token <root_token>
 
 ## Architecture
 
-uBix Vault is layered, with everything resting on the encryption barrier:
+uBixVault is layered, with everything resting on the encryption barrier:
 
 ```
 HTTP API  ·  auth + ACL middleware  ·  audit
@@ -137,7 +137,7 @@ integration job on every change.
 
 ## Why it exists
 
-uBix Vault is a lightweight, from-scratch secrets manager built to support
+uBixVault is a lightweight, from-scratch secrets manager built to support
 [uBixCore](https://github.com/cwolsen7905/uBixCore), but it is
 **framework-agnostic** — any application can use it over its HTTP API. Full
 rationale in [`docs/POSITIONING.md`](docs/POSITIONING.md).

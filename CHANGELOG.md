@@ -1,10 +1,18 @@
 # Changelog
 
-All notable changes to uBix Vault are documented here. The format is based on
+All notable changes to uBixVault are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+### Changed
+
+- **Name is written `uBixVault`** — one word, in the console, docs, chart, and
+  startup output. Past entries below keep the spelling they shipped with.
+- **Console footer no longer says "read-only"** — the console has written KV,
+  policies, tokens, and PKI since 0.2.0-beta.3. It stays marked beta until
+  Transit and the newer auth methods are in `/ui/`.
 
 ## [1.2.0] — 2026-09-24
 

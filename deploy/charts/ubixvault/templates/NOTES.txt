@@ -1,5 +1,5 @@
 {{- $tls := "" }}{{- if .Values.tls.enabled }}{{- $tls = " -address https://127.0.0.1:8200 -tls-skip-verify" }}{{- end }}
-uBix Vault ({{ .Chart.AppVersion }}) deployed as {{ include "ubixvault.fullname" . }}.
+uBixVault ({{ .Chart.AppVersion }}) deployed as {{ include "ubixvault.fullname" . }}.
 
 {{- if .Values.ha.enabled }}
 

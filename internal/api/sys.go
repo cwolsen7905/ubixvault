@@ -1,4 +1,4 @@
-// Package api exposes uBix Vault's HTTP interface. This first cut implements the
+// Package api exposes uBixVault's HTTP interface. This first cut implements the
 // system endpoints for initialization and the seal/unseal lifecycle
 // (docs/DESIGN.md §4). Paths mirror HashiCorp Vault's for client compatibility.
 package api

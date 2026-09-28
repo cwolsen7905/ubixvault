@@ -165,7 +165,7 @@ spec:
           # never killed before it can be (auto-)unsealed, and (unlike a bare TCP
           # probe) a hung HTTP server is still detected. Readiness uses
           # /v1/sys/health (503 while sealed) so only an unsealed vault gets
-          # traffic. (livez requires uBix Vault >= 0.2.0-beta.10.)
+          # traffic. (livez requires uBixVault >= 0.2.0-beta.10.)
           startupProbe:
             httpGet:
               path: /v1/sys/livez

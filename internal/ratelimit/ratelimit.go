@@ -1,5 +1,5 @@
 // Package ratelimit is a small, dependency-free per-key token-bucket rate
-// limiter. uBix Vault uses it to throttle API clients (keyed by source IP) so a
+// limiter. uBixVault uses it to throttle API clients (keyed by source IP) so a
 // single client cannot brute-force unseal shares or tokens.
 //
 // Each key gets a bucket that refills at a fixed rate up to a burst ceiling;

@@ -1,4 +1,4 @@
-// Package barrier implements uBix Vault's cryptographic barrier: the layer that
+// Package barrier implements uBixVault's cryptographic barrier: the layer that
 // encrypts all data at rest (docs/DESIGN.md §3.1).
 //
 // A Barrier wraps a [storage.Backend] and encrypts every value with AES-256-GCM

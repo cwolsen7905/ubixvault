@@ -48,7 +48,7 @@ jobs:
             type=edge,branch=main
             type=sha
           labels: |
-            org.opencontainers.image.title=uBix Vault
+            org.opencontainers.image.title=uBixVault
             org.opencontainers.image.description=Self-hosted secrets manager (HashiCorp Vault-style)
             org.opencontainers.image.licenses=BSD-3-Clause
 

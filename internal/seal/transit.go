@@ -15,7 +15,7 @@ import (
 )
 
 // Transit wraps the master key via a remote Vault-compatible Transit engine
-// (uBix Vault or HashiCorp Vault). The wrapping key lives in that vault and
+// (uBixVault or HashiCorp Vault). The wrapping key lives in that vault and
 // never reaches this host; this host only holds a token authorized to encrypt
 // and decrypt with the named key.
 type Transit struct {

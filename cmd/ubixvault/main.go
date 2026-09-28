@@ -1,4 +1,4 @@
-// Command ubixvault is the uBix Vault server and CLI.
+// Command ubixvault is the uBixVault server and CLI.
 //
 // Implemented so far: the `server` command, which runs the HTTP API over a
 // file-backed, encrypted store. Initialization and unsealing are driven through
@@ -53,7 +53,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version", "-v", "--version":
-		fmt.Printf("uBix Vault %s\n", version)
+		fmt.Printf("uBixVault %s\n", version)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -64,7 +64,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Printf("uBix Vault %s\n\n", version)
+	fmt.Printf("uBixVault %s\n\n", version)
 	fmt.Println("usage: ubixvault <command> [flags]")
 	fmt.Println("\ncommands:")
 	fmt.Println("  server                     run the HTTP API server")
@@ -371,11 +371,11 @@ func runServer(args []string) error {
 	errCh := make(chan error, 1)
 	go func() {
 		if tlsEnabled {
-			log.Printf("uBix Vault %s listening on https://%s (storage: %s)", version, *listen, storageDesc)
+			log.Printf("uBixVault %s listening on https://%s (storage: %s)", version, *listen, storageDesc)
 			errCh <- srv.ListenAndServeTLS(*tlsCert, *tlsKey)
 		} else {
 			log.Printf("WARNING: serving plain HTTP without TLS — set -tls-cert/-tls-key for production")
-			log.Printf("uBix Vault %s listening on http://%s (storage: %s)", version, *listen, storageDesc)
+			log.Printf("uBixVault %s listening on http://%s (storage: %s)", version, *listen, storageDesc)
 			errCh <- srv.ListenAndServe()
 		}
 	}()

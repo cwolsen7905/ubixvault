@@ -21,7 +21,7 @@ One full episode from the prod container log, 2026-09-09:
 
 ```
 04:21:04 auto-unsealed
-04:21:04 uBix Vault 0.2.0-beta.10 listening on https://0.0.0.0:8200 (storage: mysql)
+04:21:04 uBixVault 0.2.0-beta.10 listening on https://0.0.0.0:8200 (storage: mysql)
 07:03:41 api: internal error: core: read seal config: storage: mysql get: context canceled
 07:03:51 api: internal error: core: read seal config: storage: mysql get: dial tcp 10.50.25.45:3306: operation was canceled
 07:04:01 api: internal error: core: read seal config: storage: mysql get: dial tcp 10.50.25.45:3306: operation was canceled

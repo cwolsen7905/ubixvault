@@ -1,11 +1,11 @@
 # Security Policy
 
-uBix Vault is a secrets manager, so security is the project's first priority. We
+uBixVault is a secrets manager, so security is the project's first priority. We
 take vulnerability reports seriously and appreciate coordinated disclosure.
 
 ## Project status (read this first)
 
-uBix Vault is a **pre-1.0 beta** (currently `v0.2.0-beta.10`). The cryptographic
+uBixVault is a **pre-1.0 beta** (currently `v0.2.0-beta.10`). The cryptographic
 core — the AES-256-GCM barrier, in-house Shamir seal/unseal, and all
 cryptography — is implemented and tested, and the project builds from the Go
 standard library plus a single third-party dependency (the MySQL driver). But:

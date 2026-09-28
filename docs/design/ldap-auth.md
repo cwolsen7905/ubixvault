@@ -12,13 +12,13 @@ for the user's group memberships, and maps the user and groups to policies —
 naturally via the identity layer's external groups (D-016, phase 3), with the
 LDAP groups fed in exactly like an OIDC `groups` claim.
 
-It is the one remaining Vault-**Community** auth method uBix Vault lacks. For
+It is the one remaining Vault-**Community** auth method uBixVault lacks. For
 organizations running AD/LDAP without an OIDC bridge, it is the auth method they
 actually use.
 
 ## The tension
 
-Every other engine and auth method in uBix Vault is stdlib-only or nearly so —
+Every other engine and auth method in uBixVault is stdlib-only or nearly so —
 the project has **exactly one** direct dependency (`go-sql-driver/mysql`) and
 sells that "readable in an afternoon, essentially no dependencies" posture as a
 feature. LDAP is the first capability that does not have a clean stdlib path:
@@ -74,7 +74,7 @@ bind/search and returns the result.
 ### D. Don't add LDAP; steer to OIDC
 
 Many directories are already fronted by an OIDC provider (Keycloak, Entra ID,
-Okta, Authentik, Dex-over-LDAP), which uBix Vault already supports — with group
+Okta, Authentik, Dex-over-LDAP), which uBixVault already supports — with group
 mapping via the phase-3 external groups.
 
 - **Cost:** organizations with *only* raw LDAP/AD and no OIDC bridge are

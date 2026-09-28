@@ -5,7 +5,7 @@
 
 ## Problem
 
-uBix Vault auto-unseals by wrapping its master key behind a `Seal`
+uBixVault auto-unseals by wrapping its master key behind a `Seal`
 (`internal/seal`). Two seals exist today:
 
 - **StaticKEK** (`type: auto`) — a 32-byte key-encryption key held locally
@@ -20,17 +20,17 @@ KMS, Azure Key Vault) or a **hardware HSM (PKCS#11)** — the key custody most
 organizations actually have — without the master key ever sitting on the host.
 
 The design question is not *whether* to support KMS/HSM, but *how* to do it
-**without adding a dependency**. uBix Vault has exactly one third-party library
+**without adding a dependency**. uBixVault has exactly one third-party library
 (the MySQL driver); pulling in the AWS/GCP/Azure SDKs — each a large transitive
 graph — would blow a hole in the "readable in an afternoon" posture (D-009,
 D-010, D-014) precisely in the security-critical seal path.
 
 ## Decision, in one line
 
-Add a generic **external-command (exec) seal**: uBix Vault pipes the master key
+Add a generic **external-command (exec) seal**: uBixVault pipes the master key
 to an operator-supplied command that performs the wrap/unwrap against whatever
 KMS or HSM the operator uses. The KMS-specific code and credentials live in that
-command, **not in uBix Vault** — so any KMS or HSM is reachable with zero new
+command, **not in uBixVault** — so any KMS or HSM is reachable with zero new
 dependency in the vault.
 
 ## Why an exec seal, not native SDK seals
@@ -50,7 +50,7 @@ Alternatives, and why they lose:
 - **PKCS#11 for HSMs, in the vault.** Needs a CGo PKCS#11 binding, which adds a
   dependency *and* breaks the static, distroless, CGo-free build. Rejected.
 - **"Just use the Transit seal."** Excellent when you already run a
-  Vault-compatible transit engine (another uBix Vault, HashiCorp Vault, OpenBao),
+  Vault-compatible transit engine (another uBixVault, HashiCorp Vault, OpenBao),
   and it stays the recommended path there. But it does not reach cloud-native KMS
   or a local HSM directly. The exec seal complements it.
 

@@ -1,6 +1,6 @@
 // Package metrics is a tiny, dependency-free Prometheus text-format exporter.
 //
-// uBix Vault deliberately keeps a small, auditable dependency graph, so rather
+// uBixVault deliberately keeps a small, auditable dependency graph, so rather
 // than pull in a metrics client library this package renders the handful of
 // series the vault exposes directly in the Prometheus text exposition format.
 // It supports two shapes: counters incremented inline, and gauges gathered from

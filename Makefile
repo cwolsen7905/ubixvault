@@ -1,4 +1,4 @@
-# uBix Vault — developer tasks.
+# uBixVault — developer tasks.
 # Run `make help` for the list.
 
 BINARY      := ubixvault

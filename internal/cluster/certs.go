@@ -92,7 +92,7 @@ func (c *Certs) EnsureCA(ctx context.Context) error {
 	now := c.now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          randomSerial(),
-		Subject:               pkix.Name{CommonName: "uBix Vault cluster CA"},
+		Subject:               pkix.Name{CommonName: "uBixVault cluster CA"},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              now.AddDate(10, 0, 0),
 		IsCA:                  true,
