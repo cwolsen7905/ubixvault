@@ -16,10 +16,10 @@ type k8sConfigRequest struct {
 }
 
 type k8sRoleRequest struct {
-	BoundServiceAccountNames      []string `json:"bound_service_account_names"`
-	BoundServiceAccountNamespaces []string `json:"bound_service_account_namespaces"`
-	Policies                      []string `json:"policies"`
-	TTL                           string   `json:"ttl"`
+	BoundServiceAccountNames      []string      `json:"bound_service_account_names"`
+	BoundServiceAccountNamespaces []string      `json:"bound_service_account_namespaces"`
+	Policies                      []string      `json:"policies"`
+	TTL                           vaultDuration `json:"ttl"`
 }
 
 type k8sLoginRequest struct {
@@ -51,7 +51,7 @@ func (h *Handler) k8sWriteRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var ttl time.Duration
 	if req.TTL != "" {
-		d, err := time.ParseDuration(req.TTL)
+		d, err := time.ParseDuration(string(req.TTL))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ttl must be a duration (e.g. \"1h\")")
 			return

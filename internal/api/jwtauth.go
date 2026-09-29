@@ -20,7 +20,7 @@ type jwtRoleRequest struct {
 	BoundAudiences []string          `json:"bound_audiences"`
 	BoundClaims    map[string]string `json:"bound_claims"`
 	Policies       []string          `json:"policies"`
-	TokenTTL       string            `json:"token_ttl"`
+	TokenTTL       vaultDuration     `json:"token_ttl"`
 }
 
 type jwtLoginRequest struct {
@@ -52,7 +52,7 @@ func (h *Handler) jwtWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TokenTTL, "token_ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
 	if !ok {
 		return
 	}

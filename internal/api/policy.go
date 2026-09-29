@@ -66,16 +66,34 @@ func (h *Handler) policyList(w http.ResponseWriter, r *http.Request) {
 // tokenCreate issues a new token with the requested policies.
 func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Policies []string `json:"policies"`
-		TTL      string   `json:"ttl"` // optional duration; empty uses the default TTL
+		Policies []string      `json:"policies"`
+		TTL      vaultDuration `json:"ttl"` // optional duration; empty uses the default TTL
+		// Sent on every request by Vault's own client (zero-valued when unused).
+		// display_name is cosmetic and ignored; the others would change what the
+		// token may do, so they are refused unless left at their zero value.
+		DisplayName string `json:"display_name"`
+		NumUses     int    `json:"num_uses"`
+		Type        string `json:"type"`
+		EntityAlias string `json:"entity_alias"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	switch {
+	case req.NumUses != 0:
+		writeError(w, http.StatusBadRequest, "num_uses is not supported; tokens are unlimited-use")
+		return
+	case req.Type != "" && req.Type != "service":
+		writeError(w, http.StatusBadRequest, "only service tokens are supported")
+		return
+	case req.EntityAlias != "":
+		writeError(w, http.StatusBadRequest, "entity_alias is not supported")
 		return
 	}
 
 	var ttl time.Duration
 	if req.TTL != "" {
-		d, perr := time.ParseDuration(req.TTL)
+		d, perr := time.ParseDuration(string(req.TTL))
 		if perr != nil || d <= 0 {
 			writeError(w, http.StatusBadRequest, "ttl must be a positive duration (e.g. \"1h\")")
 			return
@@ -147,14 +165,14 @@ func (h *Handler) renewSelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Increment string `json:"increment"` // optional duration; empty uses the default TTL
+		Increment vaultDuration `json:"increment"` // optional duration; empty uses the default TTL
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	var ttl time.Duration
 	if req.Increment != "" {
-		d, err := time.ParseDuration(req.Increment)
+		d, err := time.ParseDuration(string(req.Increment))
 		if err != nil || d <= 0 {
 			writeError(w, http.StatusBadRequest, "increment must be a positive duration")
 			return
