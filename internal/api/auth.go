@@ -14,6 +14,13 @@ import (
 // tokenHeader is the request header carrying the client token.
 const tokenHeader = "X-Vault-Token" //nolint:gosec // G101: this is an HTTP header name, not a credential
 
+// selfTokenPaths are the token endpoints every authenticated token may call on
+// itself without an ACL grant (see authorize).
+var selfTokenPaths = map[string]bool{
+	"auth/token/lookup-self": true,
+	"auth/token/revoke-self": true,
+}
+
 // ctxKey is an unexported context key type.
 type ctxKey int
 
@@ -85,6 +92,14 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 	// construction (the storage path derives from the token), so no ACL grant is
 	// needed or would widen it — this mirrors Vault's built-in default policy.
 	if path == cubbyholeMountPrefix || strings.HasPrefix(path, cubbyholeMountPrefix+"/") {
+		return true, nil
+	}
+
+	// Likewise every token may look itself up and revoke itself: both act only on
+	// the calling token, and neither can extend what it may do. renew-self is
+	// deliberately absent — renewal has no maximum TTL yet, so granting it to
+	// every token would let any token make itself effectively permanent.
+	if selfTokenPaths[path] {
 		return true, nil
 	}
 

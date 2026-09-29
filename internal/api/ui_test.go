@@ -1,7 +1,9 @@
 package api
 
 import (
+	"io/fs"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -50,5 +52,34 @@ func TestUIDoesNotShadowAPI(t *testing.T) {
 	}
 	if r := do(t, h, "GET", "/v1/sys/health", ""); r.Code == http.StatusNotFound {
 		t.Errorf("health route should not be shadowed by the UI")
+	}
+}
+
+// TestUIElementIDsExist catches console wiring drift: every element console.js
+// looks up with $("id") must exist in index.html, or that part of the console
+// silently does nothing (or throws on load and takes the rest with it).
+func TestUIElementIDsExist(t *testing.T) {
+	js, err := fs.ReadFile(uiFS, "ui/console.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := fs.ReadFile(uiFS, "ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := regexp.MustCompile(`\$\("([A-Za-z0-9_-]+)"\)`).FindAllStringSubmatch(string(js), -1)
+	if len(ids) == 0 {
+		t.Fatal("found no $(\"id\") lookups in console.js; the pattern is out of date")
+	}
+	seen := map[string]bool{}
+	for _, m := range ids {
+		id := m[1]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if !strings.Contains(string(html), `id="`+id+`"`) {
+			t.Errorf("console.js uses $(%q) but index.html has no element with that id", id)
+		}
 	}
 }
