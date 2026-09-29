@@ -548,7 +548,9 @@ async function polRead(name) {
   const r = await api("GET", POL(n));
   if (!r.ok) { panelMsg("pol-out", "error", friendlyError(r.status, r.body)); return; }
   const doc = r.body && r.body.data && r.body.data.policy;
-  const text = JSON.stringify(doc, null, 2);
+  // The policy arrives as text (as in Vault); pretty-print it when it is JSON.
+  let text = typeof doc === "string" ? doc : JSON.stringify(doc, null, 2);
+  try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* HCL: show as-is */ }
   const out = $("pol-out"); out.replaceChildren();
   const pre = document.createElement("pre"); pre.className = "policy-doc"; pre.textContent = text;
   out.appendChild(pre);

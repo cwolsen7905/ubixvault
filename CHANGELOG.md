@@ -17,8 +17,26 @@ All notable changes to uBixVault are documented here. The format is based on
   contain only certificates (a pasted private key is refused, not stored), and it
   cannot be combined with `insecure_tls`. Returned on config read, like Vault.
 
+### Changed
+
+- **`GET /v1/sys/policies/acl/<name>` returns `data.policy` as a string**, as
+  Vault does (the policy's canonical JSON text, which can be written back
+  unchanged). It was a JSON object, which Vault's own client could not read — its
+  `GetPolicy` panicked — and neither can Terraform's Vault provider. **If you
+  parse this response yourself, parse the string.** The console is updated.
+- **JSON policy documents reject unknown keys** (`400`). A misspelled `path`
+  used to be stored as an empty policy, and restrictions uBixVault does not
+  implement (e.g. `allowed_parameters`) were silently dropped, so the policy
+  granted more than written. HCL policies were already strict.
+
 ### Fixed
 
+- **Writing a policy the way Vault's clients do stored an empty policy.** Vault's
+  clients and Terraform send `{"policy": "<HCL or JSON text>"}`; uBixVault took
+  that body as the policy document itself, found no paths, stored a policy with
+  no rules, and answered `204`. It fails closed (an empty policy grants nothing)
+  but reported success. The `{"policy": ...}` shape is now accepted; a bare
+  document still works.
 - **HashiCorp's own Vault clients now work.** Checked end to end with the
   official Go client (`github.com/hashicorp/vault/api`), which the `vault` CLI
   and External Secrets Operator are built on. It failed at the first call before
