@@ -116,13 +116,21 @@ ubixvault server -listen 0.0.0.0:8200 -tls-cert /etc/ubixvault/tls.crt -tls-key 
 it in production.
 
 **Aborted handshakes are summarized, not logged one by one.** Load balancers and
-ingress controllers health-check backends by opening a TCP connection and closing
-it, which against a TLS port is an abandoned handshake. Instead of a log line per
-probe, the server logs a count every 5 minutes (`N aborted TLS handshakes in the
-last 5m0s`). Handshakes that fail for any other reason — a bad client
-certificate, an unsupported TLS version, plain HTTP sent to the TLS port — are
-still logged individually. `-log-tls-handshake-aborts` logs every abort again,
-for debugging a client that never completes a connection.
+ingress controllers health-check backends by opening a connection and closing it
+without making a request. Against a TLS port that is an abandoned handshake —
+either before TLS starts (a bare TCP check) or partway through it (the check
+starts TLS, then disconnects). Instead of a log line per probe, the server logs a
+count every 5 minutes (`N aborted TLS handshakes in the last 5m0s`). Handshakes
+that fail for any other reason — a bad client certificate, an unsupported TLS
+version, plain HTTP sent to the TLS port — are still logged individually.
+`-log-tls-handshake-aborts` logs every abort again, for debugging a client that
+never completes a connection.
+
+A check that gets partway through TLS still costs a full handshake: the server
+has already signed with its certificate key before the client leaves. The count
+is therefore also a rough measure of TLS work spent on health checks. An ECDSA
+(P-256) certificate makes each one far cheaper than RSA-4096; a longer check
+interval on the load balancer reduces how many there are.
 
 ## 3. Unsealing
 
