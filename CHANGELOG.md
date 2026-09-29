@@ -6,6 +6,17 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **LDAP auth: `certificate`** on `auth/ldap/config` — a PEM bundle of the CA
+  certificates that sign the directory's TLS certificate, as in Vault. Directories
+  that issue their own certificates (FreeIPA's Dogtag CA, Active Directory
+  enterprise CAs) can now be verified instead of needing `insecure_tls`, which
+  sent the bind password and every user's password to an unverified peer. When
+  set, only those CAs are trusted for the connection. Validated on write: it must
+  contain only certificates (a pasted private key is refused, not stored), and it
+  cannot be combined with `insecure_tls`. Returned on config read, like Vault.
+
 ### Fixed
 
 - **HashiCorp's own Vault clients now work.** Checked end to end with the
