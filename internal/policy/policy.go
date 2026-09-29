@@ -15,6 +15,7 @@
 package policy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,10 +94,16 @@ func bytesTrimLeadingSpace(data []byte) []byte {
 	return data[i:]
 }
 
-// Parse builds a named policy from its JSON document.
+// Parse builds a named policy from its JSON document. Unknown keys are an
+// error, at the top level and per path: silently dropping one would store a
+// different policy than the operator wrote — a misspelled "path" becomes an
+// empty policy, and a dropped restriction such as allowed_parameters (which
+// uBixVault does not implement) would grant more than intended.
 func Parse(name string, data []byte) (*Policy, error) {
 	var doc document
-	if err := json.Unmarshal(data, &doc); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedPolicy, err)
 	}
 	p := &Policy{Name: name}

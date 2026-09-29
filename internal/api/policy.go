@@ -12,14 +12,21 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
-// policyWrite creates or replaces an ACL policy. The request body is the policy
-// document (JSON): {"path": {"<pattern>": {"capabilities": [...]}}}.
+// policyWrite creates or replaces an ACL policy. The body is either Vault's API
+// shape, {"policy": "<HCL or JSON policy text>"} — what Vault's clients and
+// Terraform send — or the policy document itself (JSON or HCL), as earlier
+// uBixVault releases documented.
 func (h *Handler) policyWrite(w http.ResponseWriter, r *http.Request) {
 	body, ok := readBody(w, r)
 	if !ok {
 		return
 	}
-	p, err := policy.ParseDocument(r.PathValue("name"), body)
+	doc, err := policyText(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p, err := policy.ParseDocument(r.PathValue("name"), doc)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -43,7 +50,30 @@ func (h *Handler) policyRead(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	writeData(w, map[string]any{"name": name, "policy": json.RawMessage(doc)})
+	// A string, as in Vault: clients (Vault's own, Terraform) read it as text.
+	// It is the canonical JSON form, which can be written back unchanged.
+	writeData(w, map[string]any{"name": name, "policy": string(doc)})
+}
+
+// policyText extracts the policy document from a write body: the "policy"
+// string when the body is Vault's {"policy": "..."} shape, else the body itself.
+func policyText(body []byte) ([]byte, error) {
+	var wrapped map[string]json.RawMessage
+	if json.Unmarshal(body, &wrapped) != nil {
+		return body, nil // HCL, or not an object: the body is the document
+	}
+	raw, ok := wrapped["policy"]
+	if !ok {
+		return body, nil // a JSON policy document ({"path": ...})
+	}
+	if len(wrapped) != 1 {
+		return nil, errors.New(`a {"policy": ...} body must contain only "policy"`)
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return nil, errors.New(`"policy" must be a string holding the policy (HCL or JSON)`)
+	}
+	return []byte(text), nil
 }
 
 func (h *Handler) policyDelete(w http.ResponseWriter, r *http.Request) {

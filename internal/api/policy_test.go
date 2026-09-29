@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +129,56 @@ func TestPolicyRejectsMalformedHCL(t *testing.T) {
 	rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/bad", `path "a" { capabilities = [`, root)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed HCL = %d, want 400", rec.Code)
+	}
+}
+
+// Vault's clients (and Terraform) write {"policy": "<text>"}; before, that was
+// taken as the document itself and stored as an EMPTY policy with a 204.
+func TestPolicyWriteVaultWrappedBody(t *testing.T) {
+	h, root := unsealedHandler(t)
+	body := `{"policy":"path \"secret/data/*\" { capabilities = [\"read\"] }"}`
+	if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/reader", body, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("write = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	doAuth(t, h, "POST", "/v1/secret/data/app", `{"data":{"k":"v"}}`, root)
+	tok := tokenWith(t, h, root, `{"policies":["reader"],"ttl":"1h"}`)
+	if rec := doAuth(t, h, "GET", "/v1/secret/data/app", "", tok); rec.Code != http.StatusOK {
+		t.Fatalf("token with the written policy reading secret = %d, want 200 (policy stored empty?)", rec.Code)
+	}
+}
+
+// Reads return the policy as a string, as Vault does, and that string can be
+// written back unchanged.
+func TestPolicyReadIsStringAndRoundTrips(t *testing.T) {
+	h, root := unsealedHandler(t)
+	doAuth(t, h, "PUT", "/v1/sys/policies/acl/p", `path "secret/data/*" { capabilities = ["read", "list"] }`, root)
+	rec := doAuth(t, h, "GET", "/v1/sys/policies/acl/p", "", root)
+	text, ok := decode[map[string]any](t, rec)["data"].(map[string]any)["policy"].(string)
+	if !ok || !strings.Contains(text, "secret/data/*") {
+		t.Fatalf("policy = %#v, want a string containing the path", decode[map[string]any](t, rec)["data"])
+	}
+	wrapped, _ := json.Marshal(map[string]string{"policy": text})
+	if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/p2", string(wrapped), root); rec.Code != http.StatusNoContent {
+		t.Fatalf("writing the read-back text = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Unknown keys must fail loudly: a typo would otherwise store an empty policy,
+// and a dropped restriction (allowed_parameters) would grant more than written.
+func TestPolicyWriteRejectsUnknownKeys(t *testing.T) {
+	h, root := unsealedHandler(t)
+	for name, body := range map[string]string{
+		"misspelled path":         `{"paths":{"secret/*":{"capabilities":["read"]}}}`,
+		"allowed_parameters":      `{"path":{"secret/*":{"capabilities":["update"],"allowed_parameters":{"k":[]}}}}`,
+		"wrapped with extra keys": `{"policy":"path \"a\" { capabilities = [\"read\"] }","name":"x"}`,
+		"wrapped non-string":      `{"policy":{"path":{}}}`,
+	} {
+		if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/bad", body, root); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: write = %d, want 400; body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+	// The documented bare-document forms keep working.
+	if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/ok", `{"path":{"secret/*":{"capabilities":["read"]}}}`, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("bare JSON document = %d", rec.Code)
 	}
 }
