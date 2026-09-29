@@ -23,14 +23,15 @@ external review — are met. The threat model is documented in
 
 ## Supported versions
 
-While the project is pre-1.0, only the latest beta receives security fixes.
+Security fixes ship in the latest `1.x` release. The 1.x API is stable under
+SemVer (`docs/VERSIONING.md`), so upgrading within 1.x is the supported way to
+receive a fix; earlier minors are not patched separately.
 
 | Version | Supported |
 | --- | --- |
-| latest `0.2.0-beta.N` | ✅ |
-| older betas / `0.1.x` | ❌ |
-
-When 1.0 ships, this will move to a maintained-release model.
+| latest `1.x` | ✅ |
+| earlier `1.x` minors | ❌ — upgrade to the latest 1.x |
+| `0.x` betas | ❌ |
 
 ## Reporting a vulnerability
 

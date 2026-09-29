@@ -6,6 +6,25 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-29
+
+**Token scoping and console sign-in.** Fixes a critical privilege escalation in
+token creation (see Security), caps token renewal, and lets the web console sign
+in with userpass or LDAP. Backward-compatible with the 1.x API; no storage or
+chart-values changes.
+
+### Upgrade notes
+
+- **Read the Security section first** and upgrade promptly if any non-root policy
+  grants `auth/token/create`.
+- **Token creation is now scoped.** A caller that is neither root nor holds `sudo`
+  on `auth/token/create` gets `400` if it requests policies it does not hold, and
+  its child tokens cannot outlive it. If something relies on delegated token
+  creation with wider policies, give that caller `sudo` on `auth/token/create`
+  deliberately. Root-issued tokens, including long-lived CI tokens, are unchanged.
+- **Renewal is capped** at `-max-token-ttl` (default `768h`) for tokens whose own
+  TTL is shorter. Existing tokens are never shortened.
+
 ### Added
 
 - **Console sign-in.** The `/ui/` console signs in with a username and password
@@ -394,6 +413,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.3.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.3.0
 [1.2.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.1
 [1.2.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.0
 [1.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.1.0

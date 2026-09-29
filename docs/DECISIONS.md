@@ -551,7 +551,7 @@ response-wrapping token — is a single-node security bug in its own right.
 
 ## D-022 — Token scoping: child policies are a subset of the parent's, and renewal is capped
 
-**Status:** Accepted · 2026-09-29 · Implemented in the release after 1.2.1
+**Status:** Accepted · 2026-09-29 · Implemented in 1.3.0
 
 **Decision:** three rules on tokens, all matching HashiCorp Vault's behavior
 where Vault has an equivalent:
