@@ -215,3 +215,113 @@ func TestRenewNonExpiringIsNoOp(t *testing.T) {
 		t.Fatal("renewing a non-expiring token gave it an expiry")
 	}
 }
+
+// Renewal cannot push a short-lived token past the system maximum: the hole this
+// closes is a 1h token renewing itself with a 10-year increment.
+func TestRenewCappedAtSystemMax(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+	base := *now
+
+	tok, _ := st.CreateWithTTL(ctx, []string{"p"}, time.Hour)
+	if want := base.Add(DefaultMaxTTL); !tok.MaxExpiresAt.Equal(want) {
+		t.Fatalf("MaxExpiresAt = %v, want created+DefaultMaxTTL %v", tok.MaxExpiresAt, want)
+	}
+	renewed, err := st.Renew(ctx, tok.ID, 87600*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := base.Add(DefaultMaxTTL); !renewed.ExpiresAt.Equal(want) {
+		t.Fatalf("renewed to %v, want capped at %v", renewed.ExpiresAt, want)
+	}
+	// Past the ceiling the token is gone, however often it renewed.
+	*now = base.Add(DefaultMaxTTL + time.Second)
+	if _, err := st.Lookup(ctx, tok.ID); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("Lookup past ceiling = %v, want ErrTokenExpired", err)
+	}
+}
+
+// A token deliberately issued for longer than the system maximum (e.g. a 1-year
+// CI token) keeps its full lifetime: the ceiling is the later of the two.
+func TestLongTTLTokenKeepsItsLifetime(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+	year := 8760 * time.Hour
+
+	tok, _ := st.CreateWithTTL(ctx, []string{"ci"}, year)
+	if want := now.Add(year); !tok.ExpiresAt.Equal(want) || !tok.MaxExpiresAt.Equal(want) {
+		t.Fatalf("ExpiresAt=%v MaxExpiresAt=%v, want both %v", tok.ExpiresAt, tok.MaxExpiresAt, want)
+	}
+	renewed, _ := st.Renew(ctx, tok.ID, 2*year)
+	if !renewed.ExpiresAt.Equal(tok.MaxExpiresAt) {
+		t.Fatalf("renewed to %v, want capped at its own ceiling %v", renewed.ExpiresAt, tok.MaxExpiresAt)
+	}
+}
+
+func TestSetMaxTTL(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+	st.SetMaxTTL(2 * time.Hour)
+	tok, _ := st.CreateWithTTL(ctx, []string{"p"}, time.Hour)
+	if want := now.Add(2 * time.Hour); !tok.MaxExpiresAt.Equal(want) {
+		t.Fatalf("MaxExpiresAt = %v, want %v", tok.MaxExpiresAt, want)
+	}
+	st.SetMaxTTL(0) // restores the default
+	if st.maxTTL != DefaultMaxTTL {
+		t.Fatalf("SetMaxTTL(0) left maxTTL = %v", st.maxTTL)
+	}
+}
+
+// A token stored before ceilings existed (no MaxExpiresAt) is never shortened:
+// its derived ceiling is the later of its current expiry and created+max, and
+// the first renewal records it so it cannot drift.
+func TestLegacyTokenCeiling(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+	base := *now
+
+	// Simulate a pre-upgrade record: a 1-year token with no ceiling stored.
+	tok, _ := st.CreateWithTTL(ctx, []string{"legacy"}, 8760*time.Hour)
+	tok.MaxExpiresAt = time.Time{}
+	if err := st.save(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.MaxExpiry(tok); !got.Equal(tok.ExpiresAt) {
+		t.Fatalf("legacy MaxExpiry = %v, want its current expiry %v", got, tok.ExpiresAt)
+	}
+	renewed, _ := st.Renew(ctx, tok.ID, time.Hour)
+	if !renewed.MaxExpiresAt.Equal(base.Add(8760 * time.Hour)) {
+		t.Fatalf("recorded ceiling = %v, want %v", renewed.MaxExpiresAt, base.Add(8760*time.Hour))
+	}
+
+	// A short legacy token gets created+max, like a new one would.
+	short, _ := st.CreateWithTTL(ctx, []string{"legacy"}, time.Hour)
+	short.MaxExpiresAt = time.Time{}
+	if got := st.MaxExpiry(short); !got.Equal(base.Add(DefaultMaxTTL)) {
+		t.Fatalf("short legacy MaxExpiry = %v, want %v", got, base.Add(DefaultMaxTTL))
+	}
+}
+
+func TestCreateBoundedCannotOutliveBound(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+	bound := now.Add(2 * time.Hour)
+
+	child, err := st.CreateBounded(ctx, []string{"p"}, 876000*time.Hour, bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !child.ExpiresAt.Equal(bound) || !child.MaxExpiresAt.Equal(bound) {
+		t.Fatalf("ExpiresAt=%v MaxExpiresAt=%v, want both clamped to %v", child.ExpiresAt, child.MaxExpiresAt, bound)
+	}
+	renewed, _ := st.Renew(ctx, child.ID, 24*time.Hour)
+	if renewed.ExpiresAt.After(bound) {
+		t.Fatalf("renewed past bound: %v > %v", renewed.ExpiresAt, bound)
+	}
+
+	// Inside the bound, the requested TTL applies as usual.
+	short, _ := st.CreateBounded(ctx, []string{"p"}, 30*time.Minute, bound)
+	if want := now.Add(30 * time.Minute); !short.ExpiresAt.Equal(want) {
+		t.Fatalf("short child expiry = %v, want %v", short.ExpiresAt, want)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/policy"
@@ -72,18 +73,45 @@ func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		tok *token.Token
-		err error
-	)
+	var ttl time.Duration
 	if req.TTL != "" {
-		ttl, perr := time.ParseDuration(req.TTL)
-		if perr != nil || ttl <= 0 {
+		d, perr := time.ParseDuration(req.TTL)
+		if perr != nil || d <= 0 {
 			writeError(w, http.StatusBadRequest, "ttl must be a positive duration (e.g. \"1h\")")
 			return
 		}
+		ttl = d
+	}
+
+	parent, ok := tokenFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "no token on request")
+		return
+	}
+	// As in Vault (ADR D-022), a token without root or sudo on auth/token/create may only
+	// give a child policies it holds itself — otherwise permission to create
+	// tokens would be permission to mint any policy, including an admin one.
+	sudo, err := h.hasSudo(r.Context(), parent, "auth/token/create")
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+
+	var tok *token.Token
+	switch {
+	case !sudo:
+		if missing := notIn(req.Policies, parent.Policies); len(missing) > 0 {
+			writeError(w, http.StatusBadRequest,
+				"child policies must be subset of parent: not held by the calling token: "+strings.Join(missing, ", "))
+			return
+		}
+		// Nor may the child outlive the parent's maximum lifetime. (There is no
+		// token hierarchy, so revoking the parent does not revoke the child; this
+		// bound is what keeps a short-lived parent from minting a long-lived one.)
+		tok, err = h.tokens.CreateBounded(r.Context(), req.Policies, ttl, h.tokens.MaxExpiry(parent))
+	case ttl > 0:
 		tok, err = h.tokens.CreateWithTTL(r.Context(), req.Policies, ttl)
-	} else {
+	default:
 		tok, err = h.tokens.Create(r.Context(), req.Policies)
 	}
 	if err != nil {
@@ -91,6 +119,24 @@ func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tokenAuthResponse(tok))
+}
+
+// notIn returns the entries of want that are absent from have, in order and
+// without duplicates.
+func notIn(want, have []string) []string {
+	held := make(map[string]bool, len(have))
+	for _, p := range have {
+		held[p] = true
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, p := range want {
+		if !held[p] && !seen[p] {
+			missing = append(missing, p)
+			seen[p] = true
+		}
+	}
+	return missing
 }
 
 // renewSelf extends the lifetime of the calling token.

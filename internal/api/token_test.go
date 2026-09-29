@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"testing"
+
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 func TestTokenCreateWithTTL(t *testing.T) {
@@ -123,12 +125,108 @@ func TestRevokeSelfWithoutGrant(t *testing.T) {
 	}
 }
 
-// Renewal has no maximum TTL, so it must stay behind an explicit grant: a token
-// that could renew itself by default could make itself effectively permanent.
-func TestRenewSelfStillNeedsGrant(t *testing.T) {
+// Every token may renew itself (as under Vault's default policy), but never past
+// its ceiling: a 1h token asking for 10 years gets at most the system maximum.
+func TestRenewSelfWithoutGrantIsCapped(t *testing.T) {
 	h, root := unsealedHandler(t)
 	tok := createPlainToken(t, h, root)
-	if rec := doAuth(t, h, "POST", "/v1/auth/token/renew-self", `{"increment":"87600h"}`, tok); rec.Code != http.StatusForbidden {
-		t.Fatalf("renew-self without a grant = %d, want 403", rec.Code)
+	rec := doAuth(t, h, "POST", "/v1/auth/token/renew-self", `{"increment":"87600h"}`, tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew-self = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	ld := decode[map[string]any](t, rec)["auth"].(map[string]any)["lease_duration"].(float64)
+	if ceiling := token.DefaultMaxTTL.Seconds(); ld > ceiling {
+		t.Fatalf("renewed lease_duration = %v s, want capped at %v s", ld, ceiling)
+	}
+}
+
+// setPolicy writes an ACL policy as root.
+func setPolicy(t *testing.T, h http.Handler, root, name, doc string) {
+	t.Helper()
+	if rec := doAuth(t, h, "PUT", "/v1/sys/policies/acl/"+name, doc, root); rec.Code != http.StatusNoContent {
+		t.Fatalf("write policy %s = %d, body=%s", name, rec.Code, rec.Body.String())
+	}
+}
+
+func tokenWith(t *testing.T, h http.Handler, root, body string) string {
+	t.Helper()
+	rec := doAuth(t, h, "POST", "/v1/auth/token/create", body, root)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return decode[map[string]any](t, rec)["auth"].(map[string]any)["client_token"].(string)
+}
+
+// The escalation this closes: a token allowed only to create tokens minted one
+// carrying an admin policy (and read secrets it could not read itself).
+func TestTokenCreateCannotEscalatePolicies(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "admin", `{"path":{"*":{"capabilities":["create","read","update","delete","list"]}}}`)
+	setPolicy(t, h, root, "minter", `{"path":{"auth/token/create":{"capabilities":["update"]}}}`)
+	minter := tokenWith(t, h, root, `{"policies":["minter"],"ttl":"1h"}`)
+
+	for _, body := range []string{
+		`{"policies":["admin"]}`,
+		`{"policies":["minter","admin"]}`,
+		`{"policies":["root"]}`,
+	} {
+		rec := doAuth(t, h, "POST", "/v1/auth/token/create", body, minter)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("minter creating %s = %d, want 400; body=%s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestTokenCreateSubsetAllowed(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "minter", `{"path":{"auth/token/create":{"capabilities":["update"]}}}`)
+	setPolicy(t, h, root, "reader", `{"path":{"secret/data/*":{"capabilities":["read"]}}}`)
+	parent := tokenWith(t, h, root, `{"policies":["minter","reader"],"ttl":"1h"}`)
+
+	rec := doAuth(t, h, "POST", "/v1/auth/token/create", `{"policies":["reader"],"ttl":"30m"}`, parent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("subset create = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A child cannot outlive its parent: a 1h parent asking for a 100-year child
+// gets one bounded by the parent's own maximum lifetime.
+func TestTokenCreateChildBoundedByParent(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "minter", `{"path":{"auth/token/create":{"capabilities":["update"]}}}`)
+	parent := tokenWith(t, h, root, `{"policies":["minter"],"ttl":"1h"}`)
+
+	rec := doAuth(t, h, "POST", "/v1/auth/token/create", `{"policies":["minter"],"ttl":"876000h"}`, parent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	ld := decode[map[string]any](t, rec)["auth"].(map[string]any)["lease_duration"].(float64)
+	if ceiling := token.DefaultMaxTTL.Seconds(); ld > ceiling {
+		t.Fatalf("child lease_duration = %v s, want at most the parent's ceiling (%v s)", ld, ceiling)
+	}
+}
+
+// sudo on auth/token/create lifts both limits, as in Vault.
+func TestTokenCreateWithSudo(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "admin", `{"path":{"*":{"capabilities":["read"]}}}`)
+	setPolicy(t, h, root, "issuer", `{"path":{"auth/token/create":{"capabilities":["update","sudo"]}}}`)
+	issuer := tokenWith(t, h, root, `{"policies":["issuer"],"ttl":"1h"}`)
+
+	rec := doAuth(t, h, "POST", "/v1/auth/token/create", `{"policies":["admin"],"ttl":"8760h"}`, issuer)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sudo create = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if ld := decode[map[string]any](t, rec)["auth"].(map[string]any)["lease_duration"].(float64); ld < 8759*3600 {
+		t.Fatalf("sudo child lease_duration = %v s, want the full year", ld)
+	}
+}
+
+// Root keeps issuing long-lived tokens (the CI-token workflow): 8760h stays 8760h.
+func TestRootCanStillIssueLongLivedTokens(t *testing.T) {
+	h, root := unsealedHandler(t)
+	rec := doAuth(t, h, "POST", "/v1/auth/token/create", `{"policies":["ci-ro"],"ttl":"8760h"}`, root)
+	if ld := decode[map[string]any](t, rec)["auth"].(map[string]any)["lease_duration"].(float64); ld < 8759*3600 {
+		t.Fatalf("root-issued 8760h token lease_duration = %v s", ld)
 	}
 }

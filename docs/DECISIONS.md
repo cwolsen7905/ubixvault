@@ -548,3 +548,50 @@ auto-unseal is the recommended mode. Raft remains possible later because core se
 only `HABackend` — Raft leadership would implement it. Four prerequisites ship
 first (listed in the design), one of which — concurrent double-unwrap of a
 response-wrapping token — is a single-node security bug in its own right.
+
+## D-022 — Token scoping: child policies are a subset of the parent's, and renewal is capped
+
+**Status:** Accepted · 2026-09-29 · Implemented in the release after 1.2.1
+
+**Decision:** three rules on tokens, all matching HashiCorp Vault's behavior
+where Vault has an equivalent:
+
+1. **Child tokens only get policies the parent holds.** `auth/token/create` from
+   a token that is neither root nor holds `sudo` on `auth/token/create` must
+   request a subset of the caller's own token policies; anything else is a `400`
+   (`child policies must be subset of parent`). Root and `sudo` callers are
+   unrestricted, as in Vault.
+2. **A child cannot outlive its parent** under the same condition: its expiry and
+   its renewal ceiling are clamped to the parent's ceiling.
+3. **Every expiring token has a renewal ceiling**, fixed at creation: the later
+   of its own expiry and creation time plus a system maximum (`-max-token-ttl`,
+   default `768h`, Vault's default `max_lease_ttl`). `renew-self` never extends a
+   token past it. With that in place, **every token may call `renew-self`**
+   without an ACL grant, as under Vault's built-in `default` policy (joining
+   `lookup-self` and `revoke-self`).
+
+**Why:** before this, `auth/token/create` passed the requested policies and TTL
+straight through. A token whose only grant was `auth/token/create` could mint a
+token with *any* policy — including `root` — and any lifetime; verified against
+the 1.2.1 binary. Separately, `Store.Renew` set the expiry to now plus whatever
+increment the caller asked for, so any token allowed to renew could keep itself
+alive indefinitely. Vault closes both with parent/child scoping and `max_ttl`.
+
+**Options rejected:** *Clamp creation TTL to the system maximum, as Vault does by
+default.* Deployments rely on long-lived tokens issued deliberately by an
+operator (ubixcore's `vault-ci-setup.sh` mints 1-year CI tokens with a root
+token); clamping them to 32 days would break CI silently a month after the
+upgrade. The risk being closed is a token *extending itself*, which the ceiling
+covers without touching operator-issued lifetimes. *Count identity-entity
+policies toward the subset.* Vault checks the parent's token policies; doing the
+same keeps the rule predictable and never wider. *A full token hierarchy
+(revoking a parent revokes its children).* Correct but a larger change to storage
+and revocation; the lifetime bound stops a short-lived parent from minting a
+long-lived child, which was the exploitable part.
+
+**Trade-off / follow-up:** revoking a parent still does not revoke its children;
+they expire no later than the parent's ceiling. Tokens stored before this change
+have no ceiling recorded; theirs is derived as the later of their current expiry
+and created time plus the system maximum, and recorded on first renewal, so no
+existing token is shortened. Auth-method roles do not yet have a per-role
+`token_max_ttl`; their tokens use the system maximum.
