@@ -10,9 +10,9 @@ import (
 )
 
 type approleRoleRequest struct {
-	Policies    []string `json:"policies"`
-	TokenTTL    string   `json:"token_ttl"`
-	SecretIDTTL string   `json:"secret_id_ttl"`
+	Policies    []string      `json:"policies"`
+	TokenTTL    vaultDuration `json:"token_ttl"`
+	SecretIDTTL vaultDuration `json:"secret_id_ttl"`
 }
 
 type approleLoginRequest struct {
@@ -25,11 +25,11 @@ func (h *Handler) approleWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	tokenTTL, ok := parseOptionalDuration(w, req.TokenTTL, "token_ttl")
+	tokenTTL, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
 	if !ok {
 		return
 	}
-	secretTTL, ok := parseOptionalDuration(w, req.SecretIDTTL, "secret_id_ttl")
+	secretTTL, ok := parseOptionalDuration(w, string(req.SecretIDTTL), "secret_id_ttl")
 	if !ok {
 		return
 	}

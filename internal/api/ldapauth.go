@@ -9,17 +9,17 @@ import (
 )
 
 type ldapConfigRequest struct {
-	URL          string `json:"url"`
-	StartTLS     bool   `json:"starttls"`
-	InsecureTLS  bool   `json:"insecure_tls"`
-	BindDN       string `json:"bind_dn"`
-	BindPassword string `json:"bind_password"`
-	UserDN       string `json:"user_dn"`
-	UserAttr     string `json:"user_attr"`
-	GroupDN      string `json:"group_dn"`
-	GroupAttr    string `json:"group_attr"`
-	GroupFilter  string `json:"group_filter"`
-	TokenTTL     string `json:"token_ttl"`
+	URL          string        `json:"url"`
+	StartTLS     bool          `json:"starttls"`
+	InsecureTLS  bool          `json:"insecure_tls"`
+	BindDN       string        `json:"bind_dn"`
+	BindPassword string        `json:"bind_password"`
+	UserDN       string        `json:"user_dn"`
+	UserAttr     string        `json:"user_attr"`
+	GroupDN      string        `json:"group_dn"`
+	GroupAttr    string        `json:"group_attr"`
+	GroupFilter  string        `json:"group_filter"`
+	TokenTTL     vaultDuration `json:"token_ttl"`
 }
 
 type ldapGroupRequest struct {
@@ -35,7 +35,7 @@ func (h *Handler) ldapConfigure(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TokenTTL, "token_ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
 	if !ok {
 		return
 	}

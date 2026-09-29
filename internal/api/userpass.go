@@ -9,9 +9,9 @@ import (
 )
 
 type userpassUserRequest struct {
-	Password string   `json:"password"`
-	Policies []string `json:"policies"`
-	TokenTTL string   `json:"token_ttl"`
+	Password string        `json:"password"`
+	Policies []string      `json:"policies"`
+	TokenTTL vaultDuration `json:"token_ttl"`
 }
 
 type userpassLoginRequest struct {
@@ -23,7 +23,7 @@ func (h *Handler) userpassWriteUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TokenTTL, "token_ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
 	if !ok {
 		return
 	}

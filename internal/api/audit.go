@@ -22,6 +22,13 @@ const auditHMACKeyPath = "sys/audit/hmac-key"
 // auditing is fail-closed: if the entry cannot be recorded, the request is
 // refused (500) and never processed, so nothing proceeds unaudited.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Vault accepts a list as either the LIST method or GET with list=true, and
+	// its own client sends the latter. Normalize first, so routing, the ACL
+	// check (list capability), rate limits, audit and HA forwarding all see LIST.
+	if r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
+		r.Method = "LIST"
+	}
+
 	// Wrap once so both metrics and audit see the final status code; count every
 	// request toward metrics regardless of the decisions below.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}

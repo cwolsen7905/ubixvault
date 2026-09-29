@@ -14,8 +14,8 @@ type dbConfigRequest struct {
 }
 
 type dbRoleRequest struct {
-	CreationStatements []string `json:"creation_statements"`
-	DefaultTTL         string   `json:"default_ttl"` // duration string, e.g. "1h"
+	CreationStatements []string      `json:"creation_statements"`
+	DefaultTTL         vaultDuration `json:"default_ttl"` // duration string, e.g. "1h"
 }
 
 func (h *Handler) dbConfigure(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +50,7 @@ func (h *Handler) dbWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, err := time.ParseDuration(req.DefaultTTL)
+	ttl, err := time.ParseDuration(string(req.DefaultTTL))
 	if err != nil || ttl <= 0 {
 		writeError(w, http.StatusBadRequest, "default_ttl must be a positive duration (e.g. \"1h\")")
 		return
@@ -129,8 +129,8 @@ func (h *Handler) dbCredentials(w http.ResponseWriter, r *http.Request) {
 }
 
 type leaseIDRequest struct {
-	LeaseID   string `json:"lease_id"`
-	Increment string `json:"increment"` // renew only; optional duration
+	LeaseID   string        `json:"lease_id"`
+	Increment vaultDuration `json:"increment"` // renew only; optional duration
 }
 
 func (h *Handler) leaseRevoke(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func (h *Handler) leaseRenew(w http.ResponseWriter, r *http.Request) {
 	}
 	var ttl time.Duration
 	if req.Increment != "" {
-		d, err := time.ParseDuration(req.Increment)
+		d, err := time.ParseDuration(string(req.Increment))
 		if err != nil || d <= 0 {
 			writeError(w, http.StatusBadRequest, "increment must be a positive duration")
 			return

@@ -6,6 +6,28 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **HashiCorp's own Vault clients now work.** Checked end to end with the
+  official Go client (`github.com/hashicorp/vault/api`), which the `vault` CLI
+  and External Secrets Operator are built on. It failed at the first call before
+  this; now init, unseal, KV v2, listing, policies, token create/lookup/renew/
+  revoke and userpass login all work:
+  - **Every write route accepts both `PUT` and `POST`**, as in Vault. 41 routes
+    accepted only one, so e.g. `vault operator init`/`unseal` and the Go client's
+    `PUT auth/kubernetes/login` (what ESO sends) got `405`.
+  - **`GET …?list=true` is a list**, as in Vault (the Go client lists this way);
+    only the `LIST` method worked, and listing the top of the KV store failed.
+  - **Durations accept a number of seconds** (`3600`, `"3600"`) as well as
+    `"1h"`, on every TTL/increment field, as in Vault.
+  - **`sys/init`, `sys/unseal` and `auth/token/create` accept the fields Vault's
+    client always sends.** Fields uBixVault does not implement are accepted only
+    at their zero value and otherwise refused with a clear error — never silently
+    ignored where that would change the result (e.g. `pgp_keys`, which would
+    otherwise return plaintext shares, or `num_uses`). With auto-unseal,
+    `recovery_shares`/`recovery_threshold` configure the recovery keys, as in
+    Vault.
+
 ## [1.3.0] — 2026-09-29
 
 **Token scoping and console sign-in.** Fixes a critical privilege escalation in

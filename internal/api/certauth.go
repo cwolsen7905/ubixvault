@@ -9,10 +9,10 @@ import (
 )
 
 type certRoleRequest struct {
-	Certificate        string   `json:"certificate"`
-	Policies           []string `json:"policies"`
-	AllowedCommonNames []string `json:"allowed_common_names"`
-	TokenTTL           string   `json:"token_ttl"`
+	Certificate        string        `json:"certificate"`
+	Policies           []string      `json:"policies"`
+	AllowedCommonNames []string      `json:"allowed_common_names"`
+	TokenTTL           vaultDuration `json:"token_ttl"`
 }
 
 func (h *Handler) certWriteCert(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +20,7 @@ func (h *Handler) certWriteCert(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TokenTTL, "token_ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
 	if !ok {
 		return
 	}

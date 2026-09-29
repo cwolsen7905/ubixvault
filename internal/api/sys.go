@@ -162,34 +162,33 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("GET /v1/sys/livez", h.livez)
 	mux.HandleFunc("GET /v1/sys/metrics", h.metricsEndpoint)
 	mux.HandleFunc("GET /v1/sys/seal-status", h.sealStatus)
-	mux.HandleFunc("POST /v1/sys/init", h.initialize)
-	mux.HandleFunc("POST /v1/sys/unseal", h.unseal)
-	mux.HandleFunc("POST /v1/sys/seal", h.authenticate(h.seal))
+	handleWrite(mux, "/v1/sys/init", h.initialize)
+	handleWrite(mux, "/v1/sys/unseal", h.unseal)
+	handleWrite(mux, "/v1/sys/seal", h.authenticate(h.seal))
 	mux.HandleFunc("GET /v1/sys/leader", h.leader)
-	mux.HandleFunc("PUT /v1/sys/step-down", h.authenticate(h.stepDown))
-	mux.HandleFunc("POST /v1/sys/step-down", h.authenticate(h.stepDown))
+	handleWrite(mux, "/v1/sys/step-down", h.authenticate(h.stepDown))
 
 	// Root-token regeneration (recovery). Unauthenticated — authority is proven
 	// by supplying a quorum of unseal shares, since the root token is lost.
 	mux.HandleFunc("GET /v1/sys/generate-root/attempt", h.generateRootStatus)
-	mux.HandleFunc("POST /v1/sys/generate-root/init", h.generateRootInit)
+	handleWrite(mux, "/v1/sys/generate-root/init", h.generateRootInit)
 	mux.HandleFunc("DELETE /v1/sys/generate-root/init", h.generateRootCancel)
-	mux.HandleFunc("POST /v1/sys/generate-root/update", h.generateRootUpdate)
+	handleWrite(mux, "/v1/sys/generate-root/update", h.generateRootUpdate)
 
 	// Rekey — rotate the unseal shares by re-splitting the master key. Like
 	// generate-root, unauthenticated: authority is a quorum of current shares.
 	mux.HandleFunc("GET /v1/sys/rekey/init", h.rekeyStatus)
-	mux.HandleFunc("POST /v1/sys/rekey/init", h.rekeyInit)
+	handleWrite(mux, "/v1/sys/rekey/init", h.rekeyInit)
 	mux.HandleFunc("DELETE /v1/sys/rekey/init", h.rekeyCancel)
-	mux.HandleFunc("POST /v1/sys/rekey/update", h.rekeyUpdate)
+	handleWrite(mux, "/v1/sys/rekey/update", h.rekeyUpdate)
 
 	// KV v2 secrets engine — all endpoints require authentication.
 	mux.HandleFunc("GET /v1/secret/data/{path...}", h.authenticate(h.kvRead))
-	mux.HandleFunc("POST /v1/secret/data/{path...}", h.authenticate(h.kvWrite))
+	handleWrite(mux, "/v1/secret/data/{path...}", h.authenticate(h.kvWrite))
 	mux.HandleFunc("DELETE /v1/secret/data/{path...}", h.authenticate(h.kvDeleteLatest))
-	mux.HandleFunc("POST /v1/secret/delete/{path...}", h.authenticate(h.kvDeleteVersions))
-	mux.HandleFunc("POST /v1/secret/undelete/{path...}", h.authenticate(h.kvUndelete))
-	mux.HandleFunc("POST /v1/secret/destroy/{path...}", h.authenticate(h.kvDestroy))
+	handleWrite(mux, "/v1/secret/delete/{path...}", h.authenticate(h.kvDeleteVersions))
+	handleWrite(mux, "/v1/secret/undelete/{path...}", h.authenticate(h.kvUndelete))
+	handleWrite(mux, "/v1/secret/destroy/{path...}", h.authenticate(h.kvDestroy))
 	mux.HandleFunc("GET /v1/secret/metadata/{path...}", h.authenticate(h.kvReadMetadata))
 	mux.HandleFunc("LIST /v1/secret/metadata/{path...}", h.authenticate(h.kvList))
 	mux.HandleFunc("DELETE /v1/secret/metadata/{path...}", h.authenticate(h.kvDeleteMetadata))
@@ -197,167 +196,150 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	// Cubbyhole — per-token private storage. Every operation is scoped to the
 	// calling token; the data is destroyed when the token is revoked.
 	mux.HandleFunc("GET /v1/cubbyhole/{path...}", h.authenticate(h.cubbyRead))
-	mux.HandleFunc("POST /v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
-	mux.HandleFunc("PUT /v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
+	handleWrite(mux, "/v1/cubbyhole/{path...}", h.authenticate(h.cubbyWrite))
 	mux.HandleFunc("LIST /v1/cubbyhole/{path...}", h.authenticate(h.cubbyList))
 	mux.HandleFunc("DELETE /v1/cubbyhole/{path...}", h.authenticate(h.cubbyDelete))
 
 	// Identity — entities and aliases (phase 1). ACL-gated like policies; a login
 	// resolves its alias to an entity automatically (see SetAliaser above).
-	mux.HandleFunc("POST /v1/identity/entity", h.authenticate(h.identityWriteEntity))
-	mux.HandleFunc("PUT /v1/identity/entity", h.authenticate(h.identityWriteEntity))
+	handleWrite(mux, "/v1/identity/entity", h.authenticate(h.identityWriteEntity))
 	mux.HandleFunc("LIST /v1/identity/entity/id", h.authenticate(h.identityListEntities))
 	mux.HandleFunc("GET /v1/identity/entity/id/{id}", h.authenticate(h.identityReadEntityByID))
 	mux.HandleFunc("DELETE /v1/identity/entity/id/{id}", h.authenticate(h.identityDeleteEntity))
 	mux.HandleFunc("GET /v1/identity/entity/name/{name}", h.authenticate(h.identityReadEntityByName))
-	mux.HandleFunc("POST /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
-	mux.HandleFunc("PUT /v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
+	handleWrite(mux, "/v1/identity/entity-alias", h.authenticate(h.identityWriteEntityAlias))
 	mux.HandleFunc("DELETE /v1/identity/entity-alias/id/{id}", h.authenticate(h.identityDeleteEntityAlias))
-	mux.HandleFunc("POST /v1/identity/group", h.authenticate(h.identityWriteGroup))
-	mux.HandleFunc("PUT /v1/identity/group", h.authenticate(h.identityWriteGroup))
+	handleWrite(mux, "/v1/identity/group", h.authenticate(h.identityWriteGroup))
 	mux.HandleFunc("LIST /v1/identity/group/id", h.authenticate(h.identityListGroups))
 	mux.HandleFunc("GET /v1/identity/group/id/{id}", h.authenticate(h.identityReadGroupByID))
 	mux.HandleFunc("DELETE /v1/identity/group/id/{id}", h.authenticate(h.identityDeleteGroup))
 	mux.HandleFunc("GET /v1/identity/group/name/{name}", h.authenticate(h.identityReadGroupByName))
 
 	// ACL policies (governed by the same ACL check; root or an explicit grant).
-	mux.HandleFunc("PUT /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
-	mux.HandleFunc("POST /v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
+	handleWrite(mux, "/v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
 	mux.HandleFunc("GET /v1/sys/policies/acl/{name}", h.authenticate(h.policyRead))
 	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))
 
 	// Resource quotas — rate-limit quotas (path-scoped request-rate limits).
 	// Root/ACL-gated like policies; enforced in the request middleware.
-	mux.HandleFunc("PUT /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaWrite))
-	mux.HandleFunc("POST /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaWrite))
+	handleWrite(mux, "/v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaWrite))
 	mux.HandleFunc("GET /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaRead))
 	mux.HandleFunc("DELETE /v1/sys/quotas/rate-limit/{name}", h.authenticate(h.quotaDelete))
 	mux.HandleFunc("LIST /v1/sys/quotas/rate-limit", h.authenticate(h.quotaList))
 	mux.HandleFunc("GET /v1/sys/quotas/config", h.authenticate(h.quotaConfigRead))
-	mux.HandleFunc("POST /v1/sys/quotas/config", h.authenticate(h.quotaConfigWrite))
-	mux.HandleFunc("PUT /v1/sys/quotas/config", h.authenticate(h.quotaConfigWrite))
-	mux.HandleFunc("PUT /v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaWrite))
-	mux.HandleFunc("POST /v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaWrite))
+	handleWrite(mux, "/v1/sys/quotas/config", h.authenticate(h.quotaConfigWrite))
+	handleWrite(mux, "/v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaWrite))
 	mux.HandleFunc("GET /v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaRead))
 	mux.HandleFunc("DELETE /v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaDelete))
 	mux.HandleFunc("LIST /v1/sys/quotas/lease-count", h.authenticate(h.leaseQuotaList))
 
 	// Token creation, self-lookup, renewal, and revocation (revoke cascades to the token's
 	// dynamic-database leases and destroys its cubbyhole).
-	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
+	handleWrite(mux, "/v1/auth/token/create", h.authenticate(h.tokenCreate))
 	mux.HandleFunc("GET /v1/auth/token/lookup-self", h.authenticate(h.lookupSelf))
-	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
-	mux.HandleFunc("POST /v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
+	handleWrite(mux, "/v1/auth/token/renew-self", h.authenticate(h.renewSelf))
+	handleWrite(mux, "/v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
 
 	// Response wrapping: wrap a payload in a single-use, TTL'd token, and unwrap
 	// it exactly once. Both require a token; the wrapping token is passed in the
 	// unwrap body.
-	mux.HandleFunc("POST /v1/sys/wrapping/wrap", h.authenticate(h.sysWrappingWrap))
-	mux.HandleFunc("POST /v1/sys/wrapping/unwrap", h.authenticate(h.sysWrappingUnwrap))
+	handleWrite(mux, "/v1/sys/wrapping/wrap", h.authenticate(h.sysWrappingWrap))
+	handleWrite(mux, "/v1/sys/wrapping/unwrap", h.authenticate(h.sysWrappingUnwrap))
 
 	// Transit engine (encryption-as-a-service).
-	mux.HandleFunc("POST /v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))
+	handleWrite(mux, "/v1/transit/keys/{name}", h.authenticate(h.transitCreateKey))
 	mux.HandleFunc("GET /v1/transit/keys/{name}", h.authenticate(h.transitReadKey))
 	mux.HandleFunc("DELETE /v1/transit/keys/{name}", h.authenticate(h.transitDeleteKey))
 	mux.HandleFunc("LIST /v1/transit/keys", h.authenticate(h.transitListKeys))
-	mux.HandleFunc("POST /v1/transit/keys/{name}/rotate", h.authenticate(h.transitRotateKey))
-	mux.HandleFunc("POST /v1/transit/encrypt/{name}", h.authenticate(h.transitEncrypt))
-	mux.HandleFunc("POST /v1/transit/decrypt/{name}", h.authenticate(h.transitDecrypt))
-	mux.HandleFunc("POST /v1/transit/rewrap/{name}", h.authenticate(h.transitRewrap))
-	mux.HandleFunc("POST /v1/transit/datakey/{mode}/{name}", h.authenticate(h.transitDataKey))
-	mux.HandleFunc("POST /v1/transit/hmac/{name}", h.authenticate(h.transitHMAC))
-	mux.HandleFunc("POST /v1/transit/sign/{name}", h.authenticate(h.transitSign))
-	mux.HandleFunc("POST /v1/transit/verify/{name}", h.authenticate(h.transitVerify))
+	handleWrite(mux, "/v1/transit/keys/{name}/rotate", h.authenticate(h.transitRotateKey))
+	handleWrite(mux, "/v1/transit/encrypt/{name}", h.authenticate(h.transitEncrypt))
+	handleWrite(mux, "/v1/transit/decrypt/{name}", h.authenticate(h.transitDecrypt))
+	handleWrite(mux, "/v1/transit/rewrap/{name}", h.authenticate(h.transitRewrap))
+	handleWrite(mux, "/v1/transit/datakey/{mode}/{name}", h.authenticate(h.transitDataKey))
+	handleWrite(mux, "/v1/transit/hmac/{name}", h.authenticate(h.transitHMAC))
+	handleWrite(mux, "/v1/transit/sign/{name}", h.authenticate(h.transitSign))
+	handleWrite(mux, "/v1/transit/verify/{name}", h.authenticate(h.transitVerify))
 
 	// Dynamic database secrets engine.
-	mux.HandleFunc("POST /v1/database/config", h.authenticate(h.dbConfigure))
+	handleWrite(mux, "/v1/database/config", h.authenticate(h.dbConfigure))
 	mux.HandleFunc("GET /v1/database/config", h.authenticate(h.dbConfigStatus))
-	mux.HandleFunc("POST /v1/database/roles/{name}", h.authenticate(h.dbWriteRole))
-	mux.HandleFunc("PUT /v1/database/roles/{name}", h.authenticate(h.dbWriteRole))
+	handleWrite(mux, "/v1/database/roles/{name}", h.authenticate(h.dbWriteRole))
 	mux.HandleFunc("GET /v1/database/roles/{name}", h.authenticate(h.dbReadRole))
 	mux.HandleFunc("LIST /v1/database/roles", h.authenticate(h.dbListRoles))
 	mux.HandleFunc("DELETE /v1/database/roles/{name}", h.authenticate(h.dbDeleteRole))
 	mux.HandleFunc("GET /v1/database/creds/{name}", h.authenticate(h.dbCredentials))
 
 	// PKI secrets engine — internal CA and short-lived certificate issuance.
-	mux.HandleFunc("POST /v1/pki/root/generate/internal", h.authenticate(h.pkiGenerateRoot))
+	handleWrite(mux, "/v1/pki/root/generate/internal", h.authenticate(h.pkiGenerateRoot))
 	mux.HandleFunc("GET /v1/pki/ca", h.authenticate(h.pkiReadCA))
-	mux.HandleFunc("POST /v1/pki/roles/{name}", h.authenticate(h.pkiWriteRole))
-	mux.HandleFunc("PUT /v1/pki/roles/{name}", h.authenticate(h.pkiWriteRole))
+	handleWrite(mux, "/v1/pki/roles/{name}", h.authenticate(h.pkiWriteRole))
 	mux.HandleFunc("GET /v1/pki/roles/{name}", h.authenticate(h.pkiReadRole))
 	mux.HandleFunc("LIST /v1/pki/roles", h.authenticate(h.pkiListRoles))
 	mux.HandleFunc("DELETE /v1/pki/roles/{name}", h.authenticate(h.pkiDeleteRole))
-	mux.HandleFunc("POST /v1/pki/issue/{role}", h.authenticate(h.pkiIssue))
+	handleWrite(mux, "/v1/pki/issue/{role}", h.authenticate(h.pkiIssue))
 
 	// Lease management (currently database leases only).
-	mux.HandleFunc("PUT /v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
-	mux.HandleFunc("PUT /v1/sys/leases/renew", h.authenticate(h.leaseRenew))
-	mux.HandleFunc("PUT /v1/sys/leases/lookup", h.authenticate(h.leaseLookup))
+	handleWrite(mux, "/v1/sys/leases/revoke", h.authenticate(h.leaseRevoke))
+	handleWrite(mux, "/v1/sys/leases/renew", h.authenticate(h.leaseRenew))
+	handleWrite(mux, "/v1/sys/leases/lookup", h.authenticate(h.leaseLookup))
 
 	// Backup: stream a snapshot of the encrypted store (root or an explicit grant).
-	mux.HandleFunc("POST /v1/sys/snapshot", h.authenticate(h.snapshot))
+	handleWrite(mux, "/v1/sys/snapshot", h.authenticate(h.snapshot))
 
 	// Kubernetes auth method. login is unauthenticated (the ServiceAccount token
 	// IS the credential); config and role management require authentication.
-	mux.HandleFunc("POST /v1/auth/kubernetes/config", h.authenticate(h.k8sConfigure))
-	mux.HandleFunc("POST /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sWriteRole))
+	handleWrite(mux, "/v1/auth/kubernetes/config", h.authenticate(h.k8sConfigure))
+	handleWrite(mux, "/v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sWriteRole))
 	mux.HandleFunc("GET /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sReadRole))
 	mux.HandleFunc("LIST /v1/auth/kubernetes/role", h.authenticate(h.k8sListRoles))
 	mux.HandleFunc("DELETE /v1/auth/kubernetes/role/{name}", h.authenticate(h.k8sDeleteRole))
-	mux.HandleFunc("POST /v1/auth/kubernetes/login", h.k8sLogin)
+	handleWrite(mux, "/v1/auth/kubernetes/login", h.k8sLogin)
 
 	// AppRole auth method. login is unauthenticated (role_id + secret_id are the
 	// credential); role and secret-id management require authentication.
-	mux.HandleFunc("POST /v1/auth/approle/role/{name}", h.authenticate(h.approleWriteRole))
-	mux.HandleFunc("PUT /v1/auth/approle/role/{name}", h.authenticate(h.approleWriteRole))
+	handleWrite(mux, "/v1/auth/approle/role/{name}", h.authenticate(h.approleWriteRole))
 	mux.HandleFunc("GET /v1/auth/approle/role/{name}", h.authenticate(h.approleReadRole))
 	mux.HandleFunc("LIST /v1/auth/approle/role", h.authenticate(h.approleListRoles))
 	mux.HandleFunc("DELETE /v1/auth/approle/role/{name}", h.authenticate(h.approleDeleteRole))
 	mux.HandleFunc("GET /v1/auth/approle/role/{name}/role-id", h.authenticate(h.approleReadRoleID))
-	mux.HandleFunc("POST /v1/auth/approle/role/{name}/secret-id", h.authenticate(h.approleGenerateSecretID))
-	mux.HandleFunc("POST /v1/auth/approle/login", h.approleLogin)
+	handleWrite(mux, "/v1/auth/approle/role/{name}/secret-id", h.authenticate(h.approleGenerateSecretID))
+	handleWrite(mux, "/v1/auth/approle/login", h.approleLogin)
 
 	// Userpass auth method. login is unauthenticated (the password is the
 	// credential); user management requires authentication.
-	mux.HandleFunc("POST /v1/auth/userpass/users/{username}", h.authenticate(h.userpassWriteUser))
-	mux.HandleFunc("PUT /v1/auth/userpass/users/{username}", h.authenticate(h.userpassWriteUser))
+	handleWrite(mux, "/v1/auth/userpass/users/{username}", h.authenticate(h.userpassWriteUser))
 	mux.HandleFunc("GET /v1/auth/userpass/users/{username}", h.authenticate(h.userpassReadUser))
 	mux.HandleFunc("LIST /v1/auth/userpass/users", h.authenticate(h.userpassListUsers))
 	mux.HandleFunc("DELETE /v1/auth/userpass/users/{username}", h.authenticate(h.userpassDeleteUser))
-	mux.HandleFunc("POST /v1/auth/userpass/login/{username}", h.userpassLogin)
+	handleWrite(mux, "/v1/auth/userpass/login/{username}", h.userpassLogin)
 
 	// JWT/OIDC auth: configure signature validation and roles (authenticated),
 	// then exchange a signed JWT for a token (unauthenticated).
-	mux.HandleFunc("POST /v1/auth/jwt/config", h.authenticate(h.jwtConfigure))
-	mux.HandleFunc("PUT /v1/auth/jwt/config", h.authenticate(h.jwtConfigure))
-	mux.HandleFunc("POST /v1/auth/jwt/role/{name}", h.authenticate(h.jwtWriteRole))
-	mux.HandleFunc("PUT /v1/auth/jwt/role/{name}", h.authenticate(h.jwtWriteRole))
+	handleWrite(mux, "/v1/auth/jwt/config", h.authenticate(h.jwtConfigure))
+	handleWrite(mux, "/v1/auth/jwt/role/{name}", h.authenticate(h.jwtWriteRole))
 	mux.HandleFunc("GET /v1/auth/jwt/role/{name}", h.authenticate(h.jwtReadRole))
 	mux.HandleFunc("LIST /v1/auth/jwt/role", h.authenticate(h.jwtListRoles))
 	mux.HandleFunc("DELETE /v1/auth/jwt/role/{name}", h.authenticate(h.jwtDeleteRole))
-	mux.HandleFunc("POST /v1/auth/jwt/login", h.jwtLogin)
+	handleWrite(mux, "/v1/auth/jwt/login", h.jwtLogin)
 
 	// TLS certificate auth: define trusted cert roles (authenticated), then log in
 	// by presenting a matching mTLS client certificate (unauthenticated).
-	mux.HandleFunc("POST /v1/auth/cert/certs/{name}", h.authenticate(h.certWriteCert))
-	mux.HandleFunc("PUT /v1/auth/cert/certs/{name}", h.authenticate(h.certWriteCert))
+	handleWrite(mux, "/v1/auth/cert/certs/{name}", h.authenticate(h.certWriteCert))
 	mux.HandleFunc("GET /v1/auth/cert/certs/{name}", h.authenticate(h.certReadCert))
 	mux.HandleFunc("LIST /v1/auth/cert/certs", h.authenticate(h.certListCerts))
 	mux.HandleFunc("DELETE /v1/auth/cert/certs/{name}", h.authenticate(h.certDeleteCert))
-	mux.HandleFunc("POST /v1/auth/cert/login", h.certLogin)
+	handleWrite(mux, "/v1/auth/cert/login", h.certLogin)
 
 	// LDAP/AD auth: configure the directory and group→policy maps (authenticated),
 	// then log in with a directory username + password (unauthenticated).
-	mux.HandleFunc("POST /v1/auth/ldap/config", h.authenticate(h.ldapConfigure))
-	mux.HandleFunc("PUT /v1/auth/ldap/config", h.authenticate(h.ldapConfigure))
+	handleWrite(mux, "/v1/auth/ldap/config", h.authenticate(h.ldapConfigure))
 	mux.HandleFunc("GET /v1/auth/ldap/config", h.authenticate(h.ldapReadConfig))
-	mux.HandleFunc("POST /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapWriteGroup))
-	mux.HandleFunc("PUT /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapWriteGroup))
+	handleWrite(mux, "/v1/auth/ldap/groups/{name}", h.authenticate(h.ldapWriteGroup))
 	mux.HandleFunc("GET /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapReadGroup))
 	mux.HandleFunc("LIST /v1/auth/ldap/groups", h.authenticate(h.ldapListGroups))
 	mux.HandleFunc("DELETE /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapDeleteGroup))
-	mux.HandleFunc("POST /v1/auth/ldap/login/{username}", h.ldapLogin)
+	handleWrite(mux, "/v1/auth/ldap/login/{username}", h.ldapLogin)
 
 	h.mux = mux
 	for _, opt := range opts {
@@ -388,9 +370,20 @@ func (h *Handler) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// initRequest accepts every field of Vault's sys/init request, because Vault's
+// own client sends them all (zero-valued when unused). Fields uBixVault does not
+// implement are accepted only at their zero value — silently ignoring, say,
+// pgp_keys would hand back plaintext shares to an operator who asked for
+// encrypted ones.
 type initRequest struct {
-	SecretShares    int `json:"secret_shares"`
-	SecretThreshold int `json:"secret_threshold"`
+	SecretShares      int      `json:"secret_shares"`
+	SecretThreshold   int      `json:"secret_threshold"`
+	StoredShares      int      `json:"stored_shares"`
+	PGPKeys           []string `json:"pgp_keys"`
+	RootTokenPGPKey   string   `json:"root_token_pgp_key"`
+	RecoveryShares    int      `json:"recovery_shares"`
+	RecoveryThreshold int      `json:"recovery_threshold"`
+	RecoveryPGPKeys   []string `json:"recovery_pgp_keys"`
 }
 
 type initResponse struct {
@@ -402,7 +395,9 @@ type initResponse struct {
 }
 
 type unsealRequest struct {
-	Key string `json:"key"` // a single unseal share, hex or base64
+	Key     string `json:"key"`     // a single unseal share, hex or base64
+	Reset   bool   `json:"reset"`   // Vault: discard shares entered so far — not supported
+	Migrate bool   `json:"migrate"` // Vault: seal migration — not supported
 }
 
 type statusResponse struct {
@@ -432,10 +427,22 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	res, err := h.core.Initialize(r.Context(), core.InitConfig{
-		SecretShares:    req.SecretShares,
-		SecretThreshold: req.SecretThreshold,
-	})
+	switch {
+	case len(req.PGPKeys) > 0 || req.RootTokenPGPKey != "" || len(req.RecoveryPGPKeys) > 0:
+		writeError(w, http.StatusBadRequest, "PGP-encrypted keys (pgp_keys, root_token_pgp_key, recovery_pgp_keys) are not supported")
+		return
+	case req.StoredShares != 0:
+		writeError(w, http.StatusBadRequest, "stored_shares is not supported")
+		return
+	}
+	cfg := core.InitConfig{SecretShares: req.SecretShares, SecretThreshold: req.SecretThreshold}
+	// With auto-unseal the shares are recovery keys. Vault's clients describe
+	// them with recovery_shares/recovery_threshold (and send secret_* as well),
+	// so prefer those when given; with Shamir they are ignored, as in Vault.
+	if h.core.AutoUnsealEnabled() && (req.RecoveryShares != 0 || req.RecoveryThreshold != 0) {
+		cfg = core.InitConfig{SecretShares: req.RecoveryShares, SecretThreshold: req.RecoveryThreshold}
+	}
+	res, err := h.core.Initialize(r.Context(), cfg)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, core.ErrAlreadyInitialized) {
@@ -464,6 +471,10 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) unseal(w http.ResponseWriter, r *http.Request) {
 	var req unsealRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Reset || req.Migrate {
+		writeError(w, http.StatusBadRequest, "unseal reset and migrate are not supported")
 		return
 	}
 	share, err := decodeShare(req.Key)
@@ -533,4 +544,15 @@ func writeError(w http.ResponseWriter, status int, msgs ...string) {
 func writeInternal(w http.ResponseWriter, err error) {
 	log.Printf("api: internal error: %v", err)
 	writeError(w, http.StatusInternalServerError, "internal error")
+}
+
+// handleWrite registers handler for a write endpoint under both POST and PUT.
+// HashiCorp Vault treats the two identically on every write path, and its own
+// Go client — used by the vault CLI and by External Secrets Operator — sends PUT
+// (e.g. PUT auth/kubernetes/login), while curl examples and other clients send
+// POST. Registering one without the other breaks one family of clients with a
+// 405, so every write route goes through here (TestWriteRoutesAcceptPutAndPost).
+func handleWrite(mux *http.ServeMux, path string, handler http.HandlerFunc) {
+	mux.HandleFunc("POST "+path, handler)
+	mux.HandleFunc("PUT "+path, handler)
 }

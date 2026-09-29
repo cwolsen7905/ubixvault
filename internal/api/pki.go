@@ -9,24 +9,24 @@ import (
 )
 
 type pkiRootRequest struct {
-	CommonName string `json:"common_name"`
-	TTL        string `json:"ttl"`
-	KeyType    string `json:"key_type"`
-	KeyBits    int    `json:"key_bits"`
+	CommonName string        `json:"common_name"`
+	TTL        vaultDuration `json:"ttl"`
+	KeyType    string        `json:"key_type"`
+	KeyBits    int           `json:"key_bits"`
 }
 
 type pkiRoleRequest struct {
-	AllowedDomains  []string `json:"allowed_domains"`
-	AllowSubdomains bool     `json:"allow_subdomains"`
-	MaxTTL          string   `json:"max_ttl"`
-	KeyType         string   `json:"key_type"`
-	KeyBits         int      `json:"key_bits"`
+	AllowedDomains  []string      `json:"allowed_domains"`
+	AllowSubdomains bool          `json:"allow_subdomains"`
+	MaxTTL          vaultDuration `json:"max_ttl"`
+	KeyType         string        `json:"key_type"`
+	KeyBits         int           `json:"key_bits"`
 }
 
 type pkiIssueRequest struct {
-	CommonName string   `json:"common_name"`
-	AltNames   []string `json:"alt_names"`
-	TTL        string   `json:"ttl"`
+	CommonName string        `json:"common_name"`
+	AltNames   []string      `json:"alt_names"`
+	TTL        vaultDuration `json:"ttl"`
 }
 
 func (h *Handler) pkiGenerateRoot(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func (h *Handler) pkiGenerateRoot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "common_name is required")
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TTL, "ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TTL), "ttl")
 	if !ok {
 		return
 	}
@@ -66,7 +66,7 @@ func (h *Handler) pkiWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	maxTTL, ok := parseOptionalDuration(w, req.MaxTTL, "max_ttl")
+	maxTTL, ok := parseOptionalDuration(w, string(req.MaxTTL), "max_ttl")
 	if !ok {
 		return
 	}
@@ -121,7 +121,7 @@ func (h *Handler) pkiIssue(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, req.TTL, "ttl")
+	ttl, ok := parseOptionalDuration(w, string(req.TTL), "ttl")
 	if !ok {
 		return
 	}
