@@ -6,6 +6,28 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-29
+
+**Works with HashiCorp's own clients.** The `vault` CLI, External Secrets
+Operator and anything else built on `github.com/hashicorp/vault/api` now work
+against uBixVault — checked end to end with the official client. Also: LDAP
+directories with a private CA can be verified (`certificate`), expired tokens are
+cleaned up in the background, and Kubernetes roles' `ttl` is finally applied.
+
+### Upgrade notes
+
+- **Policy reads changed shape:** `GET /v1/sys/policies/acl/<name>` returns
+  `data.policy` as a **string**, as Vault does. If you parse that response
+  yourself, parse the string (it is the policy's JSON text).
+- **JSON policies with unknown keys are now refused** (`400`) instead of being
+  stored without them. Check any automation that writes JSON policies with keys
+  other than `path` / `capabilities`.
+- **Kubernetes roles' `ttl` now takes effect.** If a role already sets one,
+  logins through it get that lifetime from now on instead of 32 days.
+- **Consider a short `ttl` on Kubernetes roles** used by apps that log in per
+  request or per process — each token then stops being a valid credential soon
+  after it is used, and the new sweeper removes it.
+
 ### Added
 
 - **Expired tokens are deleted in the background** (every 10 minutes, on the
@@ -475,6 +497,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.4.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.4.0
 [1.3.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.3.0
 [1.2.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.1
 [1.2.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.0
