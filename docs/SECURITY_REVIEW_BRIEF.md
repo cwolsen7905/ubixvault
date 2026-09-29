@@ -83,7 +83,11 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
 4a. **`internal/policy` + `internal/token`** — ACL **default-deny** correctness,
    path/**glob** semantics, token hierarchy/scoping. The policy parser is an
    **in-house HCL parser (not `hashicorp/hcl`)** — it needs a parser
-   differential / injection review.
+   differential / injection review. Default-deny has deliberate built-in
+   exceptions in `internal/api/auth.go` `authorize`: every token may use its own
+   cubbyhole, `auth/token/lookup-self` and `auth/token/revoke-self`, each acting
+   only on the calling token. `renew-self` is **not** among them, because
+   renewal has no maximum TTL yet.
 4b. **`internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth`, `internal/certauth`, `internal/ldapauth`**
    — JWS/JWT verification (**algorithm confusion**, `kid`/JWKS handling,
    `exp`/`aud`/issuer checks), AppRole secret-id **constant-time** hash compare,

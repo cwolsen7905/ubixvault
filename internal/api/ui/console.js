@@ -4,18 +4,22 @@
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "ubixvault.token";
+// How the current token was obtained: "userpass" / "ldap" when this console
+// logged in (so signing out revokes it), "token" when it was pasted in (so
+// signing out only forgets it — a pasted token may be root or shared).
+const SOURCE_KEY = "ubixvault.token-source";
+const USER_KEY = "ubixvault.token-user";
 
 const getToken = () => sessionStorage.getItem(TOKEN_KEY) || "";
-function setToken(t) {
-  if (t) sessionStorage.setItem(TOKEN_KEY, t);
-  else sessionStorage.removeItem(TOKEN_KEY);
-  reflectToken();
-}
-function reflectToken() {
-  const tag = $("token-state");
-  const has = !!getToken();
-  tag.textContent = has ? "token set" : "no token";
-  tag.dataset.set = String(has);
+function setToken(t, source, user) {
+  if (t) {
+    sessionStorage.setItem(TOKEN_KEY, t);
+    sessionStorage.setItem(SOURCE_KEY, source || "token");
+    if (user) sessionStorage.setItem(USER_KEY, user);
+    else sessionStorage.removeItem(USER_KEY);
+  } else {
+    for (const k of [TOKEN_KEY, SOURCE_KEY, USER_KEY]) sessionStorage.removeItem(k);
+  }
 }
 
 // api performs a same-origin request, attaching the token and JSON body if given.
@@ -88,6 +92,132 @@ async function refreshStatus() {
     $("seal-word").textContent = "Unreachable";
     $("seal-tagline").textContent = "Could not reach the vault";
   }
+}
+
+// ---- session: sign in, who am I, renew, sign out ----
+const LOGIN_METHODS = { userpass: "Username & password", ldap: "LDAP", token: "Token" };
+
+function fmtDuration(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m`;
+  return `${s}s`;
+}
+
+function reflectLoginMethod() {
+  const tokenMode = $("login-method").value === "token";
+  $("login-user").hidden = tokenMode;
+  $("login-pass").hidden = tokenMode;
+  $("login-token").hidden = !tokenMode;
+}
+
+function showSignedOut(message, cls) {
+  $("login-form").hidden = false;
+  $("whoami").hidden = true;
+  $("whoami-table").replaceChildren();
+  if (message) panelMsg("session-out", cls || "ok", message);
+  else $("session-out").replaceChildren();
+}
+
+// refreshSession looks up the stored token and shows who it is, or the sign-in
+// form when there is none (or it has expired or been revoked).
+async function refreshSession() {
+  if (!getToken()) { showSignedOut(); return; }
+  const r = await api("GET", "/v1/auth/token/lookup-self");
+  if (r.status === 403) {
+    setToken("");
+    showSignedOut("Your session has expired or was revoked. Sign in again.", "error");
+    return;
+  }
+  if (!r.ok) {
+    // Sealed or unreachable: keep the token, say why we can't describe it.
+    $("login-form").hidden = true;
+    $("whoami").hidden = false;
+    $("whoami-table").replaceChildren();
+    panelMsg("session-out", "error", friendlyError(r.status, r.body));
+    return;
+  }
+  const d = (r.body && r.body.data) || {};
+  const source = sessionStorage.getItem(SOURCE_KEY) || "token";
+  const user = sessionStorage.getItem(USER_KEY);
+  const rows = [
+    ["signed in", (LOGIN_METHODS[source] || source) + (user ? " · " + user : "")],
+    ["policies", (d.policies || []).join(", ") || "(none)"],
+  ];
+  if ((d.identity_policies || []).length) rows.push(["identity policies", d.identity_policies.join(", ")]);
+  rows.push(["expires", d.expire_time ? "in " + fmtDuration(d.ttl) + " (" + d.expire_time + ")" : "never"]);
+
+  const t = $("whoami-table"); t.replaceChildren();
+  for (const [k, v] of rows) {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th"); th.textContent = k;
+    const td = document.createElement("td"); td.textContent = v;
+    tr.append(th, td); t.appendChild(tr);
+  }
+  $("renew").hidden = !d.renewable;
+  // Pasted tokens are only forgotten, never revoked — say so on the button.
+  $("logout").textContent = source === "token" ? "Forget token" : "Sign out";
+  $("login-form").hidden = true;
+  $("whoami").hidden = false;
+  $("session-out").replaceChildren();
+}
+
+async function login() {
+  const method = $("login-method").value;
+  if (method === "token") {
+    const tok = $("login-token").value.trim();
+    $("login-token").value = "";
+    if (!tok) { panelMsg("session-out", "error", "Paste a token."); return; }
+    setToken(tok, "token");
+    await refreshSession();
+    return;
+  }
+  const user = $("login-user").value.trim();
+  const password = $("login-pass").value;
+  $("login-pass").value = ""; // never keep the password around, whatever happens
+  if (!user || !password) { panelMsg("session-out", "error", "Enter a username and password."); return; }
+  const r = await api("POST", "/v1/auth/" + method + "/login/" + encodeURIComponent(user), { password });
+  if (!r.ok) {
+    // Login failures are deliberately uniform server-side; keep them uniform here.
+    const msg = r.status === 400 || r.status === 401 || r.status === 403
+      ? "Sign-in failed — check the username and password."
+      : friendlyError(r.status, r.body);
+    panelMsg("session-out", "error", msg);
+    return;
+  }
+  const tok = r.body && r.body.auth && r.body.auth.client_token;
+  if (!tok) { panelMsg("session-out", "error", "The vault returned no token."); return; }
+  setToken(tok, method, user);
+  await refreshSession();
+}
+
+async function renew() {
+  const r = await api("POST", "/v1/auth/token/renew-self", {});
+  if (r.status === 403) {
+    panelMsg("session-out", "error", "Your policies don't allow renewing this token (auth/token/renew-self).");
+    return;
+  }
+  if (!r.ok) { panelMsg("session-out", "error", friendlyError(r.status, r.body)); return; }
+  await refreshSession();
+  panelMsg("session-out", "ok", "Renewed.");
+}
+
+async function logout() {
+  const source = sessionStorage.getItem(SOURCE_KEY) || "token";
+  if (source !== "token") {
+    // Revoke the token this console created. If that fails (e.g. sealed), still
+    // forget it locally, and say it may remain valid until it expires.
+    const r = await api("POST", "/v1/auth/token/revoke-self", {});
+    setToken("");
+    showSignedOut(r.ok ? "Signed out; the token was revoked."
+      : "Signed out here, but the vault could not revoke the token (" + r.status + "); it stays valid until it expires.",
+      r.ok ? "ok" : "error");
+    return;
+  }
+  setToken("");
+  showSignedOut("Token forgotten in this tab. It was not revoked.");
 }
 
 // ---- KV paths ----
@@ -609,16 +739,15 @@ async function pkiIssue() {
 
 // ---- wire up ----
 document.addEventListener("DOMContentLoaded", () => {
-  reflectToken();
   refreshStatus();
+  reflectLoginMethod();
+  refreshSession();
 
-  $("refresh").addEventListener("click", refreshStatus);
-  $("token-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    setToken($("token").value.trim());
-    $("token").value = "";
-  });
-  $("token-clear").addEventListener("click", () => setToken(""));
+  $("refresh").addEventListener("click", () => { refreshStatus(); refreshSession(); });
+  $("login-method").addEventListener("change", reflectLoginMethod);
+  $("login-form").addEventListener("submit", (e) => { e.preventDefault(); login(); });
+  $("renew").addEventListener("click", renew);
+  $("logout").addEventListener("click", logout);
 
   $("kv-form").addEventListener("submit", (e) => { e.preventDefault(); kvRead($("kv-path").value); });
   $("kv-list").addEventListener("click", () => kvList($("kv-path").value));

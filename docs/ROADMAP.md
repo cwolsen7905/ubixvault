@@ -53,7 +53,7 @@ Core — complete, tested, documented:
 - [x] **Barrier** — AES-256-GCM at rest, path-bound AAD, barrier-key hierarchy.
 - [x] **Seal / unseal** — in-house Shamir k-of-n; init, unseal, seal-status.
 - [x] **Root regeneration** (`generate-root`) + **recovery keys** for auto-unseal mode.
-- [x] **Tokens** (TTL/expiry, renew-self, revoke-self) + **ACL policies** (JSON *and* HCL, default-deny).
+- [x] **Tokens** (TTL/expiry, lookup-self, renew-self, revoke-self) + **ACL policies** (JSON *and* HCL, default-deny).
 - [x] **KV v2** (versioned secrets).
 - [x] **Transit** — full crypto-as-a-service: encrypt/decrypt, rotate, **rewrap**, **data keys**, **HMAC**, **sign/verify** (ECDSA + Ed25519).
 - [x] **Dynamic database credentials** — `DatabasePlugin` interface + MariaDB plugin, lease-scoped, auto-revoked.
@@ -176,7 +176,8 @@ partial analogs are completed.
 - [x] **LDAP / Active Directory auth** — bind + group search via `go-ldap/ldap/v3` (D-018, the project's second dependency); LDAP groups feed a group→policy map and identity external groups.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
 - [x] **Identity** — entities, aliases, and groups, so multiple auth logins map to one subject, with policy templating. Design: [`docs/design/identity-entities-groups.md`](design/identity-entities-groups.md) + [`identity-templating.md`](design/identity-templating.md) (ADRs D-016, D-017). All four phases shipped: entities + aliases + entity policies; internal groups (nestable); external/IdP-asserted groups (JWT `groups_claim`); `{{identity.*}}` templating in ACL paths. Request-time policy union.
-- [ ] **Console breadth** — Transit and the newer auth methods in `/ui/`.
+- [~] **Console breadth** — sign-in with userpass or LDAP, a who-am-I view, and sign-out **shipped**; still to do: Transit, init/unseal, and managing the auth methods' roles and users in `/ui/`.
+- [ ] **Token max TTL** — renewal is currently uncapped (`renew-self` can extend a token indefinitely), so `renew-self` is not granted to every token by default. Add a Vault-style maximum TTL, then grant it like Vault's `default` policy does.
 - [~] **Transit extras** — key derivation + convergent encryption **shipped** (stdlib HKDF); BYOK import still to do.
 - [x] **Cubbyhole** — per-token private storage, destroyed on token revoke.
 - [x] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
@@ -194,7 +195,7 @@ Mostly large and compliance-oriented; listed so the gap is explicit (see
 - [ ] **Key Management secrets engine** — distribute/manage keys in cloud KMS (AWS/Azure/GCP).
 - [ ] **KMIP secrets engine** — act as a KMIP server.
 - [ ] **Transform secrets engine** — tokenization, format-preserving encryption, data masking.
-- [ ] **Resource quotas** — lease-count quotas and richer rate-limit quotas.
+- [x] **Resource quotas** (1.1) — path-scoped rate-limit and lease-count quotas (ADR D-020).
 - [ ] **Compliance builds** — FIPS 140-3 validated crypto, entropy augmentation.
 
 ---

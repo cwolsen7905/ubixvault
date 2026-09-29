@@ -6,6 +6,30 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Console sign-in.** The `/ui/` console signs in with a username and password
+  (userpass) or LDAP, as well as a pasted token, and shows who you are: policies,
+  identity policies, and when the token expires. **Sign out** revokes a token the
+  console obtained; a pasted token (which may be root or shared) is only
+  forgotten in that tab, never revoked. **Renew** appears for expiring tokens and
+  works when the token's policies allow `auth/token/renew-self`.
+- **`GET /v1/auth/token/lookup-self`**, in Vault's response shape: `id`,
+  `policies`, `identity_policies`, `entity_id`, `creation_time`, `issue_time`,
+  `expire_time` (null when it never expires), `ttl`, `renewable`, `type`.
+
+### Changed
+
+- **Every token may look itself up and revoke itself** without an ACL grant, as
+  under Vault's built-in `default` policy — both act only on the calling token
+  and cannot extend its access. `renew-self` still needs a grant: renewal has no
+  maximum TTL yet, so granting it to every token would let any token keep itself
+  alive indefinitely (tracked in `docs/ROADMAP.md`).
+
+### Fixed
+
+- The console header still read "uBix Vault"; it now reads uBixVault.
+
 ## [1.2.1] — 2026-09-28
 
 A patch release: a log flood behind Kubernetes ingress, and naming and console

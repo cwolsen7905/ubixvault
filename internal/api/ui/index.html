@@ -9,7 +9,7 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="mark">uBix&nbsp;Vault</span><span class="sub">Console</span></div>
+  <div class="brand"><span class="mark">uBixVault</span><span class="sub">Console</span></div>
   <div class="version" id="version" title="server version">—</div>
 </header>
 
@@ -32,16 +32,33 @@
     <button class="ghost" id="refresh" type="button">Refresh</button>
   </section>
 
-  <section class="panel">
-    <h2>Token</h2>
-    <p class="hint">Paste a token to read secrets. It stays in this browser tab and is
-      sent only to this vault.</p>
-    <form class="row" id="token-form">
-      <input type="password" id="token" placeholder="uv.…" autocomplete="off" spellcheck="false" aria-label="token">
-      <button type="submit">Use token</button>
-      <button type="button" id="token-clear" class="ghost">Clear</button>
-      <span class="tag" id="token-state" data-set="false">no token</span>
+  <section class="panel" id="session">
+    <h2>Sign in</h2>
+    <p class="hint">Your token stays in this browser tab and is sent only to this vault.</p>
+
+    <!-- Shown while signed out -->
+    <form class="row" id="login-form">
+      <select id="login-method" aria-label="sign-in method">
+        <option value="userpass">Username &amp; password</option>
+        <option value="ldap">LDAP</option>
+        <option value="token">Token</option>
+      </select>
+      <input type="text" id="login-user" placeholder="username" autocomplete="username" spellcheck="false" aria-label="username">
+      <input type="password" id="login-pass" placeholder="password" autocomplete="current-password" aria-label="password">
+      <input type="password" id="login-token" placeholder="uv.…" autocomplete="off" spellcheck="false" aria-label="token" hidden>
+      <button type="submit">Sign in</button>
     </form>
+
+    <!-- Shown while signed in -->
+    <div id="whoami" hidden>
+      <table class="kv-table" id="whoami-table"></table>
+      <div class="kv-actions">
+        <button type="button" id="renew" class="ghost">Renew</button>
+        <button type="button" id="logout">Sign out</button>
+      </div>
+    </div>
+
+    <div id="session-out" class="out" aria-live="polite"></div>
   </section>
 
   <section class="panel">

@@ -243,9 +243,10 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("DELETE /v1/sys/quotas/lease-count/{name}", h.authenticate(h.leaseQuotaDelete))
 	mux.HandleFunc("LIST /v1/sys/quotas/lease-count", h.authenticate(h.leaseQuotaList))
 
-	// Token creation, renewal, and revocation (revoke cascades to the token's
+	// Token creation, self-lookup, renewal, and revocation (revoke cascades to the token's
 	// dynamic-database leases and destroys its cubbyhole).
 	mux.HandleFunc("POST /v1/auth/token/create", h.authenticate(h.tokenCreate))
+	mux.HandleFunc("GET /v1/auth/token/lookup-self", h.authenticate(h.lookupSelf))
 	mux.HandleFunc("POST /v1/auth/token/renew-self", h.authenticate(h.renewSelf))
 	mux.HandleFunc("POST /v1/auth/token/revoke-self", h.authenticate(h.tokenRevokeSelf))
 

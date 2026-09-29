@@ -123,6 +123,52 @@ func (h *Handler) renewSelf(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tokenAuthResponse(renewed))
 }
 
+// lookupSelf describes the calling token, in the shape of Vault's
+// auth/token/lookup-self. identity_policies lists what the token's identity
+// entity contributes on top of its own policies.
+func (h *Handler) lookupSelf(w http.ResponseWriter, r *http.Request) {
+	tok, ok := tokenFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "no token on request")
+		return
+	}
+	identityPolicies := []string{}
+	if h.identity != nil && tok.EntityID != "" {
+		p, err := h.identity.PoliciesFor(r.Context(), tok.EntityID)
+		if err != nil {
+			writeInternal(w, err)
+			return
+		}
+		identityPolicies = append(identityPolicies, p...)
+	}
+	var (
+		ttl        int
+		expireTime any // null for a non-expiring token, as in Vault
+	)
+	if !tok.ExpiresAt.IsZero() {
+		if d := time.Until(tok.ExpiresAt); d > 0 {
+			ttl = int(d.Seconds())
+		}
+		expireTime = tok.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	policies := tok.Policies
+	if policies == nil {
+		policies = []string{}
+	}
+	writeData(w, map[string]any{
+		"id":                tok.ID,
+		"policies":          policies,
+		"identity_policies": identityPolicies,
+		"entity_id":         tok.EntityID,
+		"creation_time":     tok.CreatedTime.Unix(),
+		"issue_time":        tok.CreatedTime.UTC().Format(time.RFC3339),
+		"expire_time":       expireTime,
+		"ttl":               ttl,
+		"renewable":         !tok.ExpiresAt.IsZero(),
+		"type":              "service",
+	})
+}
+
 // tokenAuthResponse builds the {"auth": ...} body for a token, including its
 // remaining lease in seconds (0 for a non-expiring token).
 func tokenAuthResponse(tok *token.Token) map[string]any {
