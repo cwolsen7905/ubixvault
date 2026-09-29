@@ -30,12 +30,13 @@ credentials — over a Vault-API-compatible HTTP interface.
 
 - **Encryption barrier** — all data at rest is AES-256-GCM encrypted (storage never sees plaintext); the storage path is bound into the ciphertext so blobs can't be relocated.
 - **Seal / unseal** — the vault boots *sealed*; the master key is reconstructed from **Shamir k-of-n** key shares (implemented in-house, constant-time GF(2⁸)) before any secret is readable.
-- **Token auth + ACL policies** — default-deny, path-based capabilities; scoped, non-root tokens.
+- **Token auth + ACL policies** — default-deny, path-based capabilities; scoped, non-root tokens. A child token only gets policies its creator holds (unless the creator has `sudo`) and cannot outlive it; renewal is capped by `-max-token-ttl` (ADR D-022).
 - **KV v2** — versioned secrets with soft-delete / undelete / destroy and max-versions.
 - **Transit** — encryption-as-a-service: apps encrypt/decrypt over the API; keys never leave the vault, and rotate without breaking old ciphertext.
 - **Dynamic database credentials** — short-lived MariaDB users generated on demand and auto-revoked on lease expiry.
 - **Audit logging** — fail-closed; records who accessed what, with the client token HMAC'd (never logged in the clear).
 - **High availability** — active/standby replicas over MySQL/MariaDB storage (`-ha`, chart `ha.enabled`): one active replica holds a fenced lock in the database, standbys forward to it, and a node drain or rolling upgrade hands over in about half a second (no failed requests in the kind failover test). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#high-availability-activestandby).
+- **Web console** — `/ui/`, served from the binary with no external assets: sign in with userpass, LDAP or a token; KV v2 with version history; ACL policies; token creation; PKI. Beta: Transit, init/unseal and auth-method management are not in it yet.
 
 ## Quickstart
 
