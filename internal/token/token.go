@@ -45,6 +45,11 @@ var (
 // never expire.
 const DefaultTTL = 32 * 24 * time.Hour // 32 days, matching Vault's default
 
+// DefaultMaxTTL is the system maximum token lifetime (see [Store.SetMaxTTL]):
+// how far renewal may extend a token whose own TTL is shorter. It matches
+// Vault's default max_lease_ttl.
+const DefaultMaxTTL = 32 * 24 * time.Hour
+
 // Token is an authentication credential with attached policies.
 type Token struct {
 	ID          string    `json:"id"`
@@ -52,6 +57,10 @@ type Token struct {
 	EntityID    string    `json:"entity_id,omitempty"` // identity entity this token belongs to; empty if none
 	CreatedTime time.Time `json:"created_time"`
 	ExpiresAt   time.Time `json:"expires_at,omitempty"` // zero means never expires
+	// MaxExpiresAt is the latest ExpiresAt renewal may reach, fixed at creation
+	// (see [Store.MaxExpiry], ADR D-022). Zero on a non-expiring token, and on tokens
+	// stored before it existed, whose ceiling is derived on first renewal.
+	MaxExpiresAt time.Time `json:"max_expires_at,omitempty"`
 }
 
 // IsRoot reports whether the token carries the root policy.
@@ -95,11 +104,45 @@ type Store struct {
 	store   Storage
 	now     func() time.Time
 	aliaser Aliaser
+	maxTTL  time.Duration
 }
 
 // NewStore returns a token store over s.
 func NewStore(s Storage) *Store {
-	return &Store{store: s, now: func() time.Time { return time.Now().UTC() }}
+	return &Store{store: s, now: func() time.Time { return time.Now().UTC() }, maxTTL: DefaultMaxTTL}
+}
+
+// SetMaxTTL sets the system maximum token lifetime used for tokens created from
+// now on (and for older tokens on their first renewal). A token's ceiling is
+// the later of its own creation TTL and this maximum, so an operator can still
+// issue a long-lived token deliberately; what the maximum bounds is how far a
+// shorter-lived token can renew itself. d <= 0 restores [DefaultMaxTTL].
+func (st *Store) SetMaxTTL(d time.Duration) {
+	if d <= 0 {
+		d = DefaultMaxTTL
+	}
+	st.maxTTL = d
+}
+
+// MaxExpiry is the latest time t may be renewed to: its stored ceiling, or for a
+// token stored before ceilings existed, the later of its current expiry and its
+// creation time plus the system maximum (so no existing token gets shorter).
+// It is zero for a non-expiring token.
+func (st *Store) MaxExpiry(t *Token) time.Time {
+	if t.ExpiresAt.IsZero() {
+		return time.Time{}
+	}
+	if !t.MaxExpiresAt.IsZero() {
+		return t.MaxExpiresAt
+	}
+	return later(t.ExpiresAt, t.CreatedTime.Add(st.maxTTL))
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // SetAliaser installs the identity resolver used by the alias-aware create
@@ -124,6 +167,17 @@ func (st *Store) CreateWithTTL(ctx context.Context, policies []string, ttl time.
 		expiresAt = st.now().Add(ttl)
 	}
 	return st.create(ctx, policies, expiresAt)
+}
+
+// CreateBounded issues a token that expires after ttl (the default TTL when
+// ttl <= 0) and can never be renewed past bound: both its expiry and its
+// renewal ceiling are clamped to it. It is how a token creates a child that
+// cannot outlive it. A zero bound means no extra limit.
+func (st *Store) CreateBounded(ctx context.Context, policies []string, ttl time.Duration, bound time.Time) (*Token, error) {
+	if ttl <= 0 {
+		ttl = DefaultTTL
+	}
+	return st.createWithEntityBounded(ctx, policies, st.now().Add(ttl), "", bound)
 }
 
 // CreateWithAlias issues a token with the default TTL, binding it to the
@@ -163,11 +217,31 @@ func (st *Store) create(ctx context.Context, policies []string, expiresAt time.T
 }
 
 func (st *Store) createWithEntity(ctx context.Context, policies []string, expiresAt time.Time, entityID string) (*Token, error) {
+	return st.createWithEntityBounded(ctx, policies, expiresAt, entityID, time.Time{})
+}
+
+// createWithEntityBounded mints and stores a token. An expiring token gets its
+// renewal ceiling here: the later of its own expiry and now plus the system
+// maximum, then clamped (with the expiry) to bound when bound is non-zero.
+func (st *Store) createWithEntityBounded(ctx context.Context, policies []string, expiresAt time.Time, entityID string, bound time.Time) (*Token, error) {
 	id, err := generateID()
 	if err != nil {
 		return nil, err
 	}
-	t := &Token{ID: id, Policies: policies, EntityID: entityID, CreatedTime: st.now(), ExpiresAt: expiresAt}
+	now := st.now()
+	var maxExpiresAt time.Time
+	if !expiresAt.IsZero() {
+		maxExpiresAt = later(expiresAt, now.Add(st.maxTTL))
+		if !bound.IsZero() {
+			if expiresAt.After(bound) {
+				expiresAt = bound
+			}
+			if maxExpiresAt.After(bound) {
+				maxExpiresAt = bound
+			}
+		}
+	}
+	t := &Token{ID: id, Policies: policies, EntityID: entityID, CreatedTime: now, ExpiresAt: expiresAt, MaxExpiresAt: maxExpiresAt}
 	if err := st.save(ctx, t); err != nil {
 		return nil, err
 	}
@@ -195,9 +269,11 @@ func (st *Store) Lookup(ctx context.Context, id string) (*Token, error) {
 	return &t, nil
 }
 
-// Renew extends a token's expiration by ttl from now (or the default TTL if
-// ttl <= 0). Root and other non-expiring tokens are returned unchanged. It
-// returns [ErrTokenNotFound]/[ErrTokenExpired] like Lookup.
+// Renew sets a token's expiration to ttl from now (the default TTL if ttl <= 0),
+// but never past its renewal ceiling ([Store.MaxExpiry]); a token stored before
+// ceilings existed has its derived ceiling recorded here, so it stays fixed.
+// Root and other non-expiring tokens are returned unchanged. It returns
+// [ErrTokenNotFound]/[ErrTokenExpired] like Lookup.
 func (st *Store) Renew(ctx context.Context, id string, ttl time.Duration) (*Token, error) {
 	t, err := st.Lookup(ctx, id)
 	if err != nil {
@@ -209,7 +285,12 @@ func (st *Store) Renew(ctx context.Context, id string, ttl time.Duration) (*Toke
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
+	ceiling := st.MaxExpiry(t)
+	t.MaxExpiresAt = ceiling
 	t.ExpiresAt = st.now().Add(ttl)
+	if t.ExpiresAt.After(ceiling) {
+		t.ExpiresAt = ceiling
+	}
 	if err := st.save(ctx, t); err != nil {
 		return nil, err
 	}

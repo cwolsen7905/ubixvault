@@ -12,23 +12,42 @@ All notable changes to uBixVault are documented here. The format is based on
   (userpass) or LDAP, as well as a pasted token, and shows who you are: policies,
   identity policies, and when the token expires. **Sign out** revokes a token the
   console obtained; a pasted token (which may be root or shared) is only
-  forgotten in that tab, never revoked. **Renew** appears for expiring tokens and
-  works when the token's policies allow `auth/token/renew-self`.
+  forgotten in that tab, never revoked. **Renew** appears for expiring tokens.
 - **`GET /v1/auth/token/lookup-self`**, in Vault's response shape: `id`,
   `policies`, `identity_policies`, `entity_id`, `creation_time`, `issue_time`,
   `expire_time` (null when it never expires), `ttl`, `renewable`, `type`.
+- **`-max-token-ttl`** (default `768h`, Vault's default `max_lease_ttl`): how far
+  renewal may extend a token whose own TTL is shorter. See Security below.
 
 ### Changed
 
-- **Every token may look itself up and revoke itself** without an ACL grant, as
-  under Vault's built-in `default` policy — both act only on the calling token
-  and cannot extend its access. `renew-self` still needs a grant: renewal has no
-  maximum TTL yet, so granting it to every token would let any token keep itself
-  alive indefinitely (tracked in `docs/ROADMAP.md`).
+- **Every token may look itself up, renew itself, and revoke itself** without an
+  ACL grant, as under Vault's built-in `default` policy. Each acts only on the
+  calling token, and renewal is now capped (below), so none extends its access.
 
 ### Fixed
 
 - The console header still read "uBix Vault"; it now reads uBixVault.
+
+### Security
+
+- **Critical — token creation could escalate to any policy, including `root`.**
+  `auth/token/create` passed the requested policies and TTL straight through, so
+  a token whose only grant was `auth/token/create` could mint a `root` token (or
+  any other policy) with any lifetime. A caller that is neither root nor holds
+  `sudo` on `auth/token/create` may now only give a child token policies it holds
+  itself (else `400 child policies must be subset of parent`), and the child
+  cannot outlive the caller's own maximum lifetime. Root and `sudo` callers are
+  unaffected, so operator workflows that mint long-lived tokens (e.g. 1-year CI
+  tokens) keep working. Affects every earlier version, in any deployment where a
+  non-root policy grants `auth/token/create`. ADR D-022.
+- **Token renewal is capped.** `renew-self` used to set the expiry to now plus
+  any requested increment, so a token allowed to renew could keep itself alive
+  indefinitely. Every expiring token now has a ceiling fixed at creation — the
+  later of its own expiry and creation time plus `-max-token-ttl` — and renewal
+  never passes it. Tokens issued before the upgrade are never shortened: their
+  ceiling is the later of their current expiry and created time plus the
+  maximum.
 
 ## [1.2.1] — 2026-09-28
 

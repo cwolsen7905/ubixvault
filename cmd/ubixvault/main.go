@@ -32,6 +32,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/seal"
 	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -128,6 +129,8 @@ func runServer(args []string) error {
 		"key rate limits by X-Forwarded-For (enable only behind a trusted proxy)")
 	logTLSAborts := fs.Bool("log-tls-handshake-aborts", false,
 		"log every TLS handshake the client abandons (e.g. TCP health checks); by default they are counted and summarized every 5m")
+	maxTokenTTL := fs.Duration("max-token-ttl", token.DefaultMaxTTL,
+		"how far renewal may extend a token whose own TTL is shorter; a token deliberately issued for longer keeps its full TTL")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -228,6 +231,7 @@ func runServer(args []string) error {
 		log.Printf("HA enabled: replica %q, advertising %q, cluster %q", holder, adv, *haClusterAddr) //nolint:gosec // G706: operator-configured values, %q-quoted so they cannot forge log lines
 	}
 	c := core.New(phys, coreOpts...)
+	c.Tokens().SetMaxTTL(*maxTokenTTL)
 
 	opts := []api.Option{api.WithVersion(version)}
 

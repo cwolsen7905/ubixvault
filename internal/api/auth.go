@@ -18,6 +18,7 @@ const tokenHeader = "X-Vault-Token" //nolint:gosec // G101: this is an HTTP head
 // itself without an ACL grant (see authorize).
 var selfTokenPaths = map[string]bool{
 	"auth/token/lookup-self": true,
+	"auth/token/renew-self":  true,
 	"auth/token/revoke-self": true,
 }
 
@@ -95,51 +96,18 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 		return true, nil
 	}
 
-	// Likewise every token may look itself up and revoke itself: both act only on
-	// the calling token, and neither can extend what it may do. renew-self is
-	// deliberately absent — renewal has no maximum TTL yet, so granting it to
-	// every token would let any token make itself effectively permanent.
+	// Likewise every token may look itself up, renew itself and revoke itself —
+	// as under Vault's built-in default policy. Each acts only on the calling
+	// token, and renewal can never pass the token's ceiling (token.Store.MaxExpiry),
+	// so none of them extends what the token may do or for how long.
 	if selfTokenPaths[path] {
 		return true, nil
 	}
 
-	// A token's effective policies are its own plus any contributed by the
-	// identity entity it belongs to (identity only ever adds).
-	names := tok.Policies
-	var resolve func(string) (string, bool)
-	if h.identity != nil && tok.EntityID != "" {
-		entityPolicies, err := h.identity.PoliciesFor(ctx, tok.EntityID)
-		if err != nil {
-			return false, err
-		}
-		if len(entityPolicies) > 0 {
-			names = append(append([]string{}, tok.Policies...), entityPolicies...)
-		}
-		// Template values for {{identity.*}} placeholders in policy paths.
-		vals, err := h.identity.TemplateValues(ctx, tok.EntityID)
-		if err != nil {
-			return false, err
-		}
-		if len(vals) > 0 {
-			resolve = func(key string) (string, bool) { v, ok := vals[key]; return v, ok }
-		}
+	acl, err := h.aclFor(ctx, tok)
+	if err != nil {
+		return false, err
 	}
-
-	var policies []*policy.Policy
-	for _, name := range names {
-		p, err := h.policies.Get(ctx, name)
-		switch {
-		case errors.Is(err, policy.ErrPolicyNotFound):
-			continue // a named-but-missing policy grants nothing
-		case err != nil:
-			return false, err
-		}
-		if resolve != nil {
-			p = p.Templated(resolve) // resolve {{identity.*}} placeholders
-		}
-		policies = append(policies, p)
-	}
-	acl := policy.NewACL(policies...)
 
 	switch method {
 	case http.MethodGet:
@@ -153,4 +121,59 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 	default:
 		return false, nil
 	}
+}
+
+// hasSudo reports whether tok holds the sudo capability on path. Root tokens
+// always do.
+func (h *Handler) hasSudo(ctx context.Context, tok *token.Token, path string) (bool, error) {
+	if tok.IsRoot() {
+		return true, nil
+	}
+	acl, err := h.aclFor(ctx, tok)
+	if err != nil {
+		return false, err
+	}
+	return acl.Allows(path, policy.Sudo), nil
+}
+
+// aclFor builds the ACL for a non-root token: its own policies plus any its
+// identity entity contributes, with {{identity.*}} placeholders resolved.
+func (h *Handler) aclFor(ctx context.Context, tok *token.Token) (*policy.ACL, error) {
+	// A token's effective policies are its own plus any contributed by the
+	// identity entity it belongs to (identity only ever adds).
+	names := tok.Policies
+	var resolve func(string) (string, bool)
+	if h.identity != nil && tok.EntityID != "" {
+		entityPolicies, err := h.identity.PoliciesFor(ctx, tok.EntityID)
+		if err != nil {
+			return nil, err
+		}
+		if len(entityPolicies) > 0 {
+			names = append(append([]string{}, tok.Policies...), entityPolicies...)
+		}
+		// Template values for {{identity.*}} placeholders in policy paths.
+		vals, err := h.identity.TemplateValues(ctx, tok.EntityID)
+		if err != nil {
+			return nil, err
+		}
+		if len(vals) > 0 {
+			resolve = func(key string) (string, bool) { v, ok := vals[key]; return v, ok }
+		}
+	}
+
+	var policies []*policy.Policy
+	for _, name := range names {
+		p, err := h.policies.Get(ctx, name)
+		switch {
+		case errors.Is(err, policy.ErrPolicyNotFound):
+			continue // a named-but-missing policy grants nothing
+		case err != nil:
+			return nil, err
+		}
+		if resolve != nil {
+			p = p.Templated(resolve) // resolve {{identity.*}} placeholders
+		}
+		policies = append(policies, p)
+	}
+	return policy.NewACL(policies...), nil
 }
