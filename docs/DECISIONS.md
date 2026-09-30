@@ -600,4 +600,6 @@ the lookup that notices them but by the sweeper, so the cascade always runs. Tok
 have no ceiling recorded; theirs is derived as the later of their current expiry
 and created time plus the system maximum, and recorded on first renewal, so no
 existing token is shortened. Auth-method roles do not yet have a per-role
-`token_max_ttl`; their tokens use the system maximum.
+`token_max_ttl`; their tokens use the system maximum. — **Done after 1.4.0:**
+every auth method takes `token_max_ttl`, which lowers (never raises) the
+ceiling of the tokens it issues.
