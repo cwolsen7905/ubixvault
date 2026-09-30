@@ -36,6 +36,33 @@ jobs:
       - name: Build
         run: go build ./...
 
+  console-e2e:
+    name: Console (headless Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Chrome is preinstalled on ubuntu-latest (google-chrome).
+      - name: Initialize, unseal, sign in and out through the console
+        run: OUT="$RUNNER_TEMP/console-shots" test/e2e/console/run.sh
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-screenshots
+          path: ${{ runner.temp }}/console-shots
+          if-no-files-found: ignore
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

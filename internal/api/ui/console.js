@@ -87,11 +87,105 @@ async function refreshStatus() {
     el.dataset.state = state;
     $("seal-word").textContent = word;
     $("seal-tagline").textContent = tag;
+    reflectLifecycle(st);
   } catch (_) {
     el.dataset.state = "error";
     $("seal-word").textContent = "Unreachable";
     $("seal-tagline").textContent = "Could not reach the vault";
   }
+}
+
+// ---- lifecycle: initialize and unseal ----
+// While freshly generated keys are on screen, the Initialize panel stays up even
+// though the vault is now initialized: hiding it would hide the keys with it.
+let showingInitSecrets = false;
+
+function reflectLifecycle(st) {
+  $("init-panel").hidden = !(!st.initialized || showingInitSecrets);
+  const sealed = !!st.initialized && !!st.sealed;
+  $("unseal-panel").hidden = !sealed;
+  if (!sealed) return;
+
+  const auto = st.type === "auto";
+  $("unseal-form").hidden = auto;
+  $("unseal-hint").textContent = auto
+    ? "This vault unseals itself with its seal (auto-unseal). If it stays sealed, the seal " +
+      "(KMS or key) is unreachable — check the server log; key shares cannot unseal it."
+    : "Enter key shares one at a time; the vault unseals when enough have been given. " +
+      "A share is sent only to this vault and is not kept in the browser.";
+  const tag = $("unseal-progress");
+  tag.textContent = (st.progress || 0) + " of " + (st.t || "?");
+  tag.dataset.set = String((st.progress || 0) > 0);
+}
+
+// secretList renders labelled values, each with a Copy button, into out.
+function secretList(out, title, values) {
+  const head = document.createElement("h3"); head.className = "sub"; head.textContent = title;
+  const list = document.createElement("div"); list.className = "keys";
+  values.forEach((v, i) => {
+    const row = document.createElement("div"); row.className = "keyrow";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = values.length > 1 ? String(i + 1) : "";
+    const code = document.createElement("code"); code.textContent = v;
+    const copy = actionButton("Copy", "ghost", () => { if (navigator.clipboard) navigator.clipboard.writeText(v); });
+    row.append(n, code, copy);
+    list.appendChild(row);
+  });
+  out.append(head, list);
+}
+
+async function initVault() {
+  const shares = parseInt($("init-shares").value, 10);
+  const threshold = parseInt($("init-threshold").value, 10);
+  if (!(shares >= 2 && shares <= 255 && threshold >= 2 && threshold <= shares)) {
+    panelMsg("init-out", "error", "Use 2–255 shares, and a threshold from 2 up to the number of shares.");
+    return;
+  }
+  const r = await api("POST", "/v1/sys/init", { secret_shares: shares, secret_threshold: threshold });
+  if (!r.ok) { panelMsg("init-out", "error", friendlyError(r.status, r.body)); return; }
+  const b = r.body || {};
+  const keys = (b.recovery_keys && b.recovery_keys.length) ? b.recovery_keys : (b.keys || []);
+  const recovery = !!(b.recovery_keys && b.recovery_keys.length);
+
+  showingInitSecrets = true;
+  $("init-form").hidden = true;
+  const out = $("init-out"); out.replaceChildren();
+  const warn = document.createElement("div"); warn.className = "warn";
+  warn.textContent = "Shown once. Copy every " + (recovery ? "recovery key" : "key share") +
+    " and the root token somewhere safe and offline now — they cannot be shown again.";
+  out.appendChild(warn);
+  secretList(out, (recovery ? "Recovery keys" : "Key shares") + " — any " + threshold + " of " + keys.length +
+    (recovery ? " regenerate a root token" : " unseal the vault"), keys);
+  secretList(out, "Root token", [b.root_token || ""]);
+  const acts = document.createElement("div"); acts.className = "kv-actions";
+  acts.appendChild(actionButton("Use root token in this tab", "", async () => {
+    setToken(b.root_token || "", "token");
+    await refreshSession();
+  }));
+  acts.appendChild(actionButton("I've stored them — hide", "ghost", async () => {
+    showingInitSecrets = false;
+    out.replaceChildren();
+    $("init-form").hidden = false;
+    await refreshStatus();
+  }));
+  out.appendChild(acts);
+  await refreshStatus();
+}
+
+async function submitUnsealShare() {
+  const key = $("unseal-key").value.trim();
+  $("unseal-key").value = ""; // never keep a share in the page
+  if (!key) { panelMsg("unseal-out", "error", "Enter a key share."); return; }
+  const r = await api("POST", "/v1/sys/unseal", { key });
+  if (!r.ok) { panelMsg("unseal-out", "error", friendlyError(r.status, r.body)); return; }
+  const st = r.body || {};
+  if (st.sealed === false) {
+    panelMsg("unseal-out", "ok", "Unsealed.");
+    await refreshStatus();
+    await refreshSession();
+    return;
+  }
+  panelMsg("unseal-out", "ok", "Share accepted — " + (st.progress || 0) + " of " + (st.t || "?") + ".");
+  await refreshStatus();
 }
 
 // ---- session: sign in, who am I, renew, sign out ----
@@ -748,6 +842,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("refresh").addEventListener("click", () => { refreshStatus(); refreshSession(); });
   $("login-method").addEventListener("change", reflectLoginMethod);
   $("login-form").addEventListener("submit", (e) => { e.preventDefault(); login(); });
+  $("init-form").addEventListener("submit", (e) => { e.preventDefault(); initVault(); });
+  $("unseal-form").addEventListener("submit", (e) => { e.preventDefault(); submitUnsealShare(); });
   $("renew").addEventListener("click", renew);
   $("logout").addEventListener("click", logout);
 
