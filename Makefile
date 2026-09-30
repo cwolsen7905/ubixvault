@@ -65,6 +65,10 @@ integration: ## Integration tests against the compose MariaDB (MARIADB_DSN)
 	UBIXVAULT_MARIADB_DSN='$(MARIADB_DSN)' \
 		go test -tags integration ./internal/database/... ./internal/storage/...
 
+.PHONY: console-e2e
+console-e2e: ## Drive the /ui/ console in headless Chrome against a fresh server (needs Node >= 22 + Chrome)
+	test/e2e/console/run.sh
+
 .PHONY: fuzz
 fuzz: ## Fuzz the policy (HCL/JSON) parser 30s; swap the target for others
 	go test -run=x -fuzz=FuzzParseDocument -fuzztime=30s ./internal/policy/

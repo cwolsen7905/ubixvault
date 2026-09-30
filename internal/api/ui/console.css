@@ -101,7 +101,7 @@ main { max-width: 62rem; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.
 .hint { margin: 0 0 .9rem; color: var(--muted); font-size: .85rem; max-width: 46rem; }
 
 .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
-input[type=text], input[type=password] {
+input[type=text], input[type=password], input[type=number] {
   flex: 1 1 18rem; min-width: 0;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--line); border-bottom: 1px solid var(--muted);
@@ -225,3 +225,12 @@ footer a { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Lifecycle panels */
+input.num { flex: 0 0 6rem; }
+label.inline { font-size: .8rem; color: var(--muted); }
+.keys { display: grid; gap: .5rem; margin-top: .75rem; }
+.keyrow { display: flex; gap: .5rem; align-items: center; }
+.keyrow code { flex: 1 1 auto; font-family: var(--mono); font-size: .8rem; background: var(--bg);
+  border: 1px solid var(--line); padding: .45rem .6rem; overflow-wrap: anywhere; }
+.keyrow .n { font-family: var(--mono); font-size: .75rem; color: var(--faint); width: 1.5rem; }

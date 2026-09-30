@@ -32,6 +32,34 @@
     <button class="ghost" id="refresh" type="button">Refresh</button>
   </section>
 
+  <!-- Lifecycle: shown only while the vault needs it (see refreshStatus). -->
+  <section class="panel" id="init-panel" hidden>
+    <h2>Initialize</h2>
+    <p class="hint">Sets up a new vault: generates its master key, splits it into key shares, and
+      issues the first root token. This happens once. The shares and the root token are shown
+      once and never again &mdash; store each share with a different person, offline.</p>
+    <form class="row" id="init-form">
+      <label class="inline" for="init-shares">Key shares</label>
+      <input type="number" id="init-shares" min="2" max="255" value="5" class="num">
+      <label class="inline" for="init-threshold">Threshold</label>
+      <input type="number" id="init-threshold" min="2" max="255" value="3" class="num">
+      <button type="submit">Initialize</button>
+    </form>
+    <div id="init-out" class="out" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" id="unseal-panel" hidden>
+    <h2>Unseal</h2>
+    <p class="hint" id="unseal-hint">Enter key shares one at a time; the vault unseals when enough
+      have been given. A share is sent only to this vault and is not kept in the browser.</p>
+    <form class="row" id="unseal-form">
+      <input type="password" id="unseal-key" placeholder="key share (hex or base64)" autocomplete="off" spellcheck="false" aria-label="unseal key share">
+      <button type="submit">Submit share</button>
+      <span class="tag" id="unseal-progress" data-set="false">0 of ?</span>
+    </form>
+    <div id="unseal-out" class="out" aria-live="polite"></div>
+  </section>
+
   <section class="panel" id="session">
     <h2>Sign in</h2>
     <p class="hint">Your token stays in this browser tab and is sent only to this vault.</p>

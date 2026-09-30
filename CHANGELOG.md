@@ -20,6 +20,17 @@ All notable changes to uBixVault are documented here. The format is based on
   stop at login + `token_max_ttl`. It never raises the ceiling above the system
   maximum. A `token_ttl` larger than `token_max_ttl` is refused with a `400`.
   Returned on read.
+- **Console: initialize and unseal.** A new vault can be initialized from `/ui/`
+  (choose key shares and threshold); the shares — or recovery keys, with
+  auto-unseal — and the root token are shown once, each with a Copy button, and
+  stay on screen until you confirm you have stored them. A sealed vault shows an
+  Unseal panel that takes key shares one at a time with a live progress count; a
+  share is never kept in the page. An auto-unseal vault that stays sealed explains
+  that shares cannot help and to check the seal.
+- **Console end-to-end test in CI** (`test/e2e/console/`, `make console-e2e`): drives
+  the real console in headless Chrome — initialize, unseal share by share, sign in
+  with a token and with userpass, sign out — and checks the server side (a pasted
+  token survives "Forget token"; a signed-out token is really revoked).
 
 ### Changed
 
