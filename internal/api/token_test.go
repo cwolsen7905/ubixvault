@@ -262,3 +262,47 @@ func TestSweepExpiredTokensDestroysCubbyhole(t *testing.T) {
 		t.Fatalf("cubbyhole scopes after sweep = %v, want only the live token's", keys)
 	}
 }
+
+// A delegated child (created by a non-root, non-sudo token) is revoked with its
+// parent, cubbyhole and all; lookup-self reports orphan accordingly.
+func TestRevokeSelfCascadesToDelegatedChildren(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "minter", `{"path":{"auth/token/create":{"capabilities":["update"]}}}`)
+	parent := tokenWith(t, h, root, `{"policies":["minter"],"ttl":"1h"}`)
+	child := tokenWith(t, h, parent, `{"policies":["minter"],"ttl":"30m"}`)
+	grandchild := tokenWith(t, h, child, `{"policies":["minter"],"ttl":"10m"}`)
+	doAuth(t, h, "POST", "/v1/cubbyhole/note", `{"k":"v"}`, grandchild)
+
+	orphan := func(tok string) any {
+		return decode[map[string]any](t, doAuth(t, h, "GET", "/v1/auth/token/lookup-self", "", tok))["data"].(map[string]any)["orphan"]
+	}
+	if orphan(parent) != true || orphan(child) != false {
+		t.Fatalf("orphan: parent=%v child=%v, want true/false", orphan(parent), orphan(child))
+	}
+
+	if rec := doAuth(t, h, "POST", "/v1/auth/token/revoke-self", "", parent); rec.Code != http.StatusNoContent {
+		t.Fatalf("revoke-self = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	for name, tok := range map[string]string{"child": child, "grandchild": grandchild} {
+		if rec := doAuth(t, h, "GET", "/v1/auth/token/lookup-self", "", tok); rec.Code != http.StatusForbidden {
+			t.Errorf("%s after parent revoked = %d, want 403", name, rec.Code)
+		}
+	}
+	if keys, _ := h.(*Handler).core.Barrier().List(context.Background(), cubbyholeMountPrefix+"/"); len(keys) != 0 {
+		t.Errorf("grandchild's cubbyhole survived the cascade: %v", keys)
+	}
+}
+
+// Tokens created by a sudo holder are orphans: revoking the issuer does not
+// take down what it issued (the operator workflow, e.g. long-lived CI tokens).
+func TestSudoCreatedTokensSurviveIssuerRevocation(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "issuer", `{"path":{"auth/token/create":{"capabilities":["update","sudo"]}}}`)
+	issuer := tokenWith(t, h, root, `{"policies":["issuer"],"ttl":"1h"}`)
+	issued := tokenWith(t, h, issuer, `{"policies":["ci-ro"],"ttl":"8760h"}`)
+
+	doAuth(t, h, "POST", "/v1/auth/token/revoke-self", "", issuer)
+	if rec := doAuth(t, h, "GET", "/v1/auth/token/lookup-self", "", issued); rec.Code != http.StatusOK {
+		t.Fatalf("sudo-issued token after issuer revoked = %d, want 200", rec.Code)
+	}
+}

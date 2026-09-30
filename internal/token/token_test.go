@@ -165,7 +165,9 @@ func TestCreateWithTTL(t *testing.T) {
 	}
 }
 
-func TestLookupExpiredTokenIsGone(t *testing.T) {
+// An expired token is refused at once; its record is removed by the sweeper
+// (which also revokes its children), not by the lookup.
+func TestLookupExpiredTokenIsRefusedThenSwept(t *testing.T) {
 	ctx := context.Background()
 	st, mem, now := clockedStore()
 
@@ -175,9 +177,11 @@ func TestLookupExpiredTokenIsGone(t *testing.T) {
 	if _, err := st.Lookup(ctx, tok.ID); !errors.Is(err, ErrTokenExpired) {
 		t.Fatalf("expired lookup: want ErrTokenExpired, got %v", err)
 	}
-	// The expired record is cleaned up.
+	if n, err := st.SweepExpired(ctx, 0, nil); err != nil || n != 1 {
+		t.Fatalf("sweep = %d, %v; want 1", n, err)
+	}
 	if raw, _ := mem.Get(ctx, storeKey(tok.ID)); raw != nil {
-		t.Fatal("expired token record not deleted")
+		t.Fatal("expired token record not removed by the sweep")
 	}
 }
 
@@ -302,17 +306,28 @@ func TestLegacyTokenCeiling(t *testing.T) {
 	}
 }
 
-func TestCreateBoundedCannotOutliveBound(t *testing.T) {
+func TestCreateChildCannotOutliveParent(t *testing.T) {
 	ctx := context.Background()
 	st, _, now := clockedStore()
+	parent, _ := st.CreateWithTTL(ctx, []string{"p"}, 2*time.Hour)
+	parent.MaxExpiresAt = now.Add(2 * time.Hour) // a parent with a 2h ceiling
+	if err := st.save(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
 	bound := now.Add(2 * time.Hour)
 
-	child, err := st.CreateBounded(ctx, []string{"p"}, 876000*time.Hour, bound)
+	child, err := st.CreateChild(ctx, parent, []string{"p"}, 876000*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !child.ExpiresAt.Equal(bound) || !child.MaxExpiresAt.Equal(bound) {
 		t.Fatalf("ExpiresAt=%v MaxExpiresAt=%v, want both clamped to %v", child.ExpiresAt, child.MaxExpiresAt, bound)
+	}
+	if child.IsOrphan() || child.ParentHash != hashID(parent.ID) {
+		t.Fatalf("child ParentHash = %q, want the parent's hash", child.ParentHash)
+	}
+	if strings.Contains(child.ParentHash, parent.ID) {
+		t.Fatal("child record holds the parent's raw token ID")
 	}
 	renewed, _ := st.Renew(ctx, child.ID, 24*time.Hour)
 	if renewed.ExpiresAt.After(bound) {
@@ -320,9 +335,80 @@ func TestCreateBoundedCannotOutliveBound(t *testing.T) {
 	}
 
 	// Inside the bound, the requested TTL applies as usual.
-	short, _ := st.CreateBounded(ctx, []string{"p"}, 30*time.Minute, bound)
+	short, _ := st.CreateChild(ctx, parent, []string{"p"}, 30*time.Minute)
 	if want := now.Add(30 * time.Minute); !short.ExpiresAt.Equal(want) {
 		t.Fatalf("short child expiry = %v, want %v", short.ExpiresAt, want)
+	}
+}
+
+// Revoking a token revokes the tokens it created and theirs, running cleanup for
+// each; revoking a child leaves its parent; orphans are never swept up.
+func TestRevokeTree(t *testing.T) {
+	ctx := context.Background()
+	st, mem, _ := clockedStore()
+
+	root, _ := st.CreateRoot(ctx)
+	parent, _ := st.CreateWithTTL(ctx, []string{"p"}, time.Hour) // an orphan (root-issued)
+	child, _ := st.CreateChild(ctx, parent, []string{"p"}, time.Hour)
+	grandchild, _ := st.CreateChild(ctx, child, []string{"p"}, time.Hour)
+	sibling, _ := st.CreateChild(ctx, parent, []string{"p"}, time.Hour)
+	bystander, _ := st.CreateWithTTL(ctx, []string{"p"}, time.Hour)
+
+	// Revoking a leaf leaves the rest.
+	if n, err := st.RevokeTree(ctx, sibling.ID, nil); err != nil || n != 1 {
+		t.Fatalf("revoke leaf = %d, %v; want 1", n, err)
+	}
+	if _, err := st.Lookup(ctx, parent.ID); err != nil {
+		t.Fatalf("parent gone after revoking a child: %v", err)
+	}
+
+	var cleaned []string
+	n, err := st.RevokeTree(ctx, parent.ID, func(_ context.Context, id string) error {
+		cleaned = append(cleaned, id)
+		return nil
+	})
+	if err != nil || n != 3 {
+		t.Fatalf("revoke parent = %d, %v; want 3 (parent, child, grandchild)", n, err)
+	}
+	// Children are cleaned up before their parents.
+	if len(cleaned) != 3 || cleaned[0] != grandchild.ID || cleaned[2] != parent.ID {
+		t.Fatalf("cleanup order = %d ids, want grandchild first and parent last", len(cleaned))
+	}
+	for _, tok := range []*Token{parent, child, grandchild} {
+		if _, err := st.Lookup(ctx, tok.ID); !errors.Is(err, ErrTokenNotFound) {
+			t.Errorf("token still present after cascade: %v", err)
+		}
+	}
+	for _, tok := range []*Token{root, bystander} {
+		if _, err := st.Lookup(ctx, tok.ID); err != nil {
+			t.Errorf("unrelated token revoked by the cascade: %v", err)
+		}
+	}
+	// No index entries left behind.
+	if left, _ := mem.List(ctx, childPrefix); len(left) != 0 {
+		t.Fatalf("child index not cleaned up: %v", left)
+	}
+}
+
+// A parent that expires takes its children with it on the next sweep.
+func TestSweepCascadesToChildren(t *testing.T) {
+	ctx := context.Background()
+	st, _, now := clockedStore()
+
+	parent, _ := st.CreateWithTTL(ctx, []string{"p"}, time.Hour)
+	parent.MaxExpiresAt = now.Add(10 * time.Hour)
+	_ = st.save(ctx, parent)
+	child, _ := st.CreateChild(ctx, parent, []string{"p"}, 5*time.Hour) // outlives the parent's current expiry
+
+	*now = now.Add(2 * time.Hour) // parent expired, child not
+	if _, err := st.Lookup(ctx, child.ID); err != nil {
+		t.Fatalf("child should still be valid before the sweep: %v", err)
+	}
+	if n, err := st.SweepExpired(ctx, 0, nil); err != nil || n != 2 {
+		t.Fatalf("sweep = %d, %v; want 2 (the expired parent and its child)", n, err)
+	}
+	if _, err := st.Lookup(ctx, child.ID); !errors.Is(err, ErrTokenNotFound) {
+		t.Fatalf("child survived its expired parent: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -184,28 +185,30 @@ func (h *Handler) leaseLookup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// tokenRevokeSelf revokes the calling token and cascades: every dynamic-database
-// lease created by that token is revoked and its cubbyhole is destroyed, so
-// neither its credentials nor its private data outlive it.
+// tokenRevokeSelf revokes the calling token and cascades: every token it created
+// (and theirs) is revoked first, and for each one its dynamic-database leases are
+// revoked and its cubbyhole destroyed, so neither credentials nor private data
+// outlive the token that owned them.
 func (h *Handler) tokenRevokeSelf(w http.ResponseWriter, r *http.Request) {
 	tok, ok := tokenFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "no token on request")
 		return
 	}
-	if _, err := h.database.RevokeByToken(r.Context(), tok.ID); err != nil {
-		writeInternal(w, err)
-		return
-	}
-	if err := h.cubbyhole.Destroy(r.Context(), tok.ID); err != nil {
-		writeInternal(w, err)
-		return
-	}
-	if err := h.tokens.Revoke(r.Context(), tok.ID); err != nil {
+	if _, err := h.tokens.RevokeTree(r.Context(), tok.ID, h.cleanupToken); err != nil {
 		writeInternal(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cleanupToken destroys what a token owned before its record goes: its
+// dynamic-database leases and its cubbyhole.
+func (h *Handler) cleanupToken(ctx context.Context, id string) error {
+	if _, err := h.database.RevokeByToken(ctx, id); err != nil {
+		return err
+	}
+	return h.cubbyhole.Destroy(ctx, id)
 }
 
 func writeDatabaseError(w http.ResponseWriter, err error) {

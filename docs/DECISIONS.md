@@ -589,8 +589,14 @@ same keeps the rule predictable and never wider. *A full token hierarchy
 and revocation; the lifetime bound stops a short-lived parent from minting a
 long-lived child, which was the exploitable part.
 
-**Trade-off / follow-up:** revoking a parent still does not revoke its children;
-they expire no later than the parent's ceiling. Tokens stored before this change
+**Trade-off / follow-up:** ~~revoking a parent still does not revoke its
+children~~ — **done after 1.4.0:** a child created under rule 1 records its
+parent (as a hash, never the raw token) and is revoked when the parent is
+revoked or expires, recursively, with each token's cubbyhole and leases cleaned
+up. Tokens created by root or a `sudo` holder stay **orphans** (Vault's
+`create-orphan`), deliberately: revoking an operator's token must not take down
+every long-lived token they ever issued. Expired tokens are no longer deleted by
+the lookup that notices them but by the sweeper, so the cascade always runs. Tokens stored before this change
 have no ceiling recorded; theirs is derived as the later of their current expiry
 and created time plus the system maximum, and recorded on first renewal, so no
 existing token is shortened. Auth-method roles do not yet have a per-role

@@ -6,6 +6,21 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Revoking a token revokes the tokens it created** (ADR D-022 follow-up). A token
+  created by a non-root, non-`sudo` caller is that caller's child: `revoke-self` —
+  and expiry — revoke it and its own children in turn, destroying each one's
+  cubbyhole and dynamic-database leases. Tokens created by root or a `sudo` holder,
+  and auth-method logins, are **orphans** and unaffected, so revoking an operator's
+  token does not revoke what they issued. `lookup-self` reports `orphan`.
+
+### Changed
+
+- An expired token is still refused at once, but its record is now removed by the
+  background sweeper (within 10 minutes) rather than by the lookup that noticed it,
+  so the child cascade always runs.
+
 ## [1.4.0] — 2026-09-29
 
 **Works with HashiCorp's own clients.** The `vault` CLI, External Secrets
