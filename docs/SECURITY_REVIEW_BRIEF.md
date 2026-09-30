@@ -89,8 +89,11 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
    each acting only on the calling token (renewal is capped at the token's
    ceiling). Token creation enforces parent/child scoping (ADR D-022): policies
    must be a subset of the caller's unless it is root or holds `sudo`, and a child
-   cannot outlive the caller's ceiling. There is no token *hierarchy* — revoking
-   a parent does not revoke its children — which reviewers should weigh.
+   cannot outlive the caller's ceiling. Such a child is revoked with its parent
+   (on `revoke-self` and on expiry, recursively); tokens created by root or a
+   `sudo` holder are deliberate orphans. The parent link is stored as a hash in a
+   `sys/token-child/` index — reviewers may want to check the cascade cannot be
+   skipped (e.g. a failed index write) or turned against unrelated tokens.
 4b. **`internal/jwtauth`, `internal/approle`, `internal/userpass`, `internal/kubeauth`, `internal/certauth`, `internal/ldapauth`**
    — JWS/JWT verification (**algorithm confusion**, `kid`/JWKS handling,
    `exp`/`aud`/issuer checks), AppRole secret-id **constant-time** hash compare,

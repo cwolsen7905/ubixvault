@@ -393,12 +393,7 @@ func (h *Handler) RunTokenSweeper(ctx context.Context, interval time.Duration) {
 }
 
 func (h *Handler) sweepExpiredTokens(ctx context.Context) (int, error) {
-	return h.tokens.SweepExpired(ctx, tokenSweepBatch, func(ctx context.Context, id string) error {
-		if _, err := h.database.RevokeByToken(ctx, id); err != nil {
-			return err
-		}
-		return h.cubbyhole.Destroy(ctx, id)
-	})
+	return h.tokens.SweepExpired(ctx, tokenSweepBatch, h.cleanupToken)
 }
 
 // initRequest accepts every field of Vault's sys/init request, because Vault's

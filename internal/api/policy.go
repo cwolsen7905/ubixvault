@@ -153,10 +153,11 @@ func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 				"child policies must be subset of parent: not held by the calling token: "+strings.Join(missing, ", "))
 			return
 		}
-		// Nor may the child outlive the parent's maximum lifetime. (There is no
-		// token hierarchy, so revoking the parent does not revoke the child; this
-		// bound is what keeps a short-lived parent from minting a long-lived one.)
-		tok, err = h.tokens.CreateBounded(r.Context(), req.Policies, ttl, h.tokens.MaxExpiry(parent))
+		// The child cannot outlive the parent's maximum lifetime, and is revoked
+		// with the parent (ADR D-022). Root- and sudo-created tokens are orphans,
+		// like Vault's create-orphan, so revoking an operator's token does not
+		// take down every token they ever issued.
+		tok, err = h.tokens.CreateChild(r.Context(), parent, req.Policies, ttl)
 	case ttl > 0:
 		tok, err = h.tokens.CreateWithTTL(r.Context(), req.Policies, ttl)
 	default:
@@ -259,6 +260,7 @@ func (h *Handler) lookupSelf(w http.ResponseWriter, r *http.Request) {
 		"expire_time":       expireTime,
 		"ttl":               ttl,
 		"renewable":         !tok.ExpiresAt.IsZero(),
+		"orphan":            tok.IsOrphan(),
 		"type":              "service",
 	})
 }
