@@ -6,6 +6,24 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-09-30
+
+**The console runs a vault's whole lifecycle, and delegated tokens form a tree.**
+Initialize and unseal from `/ui/`, now covered by a headless-Chrome end-to-end test
+in CI; revoking a token revokes the tokens it delegated; and every auth method
+takes a per-role `token_max_ttl`. Backward-compatible with the 1.x API; no storage
+or chart-values changes.
+
+### Upgrade notes
+
+- **Delegated tokens now die with their parent.** A token created by a caller that
+  is neither root nor holds `sudo` on `auth/token/create` is revoked when that
+  caller's token is revoked or expires. Tokens created by root or a `sudo` holder,
+  and auth-method logins, are unaffected (orphans). Tokens that existed before the
+  upgrade have no parent and behave as orphans.
+- **Expired tokens are removed by the sweeper**, within 10 minutes, instead of by
+  the lookup that noticed them. They are still refused immediately.
+
 ### Added
 
 - **Revoking a token revokes the tokens it created** (ADR D-022 follow-up). A token
@@ -529,6 +547,7 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.5.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.5.0
 [1.4.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.4.0
 [1.3.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.3.0
 [1.2.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.1
