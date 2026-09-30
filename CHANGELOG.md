@@ -14,6 +14,12 @@ All notable changes to uBixVault are documented here. The format is based on
   cubbyhole and dynamic-database leases. Tokens created by root or a `sudo` holder,
   and auth-method logins, are **orphans** and unaffected, so revoking an operator's
   token does not revoke what they issued. `lookup-self` reports `orphan`.
+- **Per-role `token_max_ttl`** on every auth method (userpass users, AppRole,
+  TLS cert, JWT/OIDC and Kubernetes roles, and the LDAP config), as in Vault. It
+  lowers the ceiling of the tokens that role issues: their expiry and any renewal
+  stop at login + `token_max_ttl`. It never raises the ceiling above the system
+  maximum. A `token_ttl` larger than `token_max_ttl` is refused with a `400`.
+  Returned on read.
 
 ### Changed
 
