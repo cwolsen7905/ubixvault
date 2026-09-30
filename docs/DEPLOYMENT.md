@@ -474,6 +474,42 @@ Use `--certificate-identity-regexp 'https://github.com/cwolsen7905/ubixvault/.*'
 instead of the exact identity to accept any tag. A failed verification means the
 image is not a genuine, unmodified release — do not deploy it.
 
+## 10. Client token hygiene
+
+Every login mints a token, and a token is a **live credential until it expires or is
+revoked** — and a stored record in the vault until then. A client that logs in on
+every request and drops the token leaves one behind per request. In one deployment
+that was ~15,000 tokens a day, 176,000 in all, next to about 50 rows of real data,
+each valid for 32 days.
+
+Build clients like this:
+
+- **Don't log in per request.** Log in once per process (or per pod) and reuse the
+  token until it nears expiry — or, better, **cache the secrets you read** for a few
+  minutes in process or shared memory (e.g. APCu under PHP-FPM) and only go back to
+  the vault when the cache expires. This also keeps a brief vault outage from failing
+  your requests.
+- **Revoke what you mint.** If a client logs in only to read a few secrets, call
+  `POST /v1/auth/token/revoke-self` straight after. Every token may revoke itself
+  without a policy grant. Never revoke a static, operator-issued token — it is not
+  the client's to end.
+- **Give roles a short `ttl`.** Set `ttl` on the auth role a client logs in through
+  (Kubernetes, AppRole, userpass, …) to how long it actually needs the token —
+  minutes for a bootstrap that reads and discards. A token that is never revoked then
+  stops being valid soon after. Kubernetes roles honor `ttl` from 1.4.0.
+- **Renewal is bounded.** `renew-self` never extends a token past its ceiling: its
+  own TTL or `-max-token-ttl` (default `768h`), whichever is longer (ADR D-022).
+
+The server deletes expired tokens in the background (every 10 minutes, on the active
+replica), so a backlog clears on its own as tokens expire. To see whether clients are
+piling tokens up, count the token records in the storage table:
+
+```sql
+SELECT COUNT(*) FROM ubixvault_kv WHERE vault_key LIKE 'sys/token/%';
+```
+
+A count that climbs with request volume means a client is logging in per request.
+
 ## Security notes
 
 - **Not production-hardened / no external security review.** Treat accordingly.
