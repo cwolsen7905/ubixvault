@@ -137,6 +137,7 @@ console-e2e:
         "$CHROME_IMAGE" bash -c '
           set -euo pipefail
           out=console-e2e-out; port=18200
+          mkdir -p "$out/screenshots"
           CHROME_BIN="${PUPPETEER_EXECUTABLE_PATH:-}"
           if [ ! -x "$CHROME_BIN" ]; then
             CHROME_BIN="$(find / -type f -path "*/chrome-linux*/chrome" 2>/dev/null | head -n 1)"
