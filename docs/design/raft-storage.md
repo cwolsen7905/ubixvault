@@ -3,8 +3,8 @@
 > **Status:** Proposed · 2026-10-13 · ADR: [D-023](../DECISIONS.md) (library and
 > engine choice). Builds on [D-021](../DECISIONS.md) /
 > [`ha-active-standby.md`](ha-active-standby.md); relates to `docs/ROADMAP.md`
-> ("Optional — only if the external database should go away"). Nothing in this
-> note is built yet.
+> ("Optional — only if the external database should go away"). Slices 1, 2
+> (core) and part of 3 are built; see [Implementation status](#implementation-status).
 
 ## Goal
 
@@ -83,7 +83,7 @@ log and stable store.**
 
 The dependency posture (two third-party modules today, D-010/D-018) is the
 honest cost. It is bounded by keeping the library **behind one package**
-(`internal/storage/raftstore`): nothing outside it imports `hashicorp/raft`, and
+(`internal/storage/raft`): nothing outside it imports `hashicorp/raft`, and
 the log/stable store sits behind an interface so `raft-boltdb/v2` can be swapped
 for `hashicorp/raft-wal` if bbolt log performance or file growth ever matters.
 
@@ -342,7 +342,7 @@ operator-supplied certificates, no cert-manager, no shared secret.
 Raft is the *election and fencing* mechanism; nothing above it changes.
 
 ```
-core ── HABackend.HALock(...) ──► raftstore.Lock
+core ── HABackend.HALock(...) ──► raft.Lock
                                   Acquire: block until raft leader AND Barrier() applied
                                   lost:    closed when LeaderCh → false / term changes
                                   Holder:  leader ID + advertise (replicated record)
@@ -554,7 +554,7 @@ the single-writer rule of D-021 remains what makes read-modify-write safe.
 2. **FSM:** determinism (replay the same log twice ⇒ identical bbolt), idempotent
    re-apply after crash at every point of an apply, unknown-version refusal,
    fuzz of command decoding and the offline snapshot restore into raft.
-3. **In-process cluster harness** (`internal/storage/raftstore/rafttest`): N
+3. **In-process cluster harness** (`internal/storage/raft`; today `cluster_test.go`, a `rafttest` sub-package once fault injection lands): N
    nodes over an in-memory transport with fault injection — drop/delay/reorder,
    asymmetric partition, node pause, crash-restart with intact/wiped disk,
    disk-full on one node, torn write at crash mid-snapshot. Runs in plain
@@ -591,10 +591,10 @@ supported deployment).
 | # | Slice | Contents | Verification |
 | --- | --- | --- | --- |
 | 0 | This design + ADR D-023 | docs only | review |
-| 1 | `raftstore` skeleton + FSM | package, bbolt FSM, versioned commands, single-node `Backend`, `-storage raft` for one node, dependency added and graph recorded in the ADR | `runBackendConformance`; FSM determinism/idempotence tests; `govulncheck`, licence check |
+| 1 | `raft` skeleton + FSM | package, bbolt FSM, versioned commands, single-node `Backend`, `-storage raft` for one node, dependency added and graph recorded in the ADR | `runBackendConformance`; FSM determinism/idempotence tests; `govulncheck`, licence check |
 | 2 | Snapshots | FSM snapshot/restore in v1 NDJSON, raft snapshot store, offline `snapshot restore -storage raft` and offline `snapshot save -storage mysql`, count+hash verify | cross-backend lossless round trips; `FuzzRestore` extended |
 | 3 | Multi-node core | in-memory + TLS stream layer, membership APIs internally, in-process cluster harness, fault injection, leader/barrier read rules | harness tests; first Jepsen-lite run (no HA wiring yet) |
-| 4 | HA wiring | `raftstore.Lock` implementing `HABackend` (term = generation), Barrier-on-active, step-down as `LeadershipTransfer`, `-ha` semantics, flags | existing HA/forward tests reused against raft; fencing tests |
+| 4 | HA wiring | `raft.Lock` implementing `HABackend` (term = generation), Barrier-on-active, step-down as `LeadershipTransfer`, `-ha` semantics, flags | existing HA/forward tests reused against raft; fencing tests |
 | 5 | Cluster transport + join | ALPN-mux on the cluster listener, bridge leaves, join-token flow, non-voter→voter promotion | harness + 3-process local test; join-token abuse tests |
 | 6 | Operator API + CLI | `sys/storage/raft/*`, `operator raft …`, `peers.json` recovery, autopilot-state subset, metrics, docs | API tests; compatibility check against Vault CLI shapes |
 | 7 | Chart + docs | `storage.type: raft`, headless Service, PVC template, PDB/anti-affinity rules, NetworkPolicy, `DEPLOYMENT.md` Raft + upgrade sections | `helm template`/lint; kind e2e smoke (3 pods, kill leader) |
@@ -604,6 +604,81 @@ supported deployment).
 Slices 1–3 are the risk: they should land with the in-process harness green
 *before* any HA wiring is built on top. Slices 5 and 6 can be reordered or
 parallelized once 4 lands.
+
+## Implementation status
+
+First MR (`feat/raft-storage`), package `internal/storage/raft`. The package
+is named `raft`, not `raftstore` as drafted above (the lane and import path
+settled on the shorter name; D-023 still says `raftstore` and should be
+corrected when it is next edited).
+
+**Built:**
+
+- Slice 1: bbolt FSM (`fsm.db`), versioned JSON commands (`txn` reserved and
+  refused), single- and multi-node `storage.Backend`, last-applied index in the
+  same bbolt transaction (idempotent re-apply), fail-stop on an apply failure
+  (the node latches `ErrFailed` and refuses all further entries, reads and
+  writes; "seal and report unhealthy" needs core wiring, slice 4).
+- Slice 2 (core): FSM snapshot/restore in `ubixvault-snapshot v1` via
+  `internal/snapshot`, raft file snapshot store (retain 2), leader-driven
+  `RestoreSnapshot` that parses and validates the snapshot *before* proposing it
+  (a restore failing inside the library's FSM is fatal to the node), and
+  `WriteSnapshot` for a point-in-time export.
+- Slice 3 (part): in-memory and plaintext-TCP transports, membership
+  (`AddVoter`, `AddNonvoter`, `RemoveServer`, `TransferLeadership`), pre-vote on
+  (library default), in-process 3-node tests: replication, follower write
+  fencing, leader loss and catch-up on restart, no-quorum writes failing,
+  snapshot install on join after compaction, cluster-wide restore, TCP
+  transport.
+- The shared backend contract suite moved to `storagetest.RunBackendConformance`
+  and now runs against memory, file, MySQL (integration tag) and Raft.
+
+**Not built (later slices):** `HABackend` (`Term`, `LeaderCh`, `IsLeader`,
+`Barrier` are exposed for it); cluster-CA mTLS/ALPN transport and the join-token
+flow; `-storage raft` flag and config; `sys/storage/raft/*` and CLI; offline
+`snapshot restore -storage raft`; metrics; chart; fault-injection harness and
+Jepsen-lite.
+
+**Findings while building**
+
+- **Keys must be valid UTF-8.** Keys travel as JSON strings in log entries and in
+  the v1 snapshot format, and `encoding/json` silently rewrites invalid UTF-8.
+  The Raft backend rejects such keys with `ErrInvalidKey` instead of letting
+  them read back different. The file, memory and MySQL backends do not enforce
+  this, so a store that held one could not be snapshotted losslessly; barrier
+  paths are ASCII in practice. Worth enforcing in `storage.ValidateKey` (a
+  one-line change, separate MR) so all backends agree.
+- **Snapshot install starves heartbeats on the follower.** A follower processes
+  RPCs serially, so an install-snapshot (bbolt rewrite plus fsync) delays its
+  heartbeat replies; a leader with a short `LeaderLeaseTimeout` steps down
+  mid-restore. Observed at a 50ms lease on a laptop; the in-process tests use
+  heartbeat/election 300ms and lease 250ms. The library defaults (500ms lease)
+  are the right production floor; slice 8's measurements should confirm it on
+  real PVCs, and this is another reason to keep restore cheap.
+- **A restore is a whole-state replacement** and buffers the snapshot in memory
+  for validation. Fine for the MB-to-low-GB stores in scope; a streaming
+  validator is needed if stores grow past available memory.
+- **Long snapshot read transactions** hold bbolt free pages and can stall a
+  writer that needs to grow the file while one is open; snapshot duration is the
+  metric to watch (already listed above).
+- **`Holder.Generation = term`:** the library exposes the term only through
+  `Stats()`, parsed as a string. Acceptable, but slice 4 should pin it with a
+  test against library upgrades.
+
+**Dependency delta (go.mod, direct):** `hashicorp/raft` v1.7.3 (MPL-2.0),
+`hashicorp/raft-boltdb/v2` v2.3.1 (MPL-2.0), `go.etcd.io/bbolt` v1.4.3 (MIT),
+`hashicorp/go-hclog` v1.6.3 (MIT). **Indirect (new):** `hashicorp/go-metrics`
+(MIT), `armon/go-metrics` (MIT), `hashicorp/go-msgpack/v2` (MIT),
+`hashicorp/golang-lru` (MPL-2.0), `hashicorp/go-immutable-radix` (MPL-2.0),
+`boltdb/bolt` (MIT, pulled by raft-boltdb's v1 migration path),
+`fatih/color`, `mattn/go-colorable`, `mattn/go-isatty` (MIT, via hclog),
+`golang.org/x/sys`. MPL-2.0 is file-level copyleft: it constrains modified
+copies of those files, not this repository; recorded for the licence review.
+raft v1.8.0 and raft-boltdb v2.4.2 were not taken because they raise the `go`
+directive to 1.26.0; v1.7.3 / v2.3.1 keep it at 1.25.0 (CI and the Dockerfile
+are already on 1.26). Upgrading is a one-line follow-up when the directive is
+bumped on purpose. `govulncheck` was not available in the build environment, so
+its result still needs to be recorded before D-023 moves to Accepted.
 
 ## Open questions
 
