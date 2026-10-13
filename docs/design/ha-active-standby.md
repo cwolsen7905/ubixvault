@@ -318,6 +318,10 @@ default `https://$POD_IP:8201`), `-ha-lock-ttl`, `-ha-retry-interval`.
 
 ## Future: integrated storage (Raft)
 
+> **Update 2026-10-13:** a design for this is now proposed in
+> [`raft-storage.md`](raft-storage.md) (ADR D-023). The text below is the original
+> deferral rationale and is kept as written.
+
 Not now. Raft brings a local storage engine per replica, snapshots and log
 compaction, membership changes, quorum-loss recovery, peer TLS and bootstrap, and
 either several new dependencies (`hashicorp/raft`, `raft-boltdb`, bbolt…) or an

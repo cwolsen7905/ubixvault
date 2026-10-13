@@ -141,7 +141,8 @@ of it has landed**, which is what makes the `1.0` API-stability milestone honest
       Raft only earns its place if MySQL itself is to be removed. If pursued, it implements
       the same `HABackend` interface (leadership = lock, term = fencing generation) and
       starts with a design doc + an ADR on in-house Raft vs. `hashicorp/raft` (which would
-      add several dependencies to a tree that has two).
+      add several dependencies to a tree that has two). **Design doc and ADR D-023 are
+      written (Proposed):** [`docs/design/raft-storage.md`](design/raft-storage.md).
 
 ---
 
@@ -171,7 +172,7 @@ partial analogs are completed.
 
 ### Toward Vault Community parity (free-tier gaps)
 - [x] **HA: active/standby replicas** (1.2) — multiple replicas over the MySQL backend, one active holding a fenced lock, standbys forwarding and taking over on drain or failure (Vault Community HA). Design: [`docs/design/ha-active-standby.md`](design/ha-active-standby.md) · ADR D-021.
-- [ ] **Integrated Storage (Raft)** — HA without an external database (also in "Path to 1.0 · Optional"; builds on the D-021 `HABackend` interface, and may never be needed).
+- [ ] **Integrated Storage (Raft)** — HA without an external database (also in "Path to 1.0 · Optional"; builds on the D-021 `HABackend` interface; **design proposed 2026-10-13** — [`docs/design/raft-storage.md`](design/raft-storage.md) · ADR D-023, build not started).
 - [x] **TLS client-certificate auth** — mTLS cert roles (CA- or pinned-cert trust, name constraints).
 - [x] **LDAP / Active Directory auth** — bind + group search via `go-ldap/ldap/v3` (D-018, the project's second dependency); LDAP groups feed a group→policy map and identity external groups.
 - [ ] **More dynamic secrets** — PostgreSQL / MySQL / Mongo / MSSQL DB plugins; cloud IAM (AWS/GCP/Azure).
