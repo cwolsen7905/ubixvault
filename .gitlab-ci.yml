@@ -1,0 +1,150 @@
+# GitLab pipeline for uBixVault. It mirrors .github/workflows/ci.yml so a merge request is
+# tested on GitLab before it merges, not only on the GitHub mirror afterwards.
+#
+# The instance runner is a shell executor with Docker (the same one ubixshepherd uses), so
+# jobs take the `shell` tag and run their commands in official images with `docker run`,
+# as the runner's uid, with the Go build and module caches under the runner's home.
+# GitLab `services:` needs the Docker executor, so the integration job starts MariaDB
+# itself on a per-job network.
+#
+# Stays on GitHub only: ha-e2e.yml (a three-replica kind cluster) and image.yml.
+
+stages: [test]
+
+# Merge request pipelines (what "Pipelines must succeed" judges) and pushes to the default
+# branch. A push to an MR's branch starts no extra branch pipeline.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+default:
+  tags: [shell]
+  interruptible: true
+
+variables:
+  GO_IMAGE: golang:1.26                         # go.mod needs >= 1.25.0; GitHub CI tests on 1.26
+  LINT_IMAGE: golangci/golangci-lint:v2.12.2    # same version as GitHub
+  MARIADB_IMAGE: mariadb:11
+
+.go:
+  before_script:
+    - mkdir -p "$HOME/.cache/ubixvault-go"
+    # go_run '<bash command>': runs it in the Go image in the checkout. Extra `docker run`
+    # arguments can be passed in GO_RUN_ARGS.
+    - |
+      go_run() {
+        docker run --rm -v "$PWD:/src" -w /src --user "$(id -u):$(id -g)" \
+          -v "$HOME/.cache/ubixvault-go:/cache" \
+          -e HOME=/tmp -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod -e GOFLAGS=-buildvcs=false \
+          -e GOBIN=/cache/bin $GO_RUN_ARGS \
+          "${GO_IMAGE_OVERRIDE:-$GO_IMAGE}" bash -c "set -euo pipefail; $1"
+      }
+
+build-test:
+  extends: .go
+  stage: test
+  script:
+    - |
+      go_run '
+        out="$(gofmt -l .)"
+        if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+        go version
+        go vet ./...
+        go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out | tail -n 1
+        go build ./...
+        go run github.com/boumenot/gocover-cobertura@v1.5.0 < coverage.out > coverage.xml
+      '
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths: [coverage.out]
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+lint:
+  stage: test
+  before_script:
+    - mkdir -p "$HOME/.cache/ubixvault-go/lint"
+  script:
+    - |
+      docker run --rm -v "$PWD:/src" -w /src --user "$(id -u):$(id -g)" \
+        -v "$HOME/.cache/ubixvault-go:/cache" \
+        -e HOME=/tmp -e GOCACHE=/cache/build -e GOMODCACHE=/cache/mod \
+        -e GOFLAGS=-buildvcs=false -e GOLANGCI_LINT_CACHE=/cache/lint \
+        "$LINT_IMAGE" golangci-lint run
+
+# govulncheck follows the latest vulnerability database, so this job can go red with no
+# code change. The report is kept as an artifact (D-023 records the Raft result from it).
+vuln:
+  extends: .go
+  stage: test
+  script:
+    - |
+      go_run '
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        /cache/bin/govulncheck ./... 2>&1 | tee govulncheck.txt
+      '
+  artifacts:
+    when: always
+    expire_in: 4 weeks
+    paths: [govulncheck.txt]
+
+integration:
+  extends: .go
+  stage: test
+  variables:
+    NET: ubixvault-it-$CI_JOB_ID
+    DB: ubixvault-mariadb-$CI_JOB_ID
+  script:
+    - docker network create "$NET"
+    - |
+      docker run -d --name "$DB" --network "$NET" --network-alias mariadb \
+        -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=testdb "$MARIADB_IMAGE"
+    - |
+      for i in $(seq 1 60); do
+        docker exec "$DB" healthcheck.sh --connect --innodb_initialized && break
+        if [ "$i" = 60 ]; then echo "MariaDB did not become healthy"; docker logs "$DB"; exit 1; fi
+        sleep 2
+      done
+    - |
+      GO_RUN_ARGS="--network $NET -e UBIXVAULT_MARIADB_DSN=root:root@tcp(mariadb:3306)/testdb?parseTime=true" \
+        go_run 'go test -tags integration ./internal/database/... ./internal/storage/...'
+  after_script:
+    - docker rm -f "ubixvault-mariadb-$CI_JOB_ID" || true
+    - docker network rm "ubixvault-it-$CI_JOB_ID" || true
+
+# test/e2e/console/run.sh needs Go, Node >= 22 and Chrome, and no one image has all three,
+# so the server is built in the Go image and the browser test runs in an image with Chrome
+# (the Puppeteer one: Node plus Chrome, path in PUPPETEER_EXECUTABLE_PATH). The steps are
+# those of run.sh.
+console-e2e:
+  extends: .go
+  stage: test
+  variables:
+    CHROME_IMAGE: ghcr.io/puppeteer/puppeteer:latest
+  script:
+    - mkdir -p console-e2e-out
+    - go_run 'CGO_ENABLED=0 go build -o console-e2e-out/ubixvault ./cmd/ubixvault'
+    - |
+      docker run --rm -v "$PWD:/src" -w /src --user "$(id -u):$(id -g)" \
+        -e HOME=/tmp -e CI=true "$CHROME_IMAGE" bash -c '
+          set -euo pipefail
+          out=console-e2e-out; port=18200
+          export CHROME_BIN="$PUPPETEER_EXECUTABLE_PATH"
+          ./$out/ubixvault server -listen "127.0.0.1:$port" -data /tmp/vault-data >"$out/server.log" 2>&1 &
+          trap "kill $! 2>/dev/null || true" EXIT
+          for _ in $(seq 1 100); do
+            curl -s -o /dev/null "http://127.0.0.1:$port/v1/sys/seal-status" && break
+            sleep 0.1
+          done
+          node test/e2e/console/console-e2e.mjs "http://127.0.0.1:$port" "$out/screenshots"
+        '
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths: [console-e2e-out/screenshots, console-e2e-out/server.log]
