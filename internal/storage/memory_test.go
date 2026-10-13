@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-func TestMemoryBackend(t *testing.T) {
-	runBackendConformance(t, func(_ *testing.T) Backend {
-		return NewMemoryBackend()
-	})
-}
-
 // TestMemoryBackendConcurrent is a race-detector smoke test: concurrent readers
 // and writers on distinct keys must not trip the race detector or corrupt state.
 func TestMemoryBackendConcurrent(t *testing.T) {

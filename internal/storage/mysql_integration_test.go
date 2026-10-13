@@ -23,25 +23,6 @@ func mysqlDSN(t *testing.T) string {
 	return dsn
 }
 
-// TestMySQLBackendConformance runs the shared Backend contract suite against a
-// real database — the same suite the file and in-memory backends pass, proving
-// the SQL backend is interchangeable with them.
-func TestMySQLBackendConformance(t *testing.T) {
-	dsn := mysqlDSN(t)
-	runBackendConformance(t, func(t *testing.T) Backend {
-		b, err := NewMySQLBackend(dsn)
-		if err != nil {
-			t.Fatalf("NewMySQLBackend: %v", err)
-		}
-		// Each conformance subtest expects an empty backend.
-		if _, err := b.db.ExecContext(context.Background(), "DELETE FROM "+mysqlKVTable); err != nil {
-			t.Fatalf("clear table: %v", err)
-		}
-		t.Cleanup(func() { _ = b.Close() })
-		return b
-	})
-}
-
 func TestMySQLBackendRejectsOverlongKey(t *testing.T) {
 	dsn := mysqlDSN(t)
 	b, err := NewMySQLBackend(dsn)

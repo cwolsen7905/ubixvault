@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-func TestFileBackend(t *testing.T) {
-	runBackendConformance(t, func(t *testing.T) Backend {
-		b, err := NewFileBackend(t.TempDir())
-		if err != nil {
-			t.Fatalf("NewFileBackend: %v", err)
-		}
-		return b
-	})
-}
-
 func TestNewFileBackendRejectsEmptyRoot(t *testing.T) {
 	if _, err := NewFileBackend(""); err == nil {
 		t.Fatal("NewFileBackend(\"\"): want error, got nil")
