@@ -120,8 +120,9 @@ integration:
 
 # test/e2e/console/run.sh needs Go, Node >= 22 and Chrome, and no one image has all three,
 # so the server is built in the Go image and the browser test runs in an image with Chrome
-# (the Puppeteer one: Node plus Chrome, path in PUPPETEER_EXECUTABLE_PATH). The steps are
-# those of run.sh.
+# (the Puppeteer one: Node plus Chrome). The image does not export a Chrome path to a job's
+# user, so it runs as root, finds the Chrome the image ships, and hands the output back to
+# the runner's uid. The steps are those of run.sh.
 console-e2e:
   extends: .go
   stage: test
@@ -131,13 +132,20 @@ console-e2e:
     - mkdir -p console-e2e-out
     - go_run 'CGO_ENABLED=0 go build -o console-e2e-out/ubixvault ./cmd/ubixvault'
     - |
-      docker run --rm -v "$PWD:/src" -w /src --user "$(id -u):$(id -g)" \
-        -e HOME=/tmp -e CI=true "$CHROME_IMAGE" bash -c '
+      docker run --rm -v "$PWD:/src" -w /src --user root \
+        -e HOME=/tmp -e CI=true -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+        "$CHROME_IMAGE" bash -c '
           set -euo pipefail
           out=console-e2e-out; port=18200
-          export CHROME_BIN="$PUPPETEER_EXECUTABLE_PATH"
+          CHROME_BIN="${PUPPETEER_EXECUTABLE_PATH:-}"
+          if [ ! -x "$CHROME_BIN" ]; then
+            CHROME_BIN="$(find / -type f -path "*/chrome-linux*/chrome" 2>/dev/null | head -n 1)"
+          fi
+          [ -x "$CHROME_BIN" ] || { echo "no Chrome in the image"; exit 1; }
+          export CHROME_BIN
+          echo "chrome: $CHROME_BIN"
           ./$out/ubixvault server -listen "127.0.0.1:$port" -data /tmp/vault-data >"$out/server.log" 2>&1 &
-          trap "kill $! 2>/dev/null || true" EXIT
+          trap "kill $! 2>/dev/null || true; chown -R $HOST_UID:$HOST_GID $out" EXIT
           for _ in $(seq 1 100); do
             curl -s -o /dev/null "http://127.0.0.1:$port/v1/sys/seal-status" && break
             sleep 0.1
