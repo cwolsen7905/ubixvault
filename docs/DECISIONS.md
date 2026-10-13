@@ -603,3 +603,49 @@ existing token is shortened. Auth-method roles do not yet have a per-role
 `token_max_ttl`; their tokens use the system maximum. — **Done after 1.4.0:**
 every auth method takes `token_max_ttl`, which lowers (never raises) the
 ceiling of the tokens it issues.
+
+## D-023 — Integrated storage: `hashicorp/raft` with bbolt, behind `HABackend`
+
+**Status:** Proposed · 2026-10-13 · Design: `docs/design/raft-storage.md`
+
+**Decision:** add a third storage backend, `-storage raft`, so a cluster needs no
+external database. Consensus is **`hashicorp/raft`**, with **`raft-boltdb/v2`**
+for the log and stable store and **bbolt** for the replicated key/value state
+(FSM). Raft leadership implements D-021's `HABackend` (leader = active, Raft
+term = fencing generation), so standby forwarding, the cluster listener and the
+health/step-down API are reused unchanged. Peers authenticate over the existing
+cluster CA on the cluster listener (ALPN-multiplexed); new members join with a
+single-use token. The barrier stays above storage — the log and snapshots hold
+only ciphertext, and snapshots reuse the existing `ubixvault-snapshot v1`
+format, which is also the MySQL → Raft migration and rollback vehicle. The
+operator surface is Vault's `sys/storage/raft/*` / `operator raft`. MySQL stays
+supported. The library is confined to one package
+(`internal/storage/raftstore`) and the log store sits behind an interface.
+
+**Why:** the MySQL backend plus D-021 already gives replicas and planned
+maintenance; Raft earns its place only by removing the external database as a
+dependency and its separate HA story. `hashicorp/raft` is the library behind
+Vault's own integrated storage, so the operator concepts map one to one, and it
+supplies the transport, snapshot store, membership changes and leadership
+transfer that are the bulk of the risk. bbolt is one pure-Go file with MVCC read
+transactions (free consistent snapshots), ordered range scans that fit
+`List`, and is already what `raft-boltdb` uses.
+
+**Options rejected:** *In-house Raft* — zero dependencies, but consensus is the
+hardest code in the project and a bug is silent data loss in a secrets manager;
+D-009's carve-out was for a small, well-specified algorithm, which this is not.
+*`etcd-io/raft`* — a state-machine core only; we would write the transport,
+snapshotting, storage and membership workflow ourselves, keeping most of the
+in-house risk with less visibility. *Pebble/Badger for the FSM* — write
+throughput we do not need, compaction tuning, a much larger dependency.
+*Live dual-write migration* — complexity and risk not justified by a one-time,
+offline, verifiable snapshot cutover.
+
+**Trade-off:** the dependency tree grows beyond today's two third-party modules
+(`hashicorp/raft` and its transitives, `raft-boltdb/v2`, bbolt). The exact
+`go mod graph` delta, licences and a `govulncheck` result are recorded in the
+slice-1 MR before this ADR moves to Accepted. A sealed replica does not vote in
+v1 (transport starts after unseal). Compare-and-swap/transactions are **not**
+added now; the command format reserves a `txn` op and per-key Raft index
+versions so they can be added later without a format change (the prerequisite
+for multi-active serving named in D-021).
