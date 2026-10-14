@@ -82,6 +82,7 @@ k create secret generic ubixvault-kek --from-literal=auto-unseal-key="$(openssl 
 step "[$MODE] the MySQL release, seeded"
 use_release "$OLD_REL"
 helm install "$REL" "$CHART" -n "$NS" "${common[@]}" "${mysql_args[@]}"
+wait_pod ${FULL}-0
 k wait --for=jsonpath='{.status.phase}'=Running pod/${FULL}-0 --timeout=300s
 sleep 3
 ROOT=$(k exec ${FULL}-0 -- ubixvault operator init -address http://127.0.0.1:8200 | sed -n 's/^Initial Root Token: //p')
@@ -170,6 +171,7 @@ else
   helm install "$NEW_REL" "$CHART" -n "$NS" "${common[@]}" "${raft_args[@]}"
 fi
 use_release "$NEW_REL"
+wait_pod ${FULL}-0
 k wait --for=jsonpath='{.status.phase}'=Running pod/${FULL}-0 --timeout=300s
 k wait --for=condition=Ready pod/${FULL}-0 --timeout=300s
 wait_for "the data to be served by Raft" 120 wait_read

@@ -21,6 +21,8 @@ CHART=deploy/charts/ubixvault
 FAILOVER_BOUND=${FAILOVER_BOUND:-60} # seconds a read may fail after a leader kill
 
 k() { kubectl -n "$NS" "$@"; }
+# kubectl wait fails at once on a pod that does not exist yet.
+wait_pod() { for _ in $(seq 1 120); do k get pod "$1" >/dev/null 2>&1 && return 0; sleep 1; done; }
 step() { printf '\n=== %s\n' "$*"; }
 die() { echo "FAIL: $*"; dump; exit 1; }
 dump() {
@@ -70,6 +72,7 @@ helm install "$REL" "$CHART" -n "$NS" \
   --set storage.raft.persistence.size=1Gi \
   --set storage.networkPolicy.enabled=true \
   --set ha.antiAffinity=hard
+wait_pod ${FULL}-0
 k wait --for=jsonpath='{.status.phase}'=Running pod/${FULL}-0 --timeout=300s
 sleep 3
 

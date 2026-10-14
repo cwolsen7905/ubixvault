@@ -67,6 +67,7 @@ bench_backend() { # mysql|raft
       --set tls.enabled=false --set devNoTLS=true --set autoUnseal.existingSecret=ubixvault-kek \
       --set storage.type=mysql --set storage.mysql.dsnSecret=ubixvault-dsn \
       --set ha.enabled=true --set replicaCount=3 --set ha.antiAffinity=hard
+    wait_pod ${FULL}-0
     k wait --for=jsonpath='{.status.phase}'=Running pod/${FULL}-0 --timeout=300s
     sleep 3
     ROOT=$(k exec ${FULL}-0 -- ubixvault operator init -address http://127.0.0.1:8200 | sed -n 's/^Initial Root Token: //p')
