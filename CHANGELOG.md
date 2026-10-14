@@ -8,6 +8,23 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ### Added
 
+- **Raft chaos suite, migration rehearsal, baseline and Jepsen-lite.** kind
+  scenarios (leader freeze, partition, full restart, PVC loss, wiped pod `-0`)
+  with a no-retry writer whose acknowledged writes must all survive; the MySQL
+  to Raft migration and rollback rehearsed both with `--cascade=orphan` and as a
+  parallel release; a MariaDB-vs-Raft write/read/list baseline with a leader
+  lease check; an in-process Jepsen-lite (concurrent clients, crashes,
+  partitions, per-key linearizability checker) in `make ci` as a smoke and
+  nightly for 10 minutes. Workflows `raft-chaos` and `raft-jepsen`.
+- **`operator raft export-mysql` and `operator raft digest`.** Read the
+  ciphertext straight out of a MySQL database (no unseal) into a snapshot with an
+  entry count and SHA-256, and compare a snapshot of the migrated cluster with it.
+  `DEPLOYMENT.md` gains "Migrating from MySQL to Raft" and "Replacing a Raft
+  replica whose volume was lost".
+- **`-raft-peers` bootstrap guard.** A Raft node that would bootstrap on an empty
+  data directory first asks its peers; if one reports an initialized cluster it
+  refuses (or joins, given a token), so a pod `-0` rescheduled onto a wiped volume
+  cannot found a second cluster under its old ID. The chart sets it.
 - **Helm chart: `storage.type=raft`.** A three-replica integrated-storage cluster
   from the chart: StatefulSet with a PVC per pod and stable DNS identities via a
   headless Service, pod `-0` bootstraps and the others join with single-use
