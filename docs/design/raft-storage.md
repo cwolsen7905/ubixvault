@@ -715,10 +715,11 @@ settled on the shorter name; D-023 now says `raft`).
       `operator raft rotate-ca` replace the CA record (`Certs.Rotate`); nodes
       pick it up when restarted, so rotation is a runbook, not one call (below).
 
-- Slice 8 (chaos, migration, baseline, Jepsen-lite). Migration rehearsal and
-  baseline ran green on the first `raft-chaos` run on main (numbers below); see
-  the chaos and Jepsen results noted in the changelog entry and the workflow
-  runs.
+- Slice 8 (chaos, migration, baseline, Jepsen-lite). Built and run on main
+  (three runs of the kind suites after the fixes below; Jepsen-lite three
+  2-minute runs): all five chaos scenarios, both migration modes and the
+  baseline pass; Jepsen-lite found no violation but could not decide every
+  window (see below). Figures follow.
   - **Bootstrap guard.** The slice 7 agent's risk, confirmed by reading the
     code: pod `-0` on a wiped PVC with `-raft-retry-join` naming only itself
     bootstraps. `-raft-peers` (chart: `UBIXVAULT_RAFT_PEERS`, every ordinal's API
@@ -792,27 +793,47 @@ settled on the shorter name; D-023 now says `raft`).
     step-down, write p99 31ms against a 500ms lease. Confirmed for this
     storage; it is a CI VM's disk, so a production storage class should be
     checked the same way (the metric and `bench.sh` are the tool).
-  - **Chaos numbers** (first `chaos.sh` run on main, kind, 3 replicas, one
-    write / 100ms with no retries): leader node frozen: another leader after
-    **6s**, and the thawed node's three direct writes answered 200 only because
-    it forwarded them (all readable); leader partitioned from the majority: new
-    leader after **11s**, the isolated node answered 503 to every write; after
-    both, 93 of 109 attempted writes were acknowledged and **all 93 read back
-    from the Service and every replica**; full restart (scale 0 then 3, PVCs
-    kept, auto-unseal): leader and three ready replicas **18s** after scale-up,
-    nothing lost; PVC loss on `-2` (remove-peer, wipe, token): back as a voter
-    in **19s**. Scenario 5 (wiped `-0`) showed the guard refusing as designed,
-    then exposed a real bug in the join that follows: the transport resolved
-    the advertise DNS name and bootstrapped the pod IP into the configuration
-    (stale at the first reschedule, so a restarted `-0` was an unreachable
-    "voter" that `list-peers` still counted). Fixed (`NewMuxTransport` keeps
-    the name; `TestMuxTransportKeepsAdvertisedName`); the re-run is pending.
+  - **Chaos numbers** (`chaos.sh` on kind, 3 replicas, one write / 100ms with
+    no retries; three runs on main, ranges where they differ): leader node
+    frozen: another leader after **6-7s**, and the thawed node's three direct
+    writes answered 200 only because it forwarded them (all readable); leader
+    partitioned from the majority: new leader after **11-17s**, the isolated
+    node answered 503 to every write; **every acknowledged write read back
+    from the Service and every replica in all runs** (93/93, 85/85, 71/71 at
+    that stage; 403 of 404 attempted by the end of the last run); full restart
+    (scale 0 then 3, PVCs kept, auto-unseal): leader and three ready replicas
+    **18s** after scale-up, nothing lost; PVC loss on `-2` (remove-peer, wipe,
+    token): back as a voter in **19s**; PVC loss on `-0`: **refuses to
+    bootstrap** while an initialized cluster answers (the pod restarts, the
+    other two keep writing, `-0` is not in the configuration), then **joins
+    with a token**, three voters, data served, `-0` in the configuration
+    exactly once. No rejoin time was recorded for `-0`.
+  - **What the chaos suite found.** Scenario 5 of the first run showed the
+    guard refusing as designed, then exposed a real bug in the join that
+    follows: the transport resolved the advertise DNS name and bootstrapped the
+    pod IP into the configuration (stale at the first reschedule, so a
+    restarted `-0` was an unreachable "voter" that `list-peers` still counted).
+    Fixed (`NewMuxTransport` keeps the name;
+    `TestMuxTransportKeepsAdvertisedName`) and confirmed by the re-run above.
+    Jepsen-lite found that a newly elected leader's `ConsistentGet` could read
+    a state machine that had not applied the previous leader's tail and return
+    an overwritten value; it now applies a barrier in its own term first. Both
+    `ConsistentGet` waits (leadership check, barrier) were unbounded and hung
+    clients after a crash or partition; they now honour the caller's context.
+  - **Jepsen-lite on main** (three 2-minute runs, `-race`, 95-113k operations
+    each): **no violation found**, no term acknowledged by two nodes, replicas
+    converged. **The checker could not decide every window:** on all three keys
+    in all three runs it gave up on its per-window step budget (10k steps) and
+    logged the key as inconclusive. This is "nothing found in what it could
+    decide", not a proof of linearizability for the whole history. Short runs
+    (a few seconds) decide most windows, and it was those that found the stale
+    read above. Follow-up listed under Open questions.
   - **Migration rehearsal numbers** (`migrate.sh`, both modes passed): export
     48 entries; the migrated cluster's snapshot held all 48 with none changed
     and none added; client-visible outage from freeze to the first read served
-    by Raft on `-0` was **34s (same release, `--cascade=orphan`) and 35s
-    (parallel release)**, i.e. no difference, which is why the same release is
-    the default; rollback to MySQL served again 41-42s after the snapshot was
+    by Raft on `-0` was **33-35s in every run, for both the same release
+    (`--cascade=orphan`) and the parallel release**, i.e. no difference, which is why the same release is
+    the default; rollback to MySQL served again 41-46s after the snapshot was
     taken; plain `helm upgrade` to raft was refused (immutable
     `volumeClaimTemplates`) as predicted. Outage is dominated by pod start and
     auto-unseal, not data size (a 48-entry store).
@@ -929,6 +950,14 @@ predate and are unrelated to Raft, and a `x/crypto` bump is a separate change.
 D-023 is Accepted.
 
 ## Open questions
+
+- **Jepsen-lite checker coverage.** On 2-minute histories the register checker
+  gives up on its per-window budget on every key, so the nightly run reports
+  "no violation" without deciding every window. First count the undecided
+  windows per key and log the number; then raise the budget, shrink the
+  windows, or prune more (for example, unknown deletes that no read can
+  observe), until a long run decides nearly all of them. A nightly that is
+  mostly inconclusive should not be read as a proof.
 
 - **Should a sealed replica vote?** This note says no (transport only after
   unseal; fewer at-rest identities, simpler). It means a full restart under
