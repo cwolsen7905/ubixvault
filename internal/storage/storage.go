@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrInvalidKey is returned by Backend methods when a key does not satisfy the
@@ -64,13 +65,15 @@ type Backend interface {
 //   - is non-empty,
 //   - does not start or end with "/",
 //   - contains no empty segments (i.e. no "//"),
-//   - contains no "." or ".." segments (which could escape the store).
+//   - contains no "." or ".." segments (which could escape the store),
+//   - is valid UTF-8 (keys travel as JSON strings in snapshots and replicated
+//     logs, which would silently rewrite anything else).
 //
 // It returns [ErrInvalidKey] for any violation. Rejecting "." and ".." segments
 // is a defense-in-depth measure so that file-backed stores cannot be coerced into
 // path traversal.
 func ValidateKey(key string) error {
-	if key == "" || strings.HasPrefix(key, "/") || strings.HasSuffix(key, "/") {
+	if key == "" || !utf8.ValidString(key) || strings.HasPrefix(key, "/") || strings.HasSuffix(key, "/") {
 		return ErrInvalidKey
 	}
 	for _, seg := range strings.Split(key, "/") {
