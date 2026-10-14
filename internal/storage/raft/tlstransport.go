@@ -51,6 +51,13 @@ type tlsStream struct {
 
 func (s *tlsStream) Accept() (net.Conn, error) { return s.ln.Accept() }
 func (s *tlsStream) Close() error              { return s.ln.Close() }
+
+// nameAddr is an advertised host:port kept verbatim, never resolved.
+type nameAddr string
+
+func (nameAddr) Network() string  { return "tcp" }
+func (a nameAddr) String() string { return string(a) }
+
 func (s *tlsStream) Addr() net.Addr {
 	if s.adv != nil {
 		return s.adv
@@ -169,11 +176,13 @@ func NewMuxTransport(ln net.Listener, advertise string, creds Credentials, logOu
 	if advertise == "" {
 		return nil, errors.New("raft: mux transport requires an advertise address")
 	}
-	adv, err := net.ResolveTCPAddr("tcp", advertise)
-	if err != nil {
-		return nil, fmt.Errorf("raft: resolve advertise address: %w", err)
+	// Validate it, but keep the name: the address is persisted in the Raft
+	// configuration (the bootstrap entry names this node by it), and a pod IP
+	// stored there goes stale at the first reschedule.
+	if _, _, err := net.SplitHostPort(advertise); err != nil {
+		return nil, fmt.Errorf("raft: advertise address %q: %w", advertise, err)
 	}
-	s := &tlsStream{ln: ln, adv: adv, creds: creds}
+	s := &tlsStream{ln: ln, adv: nameAddr(advertise), creds: creds}
 	nt := hraft.NewNetworkTransportWithConfig(&hraft.NetworkTransportConfig{
 		Stream:  s,
 		MaxPool: 3,

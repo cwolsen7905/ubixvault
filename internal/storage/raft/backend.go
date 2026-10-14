@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -71,6 +72,11 @@ type Backend struct {
 	held    map[*Lock]uint64 // handles holding the lock, with their term
 
 	promo promoter
+
+	// readyTerm is the term in which this node, as leader, last applied a
+	// barrier: until then its state machine may trail entries committed by the
+	// previous leader, and a read of it can return an overwritten value.
+	readyTerm atomic.Uint64
 }
 
 var _ storage.Backend = (*Backend)(nil)
@@ -188,15 +194,42 @@ func (b *Backend) Get(_ context.Context, key string) (*storage.Entry, error) {
 }
 
 // ConsistentGet is Get after confirming this node is still the leader with a
-// quorum round trip, so the read reflects every committed write.
+// quorum round trip, so the read reflects every committed write. A leader that
+// has not yet applied a barrier in its own term first does so: it was elected
+// on a log whose tail its state machine may not have applied.
 func (b *Backend) ConsistentGet(ctx context.Context, key string) (*storage.Entry, error) {
 	if err := checkKey(key); err != nil {
 		return nil, err
 	}
-	if err := b.r.VerifyLeader().Error(); err != nil {
-		return nil, mapErr(err)
+	if err := b.verifyLeader(ctx); err != nil {
+		return nil, err
+	}
+	if term := b.Term(); b.readyTerm.Load() != term {
+		if err := b.Barrier(); err != nil {
+			return nil, err
+		}
+		if err := b.verifyLeader(ctx); err != nil {
+			return nil, err
+		}
+		if b.Term() != term {
+			return nil, fmt.Errorf("%w: leadership changed during the read", storage.ErrFenced)
+		}
+		b.readyTerm.Store(term)
 	}
 	return b.Get(ctx, key)
+}
+
+// verifyLeader confirms leadership with a quorum round trip, giving up when
+// ctx ends: the library's future has no deadline of its own.
+func (b *Backend) verifyLeader(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() { done <- b.r.VerifyLeader().Error() }()
+	select {
+	case err := <-done:
+		return mapErr(err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Put implements [storage.Backend]. It returns once the write is committed by a

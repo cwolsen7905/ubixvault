@@ -715,10 +715,10 @@ settled on the shorter name; D-023 now says `raft`).
       `operator raft rotate-ca` replace the CA record (`Certs.Rotate`); nodes
       pick it up when restarted, so rotation is a runbook, not one call (below).
 
-- Slice 8 (chaos, migration, baseline, Jepsen-lite). **Built; the kind
-  scenarios and the numbers below have not been run yet** (the lane has no
-  Docker/kind; they run in the `raft-chaos` workflow on the first push, and the
-  figures are to be copied from its job summaries into this note).
+- Slice 8 (chaos, migration, baseline, Jepsen-lite). Migration rehearsal and
+  baseline ran green on the first `raft-chaos` run on main (numbers below); see
+  the chaos and Jepsen results noted in the changelog entry and the workflow
+  runs.
   - **Bootstrap guard.** The slice 7 agent's risk, confirmed by reading the
     code: pod `-0` on a wiped PVC with `-raft-retry-join` naming only itself
     bootstraps. `-raft-peers` (chart: `UBIXVAULT_RAFT_PEERS`, every ordinal's API
@@ -763,15 +763,59 @@ settled on the shorter name; D-023 now says `raft`).
   - **Baseline** (`bench.sh`): the same write (1 and 8 clients), read and list
     load through the Service on MariaDB HA and on Raft, p50/p95/p99, plus the
     leader-lease check: the Raft term must not move across the load.
+    Measured:
 
-    | Backend | Load | p50/p95/p99 ms | req/s |
+    kind on a GitHub `ubuntu-latest` VM (first run of `bench.sh`, main at
+    the slice 8 merge), 3 replicas each, through the Service, no client retries,
+    one backend at a time, 0 errors in every row. MariaDB is a single pod
+    without persistence; Raft has a PVC per pod on the runner's disk.
+    `req/s` is requests over a whole-second wall clock, so read it to about
+    ±10%.
+
+    | Load | MariaDB p50/p95/p99 ms | Raft p50/p95/p99 ms | req/s MariaDB / Raft |
     | --- | --- | --- | --- |
-    | MariaDB | | *pending first run* | |
-    | Raft | | *pending first run* | |
+    | write, 1 client (300) | 4.5 / 5.6 / 6.2 | 4.5 / 5.6 / 6.7 | 100 / 100 |
+    | write, 8 clients (2000) | 13.4 / 20.6 / 24.2 | 14.9 / 24.6 / 30.9 | 250 / 222 |
+    | read, 8 clients (2000) | 7.9 / 13.3 / 18.3 | 5.1 / 10.2 / 28.8 | 333 / 333 |
+    | list 100 keys, 4 clients (200) | 4.6 / 6.7 / 8.9 | 3.5 / 5.7 / 6.9 | 200 / 200 |
 
-    Lease: library default 500ms (heartbeat/election 1s) is what the chart
-    runs; *confirmation on the PVCs pending the first run* (term unchanged is
-    the pass criterion; a change fails the job).
+    Raft writes are within about 10% of MariaDB at the median and 25% at p99
+    under 8 clients, and the single-client write is level: a quorum commit
+    (one fsync on the leader, one on a follower) costs no more than a MySQL
+    round trip on this setup. Reads and lists are local and equal or faster.
+    These are a regression baseline, not capacity figures (one VM, loopback-
+    class network, a single 1 Gi PVC per node).
+
+    **Lease on real PVCs:** the library defaults (heartbeat/election 1s,
+    leader lease 500ms) are what the chart runs. The `ubixvault_raft_term` of
+    all three nodes was 2 before and after the 2,500 writes: no election, no
+    step-down, write p99 31ms against a 500ms lease. Confirmed for this
+    storage; it is a CI VM's disk, so a production storage class should be
+    checked the same way (the metric and `bench.sh` are the tool).
+  - **Chaos numbers** (first `chaos.sh` run on main, kind, 3 replicas, one
+    write / 100ms with no retries): leader node frozen: another leader after
+    **6s**, and the thawed node's three direct writes answered 200 only because
+    it forwarded them (all readable); leader partitioned from the majority: new
+    leader after **11s**, the isolated node answered 503 to every write; after
+    both, 93 of 109 attempted writes were acknowledged and **all 93 read back
+    from the Service and every replica**; full restart (scale 0 then 3, PVCs
+    kept, auto-unseal): leader and three ready replicas **18s** after scale-up,
+    nothing lost; PVC loss on `-2` (remove-peer, wipe, token): back as a voter
+    in **19s**. Scenario 5 (wiped `-0`) showed the guard refusing as designed,
+    then exposed a real bug in the join that follows: the transport resolved
+    the advertise DNS name and bootstrapped the pod IP into the configuration
+    (stale at the first reschedule, so a restarted `-0` was an unreachable
+    "voter" that `list-peers` still counted). Fixed (`NewMuxTransport` keeps
+    the name; `TestMuxTransportKeepsAdvertisedName`); the re-run is pending.
+  - **Migration rehearsal numbers** (`migrate.sh`, both modes passed): export
+    48 entries; the migrated cluster's snapshot held all 48 with none changed
+    and none added; client-visible outage from freeze to the first read served
+    by Raft on `-0` was **34s (same release, `--cascade=orphan`) and 35s
+    (parallel release)**, i.e. no difference, which is why the same release is
+    the default; rollback to MySQL served again 41-42s after the snapshot was
+    taken; plain `helm upgrade` to raft was refused (immutable
+    `volumeClaimTemplates`) as predicted. Outage is dominated by pod start and
+    auto-unseal, not data size (a 48-entry store).
   - **Findings for other lanes.** `GET sys/storage/raft/configuration` answers
     `{"config":...}` at the top level; Vault wraps it as `{"data":{"config":...}}`
     and its CLI/clients read `data`. The scripts accept either. `operator
@@ -899,10 +943,11 @@ D-023 is Accepted.
   rehearsed by `migrate.sh`. The dry run against the real dev Helm history is
   still the build lane's step before the dev cutover.
 - **Log store:** `raft-boltdb/v2` (default here) vs `hashicorp/raft-wal`.
-  Decide on slice 8's measurements, not before: **open until the first
-  `bench.sh` numbers exist** (see Slice 8 below). Nothing in slice 8 argued for
-  switching; the write p99 and the term-stability check are the evidence to
-  read.
+  Decide on slice 8's measurements, not before: **keep `raft-boltdb/v2`.**
+  Single-client write latency equals MariaDB's, 8-client write p99 is 31ms, and
+  the term did not move; there is nothing to buy with `raft-wal` at these
+  sizes. Revisit if a larger store or a slower storage class shows commit
+  latency near the lease.
 - **Strict reads default:** lease-based local reads (this note) vs
   `VerifyLeader` on every active read. Measure the cost in slice 4; the
   decision-bearing call sites use strict reads either way.

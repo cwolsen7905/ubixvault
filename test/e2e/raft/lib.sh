@@ -8,6 +8,8 @@ CHART=deploy/charts/ubixvault
 LABEL=app.kubernetes.io/name=ubixvault
 
 k() { kubectl -n "$NS" "$@"; }
+# kubectl wait fails at once on a pod that does not exist yet.
+wait_pod() { for _ in $(seq 1 120); do k get pod "$1" >/dev/null 2>&1 && return 0; sleep 1; done; }
 step() { printf '\n=== %s\n' "$*"; }
 FAILED=0
 fail() { echo "FAIL: $*"; FAILED=1; }
@@ -69,6 +71,7 @@ install_raft() { # extra helm args...
 # raft_init_and_join — initialize on pod -0, then mint join tokens for the
 # others into the chart's join Secret. Sets ROOT.
 raft_init_and_join() {
+  wait_pod ${FULL}-0
   k wait --for=jsonpath='{.status.phase}'=Running pod/${FULL}-0 --timeout=300s
   sleep 3
   ROOT=$(k exec ${FULL}-0 -- ubixvault operator init -address http://127.0.0.1:8200 | sed -n 's/^Initial Root Token: //p')
