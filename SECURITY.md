@@ -68,6 +68,50 @@ We follow coordinated disclosure with a **90-day** default embargo:
 This is a solo-maintained project, so timelines are best-effort; we will
 communicate openly if a fix needs longer.
 
+## Raft integrated storage (experimental)
+
+`-storage raft` / chart `storage.type=raft` is **experimental** in 1.6.0: it has
+had no production soak and no independent review, and the points below are the
+security-relevant parts of running it. Full detail:
+[`docs/design/raft-storage.md`](docs/design/raft-storage.md) and
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+- **Cluster CA and node TLS.** Replica-to-replica traffic (Raft and request
+  forwarding, ALPN-multiplexed on the cluster port, 8201) uses mutual TLS under
+  a per-cluster CA. The CA record is stored in the encrypted store (barrier
+  data), has a 10-year life, and node leaf certificates are issued from it and
+  held only in memory, so they are reissued on unseal. Anyone holding a valid
+  leaf, or the CA key, can act as a cluster peer; treat the unsealed process
+  memory and the barrier as the trust boundary, as for any backend.
+- **Join token.** A node joins with a single-use, short-lived (15 minute
+  default) token minted by an operator with `sudo` on
+  `sys/storage/raft/join-token`. Only its SHA-256 is stored; it is burned on
+  first use, and every failure (invalid, expired, used) returns the same 403. A
+  leaked unburned token lets a rogue node join and replicate ciphertext: remove
+  it with `remove-peer`, and rotate the cluster CA if its leaf may have been
+  exfiltrated. Keep tokens out of logs and shell history; the chart delivers
+  them through a Secret.
+- **Rotating the CA.** Rotate when the CA key may be exposed, or around year 8.
+  It is disruptive, not rolling: take a snapshot, run `operator raft
+  rotate-ca` on the leader, then re-seal or restart every node (followers first)
+  and unseal. A node that missed the new CA must be removed, wiped and re-joined
+  with a fresh token. The runbook is in the design note under *Cluster CA
+  rotation*; rehearse it before you need it.
+- **`peers.json` recovery can lose acknowledged writes.** `operator raft
+  recover` rewrites the membership of a stopped survivor after quorum is
+  permanently lost. Writes acknowledged only by the dead majority are gone, and
+  the data directory must not be shared with any node that is still running.
+  Use it only when quorum cannot be restored, snapshot first, and re-join the
+  other nodes from scratch afterwards.
+- **Network policy on the raft port.** Port 8201 must be reachable only from
+  the cluster's own replicas. Enable `storage.networkPolicy.enabled` in the
+  chart (or the equivalent in your platform) and do not expose 8201 through any
+  Service, Ingress or load balancer. Peer authentication is mutual TLS, but the
+  policy keeps the port off the attack surface entirely. Note that some CNIs
+  (kind's default among them) do not enforce NetworkPolicy; verify yours does.
+- **Unseal.** Use auto-unseal for Raft clusters; with Shamir seals every
+  restart waits for an operator holding the key shares.
+
 ## Scope
 
 **In scope** — the confidentiality, integrity, or availability of secrets and the
@@ -76,7 +120,7 @@ mechanisms that protect them:
 - the encryption barrier and the seal/unseal (Shamir, KEK, transit seal) paths;
 - authentication (all auth methods), tokens/leases, and the ACL policy engine;
 - the secrets engines (KV, Transit, PKI, dynamic database);
-- the storage backends (file, MySQL) and the snapshot/restore path;
+- the storage backends (file, MySQL, Raft) and the snapshot/restore path;
 - the audit log (it is fail-closed by design);
 - the release supply chain (image signing / SBOM attestation).
 
