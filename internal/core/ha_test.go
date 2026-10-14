@@ -299,3 +299,61 @@ func TestHAHoldOffEndsWhenNobodyElseIsActive(t *testing.T) {
 		t.Fatalf("took %v to recover; the hold-off should end once the lock stays free", took)
 	}
 }
+
+// failingHA is an HABackend whose lock can be made to report a permanent
+// backend failure, as the Raft backend does once its state machine has failed.
+type failingHA struct {
+	*storagetest.Replica
+	fail atomic.Bool
+}
+
+func (f *failingHA) HALock(name, holderID, advertise string, o storage.LockOptions) storage.Lock {
+	return &failingLock{Lock: f.Replica.HALock(name, holderID, advertise, o), f: f}
+}
+
+type failingLock struct {
+	storage.Lock
+	f *failingHA
+}
+
+func (l *failingLock) Acquire(ctx context.Context) (<-chan struct{}, error) {
+	if l.f.fail.Load() {
+		return nil, fmt.Errorf("raft: %w", storage.ErrFailed)
+	}
+	return l.Lock.Acquire(ctx)
+}
+
+// TestHASealsAndReportsUnhealthyOnBackendFailure: a replica whose storage has
+// failed permanently seals itself and reports the failure, instead of
+// retrying a lock it can never hold.
+func TestHASealsAndReportsUnhealthyOnBackendFailure(t *testing.T) {
+	group := storagetest.NewHAGroup(storage.NewMemoryBackend())
+	phys := &failingHA{Replica: group.Replica()}
+	c := New(phys, WithAutoUnsealKey(newKEK(t)), WithHA(HAConfig{
+		Backend: phys, HolderID: "solo", Advertise: "https://solo:8200",
+		StepDownHoldOff: 20 * time.Millisecond,
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = c.RunHA(ctx, func(string, ...any) {}) }()
+	t.Cleanup(func() { cancel(); <-done })
+	if _, err := c.Initialize(context.Background(), InitConfig{}); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	eventually(t, "active", c.Active)
+	if err := c.HAFailed(); err != nil {
+		t.Fatalf("HAFailed before failure = %v", err)
+	}
+
+	phys.fail.Store(true)
+	if err := c.StepDown(); err != nil {
+		t.Fatalf("StepDown: %v", err)
+	}
+	eventually(t, "sealed after the failure", func() bool { return c.barrier.Sealed() })
+	if err := c.HAFailed(); !errors.Is(err, storage.ErrFailed) {
+		t.Fatalf("HAFailed = %v, want storage.ErrFailed", err)
+	}
+	if c.Active() || c.Standby() {
+		t.Fatal("failed replica still reports active or standby")
+	}
+}

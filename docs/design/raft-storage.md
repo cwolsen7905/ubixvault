@@ -632,8 +632,17 @@ settled on the shorter name; D-023 now says `raft`).
 - The shared backend contract suite moved to `storagetest.RunBackendConformance`
   and now runs against memory, file, MySQL (integration tag) and Raft.
 
-**Not built (later slices):** `HABackend` (`Term`, `LeaderCh`, `IsLeader`,
-`Barrier` are exposed for it); cluster-CA mTLS/ALPN transport and the join-token
+- Slice 4 (HA wiring): `raft.Backend` implements `HABackend`. `Acquire` waits for
+  leadership, applies a barrier and writes the holder record
+  (`core/ha/raft-holder`); `Holder.Generation` is the term (the `Stats()["term"]`
+  parse is pinned by a test); `Release` clears the record and calls
+  `LeadershipTransfer`, and writes are fenced to the term a handle acquired in.
+  A failed state machine closes `lost`, makes `Acquire`/`Holder` return
+  `storage.ErrFailed`, and core seals and reports unhealthy (`Core.HAFailed`).
+  Two handles on one node (the Initialize handle and the RunHA handle) are both
+  granted while the node leads; the holder record names the last writer.
+
+**Not built (later slices):** cluster-CA mTLS/ALPN transport and the join-token
 flow; `-storage raft` flag and config; `sys/storage/raft/*` and CLI; offline
 `snapshot restore -storage raft`; metrics; chart; fault-injection harness and
 Jepsen-lite.
