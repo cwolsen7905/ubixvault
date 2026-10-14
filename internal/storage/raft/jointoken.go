@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -33,19 +34,22 @@ const (
 	tokenSpent byte = 1
 )
 
-// tokenRecord is value = state(1) || expiry unix-nanos(8).
+// tokenRecord is value = state(1) || expiry unix-nanos(8, big-endian).
 func encodeTokenRecord(state byte, expiry int64) []byte {
-	b := make([]byte, 9)
-	b[0] = state
-	binary.BigEndian.PutUint64(b[1:], uint64(expiry))
-	return b
+	var buf bytes.Buffer
+	buf.WriteByte(state)
+	_ = binary.Write(&buf, binary.BigEndian, expiry) // bytes.Buffer cannot fail
+	return buf.Bytes()
 }
 
 func decodeTokenRecord(b []byte) (state byte, expiry int64, ok bool) {
 	if len(b) != 9 {
 		return 0, 0, false
 	}
-	return b[0], int64(binary.BigEndian.Uint64(b[1:])), true
+	if err := binary.Read(bytes.NewReader(b[1:]), binary.BigEndian, &expiry); err != nil {
+		return 0, 0, false
+	}
+	return b[0], expiry, true
 }
 
 func tokenKey(token string) (string, bool) {
@@ -53,7 +57,7 @@ func tokenKey(token string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	secret, err := base64.RawURLEncoding.DecodeString(raw)
+	secret, err := base64.RawURLEncoding.Strict().DecodeString(raw) // canonical only: no malleable aliases of a token
 	if err != nil || len(secret) != 32 {
 		return "", false
 	}

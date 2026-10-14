@@ -96,7 +96,7 @@ func (s *tlsStream) base() *tls.Config {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		NextProtos:         []string{ALPNProtocol},
-		InsecureSkipVerify: true, // replaced by VerifyConnection (verifyPeer)
+		InsecureSkipVerify: true, //nolint:gosec // chain, expiry and ALPN are enforced in VerifyConnection (verifyPeer)
 		VerifyConnection:   verifyPeer(s.creds),
 	}
 }

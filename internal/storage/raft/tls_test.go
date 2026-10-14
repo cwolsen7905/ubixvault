@@ -142,7 +142,7 @@ func TestTLSRejectsUnauthorizedPeers(t *testing.T) {
 	other := newTestCA(t)
 
 	base := func(cert *tls.Certificate, protos []string) *tls.Config {
-		c := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, NextProtos: protos}
+		c := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, NextProtos: protos} //nolint:gosec // test client probing the server
 		if cert != nil {
 			c.Certificates = []tls.Certificate{*cert}
 		}
@@ -197,10 +197,14 @@ func TestJoinTokenLifecycle(t *testing.T) {
 		t.Errorf("garbage: %v", err)
 	}
 	other, _, _ := b.MintJoinToken(ctx, time.Minute)
-	tampered := other[:len(other)-1] + "A"
-	if tampered == other {
-		tampered = other[:len(other)-1] + "B"
+	// Flip a character in the middle (the last base64 char carries padding
+	// bits and could decode to the same secret).
+	mid := len(tokenScheme) + 10
+	repl := "A"
+	if other[mid] == 'A' {
+		repl = "B"
 	}
+	tampered := other[:mid] + repl + other[mid+1:]
 	if err := b.RedeemJoinToken(ctx, tampered); !errors.Is(err, ErrTokenInvalid) {
 		t.Errorf("tampered: %v", err)
 	}
