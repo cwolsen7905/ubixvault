@@ -152,6 +152,20 @@ spec:
             # bootstraps; the others join through it.
             - name: UBIXVAULT_RAFT_RETRY_JOIN
               value: {{ printf "%s://%s-0.%s-headless.$(POD_NAMESPACE).svc:%d" (ternary "https" "http" .Values.tls.enabled) (include "ubixvault.fullname" .) (include "ubixvault.fullname" .) (int .Values.containerPort) | quote }}
+            {{- if gt (int .Values.replicaCount) 1 }}
+            # Bootstrap guard: a pod that finds its volume empty and sees an
+            # initialized cluster on a peer refuses to found a second one under
+            # its own ID (a lost PVC on -0). It joins instead when its join
+            # Secret key holds a token. Its own entry is ignored.
+            {{- $fn := include "ubixvault.fullname" . }}
+            {{- $scheme := ternary "https" "http" .Values.tls.enabled }}
+            {{- $peers := list }}
+            {{- range $i := until (int .Values.replicaCount) }}
+            {{- $peers = append $peers (printf "%s://%s-%d.%s-headless.$(POD_NAMESPACE).svc:%d" $scheme $fn $i $fn (int $.Values.containerPort)) }}
+            {{- end }}
+            - name: UBIXVAULT_RAFT_PEERS
+              value: {{ join "," $peers | quote }}
+            {{- end }}
             - name: UBIXVAULT_RAFT_JOIN_TOKEN_FILE
               value: {{ printf "%s/$(POD_NAME)" .Values.storage.raft.join.mountPath | quote }}
             {{- if .Values.storage.raft.join.leaderCASecret }}

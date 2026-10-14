@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,5 +125,135 @@ func TestRetryAddrsSkipsSelf(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func guardOpts(t *testing.T, args ...string) *raftOpts {
+	t.Helper()
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	r := raftFlags(fs)
+	if err := fs.Parse(append([]string{"-raft-node-id", "vault-0"}, args...)); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func sealStatusServer(initialized string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"initialized":` + initialized + `}`))
+	}))
+}
+
+// A replica with a lost volume must not found a second cluster under its ID.
+func TestGuardBootstrap(t *testing.T) {
+	up := sealStatusServer("true")
+	defer up.Close()
+	fresh := sealStatusServer("false")
+	defer fresh.Close()
+	tok := filepath.Join(t.TempDir(), "vault-0")
+
+	// An initialized peer and no token: refused, with the remedy in the error.
+	r := guardOpts(t, "-raft-peers", up.URL, "-raft-join-token-file", tok)
+	err := r.guardBootstrap(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "refusing to bootstrap") {
+		t.Fatalf("err = %v, want refusal", err)
+	}
+	if r.retryAddrs() != nil {
+		t.Fatal("refused node still has addresses to join")
+	}
+
+	// With a token it joins the existing cluster instead.
+	if err := os.WriteFile(tok, []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.guardBootstrap(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.retryAddrs(); len(got) != 1 || got[0] != up.URL {
+		t.Fatalf("retryAddrs = %v, want [%s]", got, up.URL)
+	}
+
+	// Uninitialized, unreachable and unset peers all leave bootstrap alone.
+	for name, args := range map[string][]string{
+		"uninitialized": {"-raft-peers", fresh.URL},
+		"unreachable":   {"-raft-peers", "http://127.0.0.1:1"},
+		"unset":         {},
+	} {
+		r := guardOpts(t, args...)
+		if err := r.guardBootstrap(t.TempDir()); err != nil || r.retryAddrs() != nil {
+			t.Fatalf("%s: err=%v addrs=%v", name, err, r.retryAddrs())
+		}
+	}
+
+	// A node with Raft state never bootstraps, so the guard stays out.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "raft"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "raft", "raft.db"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = guardOpts(t, "-raft-peers", up.URL)
+	if err := r.guardBootstrap(dir); err != nil {
+		t.Fatalf("node with state: %v", err)
+	}
+}
+
+func TestSnapshotDigestIgnoresOrderAndCoordinationRecords(t *testing.T) {
+	ctx := context.Background()
+	write := func(entries ...*storage.Entry) string {
+		m := storage.NewMemoryBackend()
+		for _, e := range entries {
+			_ = m.Put(ctx, e)
+		}
+		var buf bytes.Buffer
+		if err := snapshot.Write(ctx, m, &buf); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	a := write(&storage.Entry{Key: "sys/a", Value: []byte("1")}, &storage.Entry{Key: "logical/b", Value: []byte("2")})
+	b := write(&storage.Entry{Key: "logical/b", Value: []byte("2")}, &storage.Entry{Key: "sys/a", Value: []byte("1")},
+		&storage.Entry{Key: "core/ha/raft-holder", Value: []byte("x")}, &storage.Entry{Key: "raft-internal/join-token/h", Value: []byte("y")})
+	c := write(&storage.Entry{Key: "sys/a", Value: []byte("1")}, &storage.Entry{Key: "logical/b", Value: []byte("3")})
+
+	na, sa, err := snapshotDigest(strings.NewReader(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nb, sb, _ := snapshotDigest(strings.NewReader(b))
+	_, sc, _ := snapshotDigest(strings.NewReader(c))
+	if na != 2 || nb != 2 || sa != sb {
+		t.Fatalf("a=%d/%s b=%d/%s: coordination records must not count", na, sa, nb, sb)
+	}
+	if sa == sc {
+		t.Fatal("a changed value did not change the digest")
+	}
+	if _, _, err := snapshotDigest(strings.NewReader("not a snapshot\n")); err == nil {
+		t.Fatal("accepted a non-snapshot")
+	}
+}
+
+func TestCompareSnapshots(t *testing.T) {
+	ctx := context.Background()
+	mk := func(kvs map[string]string) string {
+		m := storage.NewMemoryBackend()
+		for k, v := range kvs {
+			_ = m.Put(ctx, &storage.Entry{Key: k, Value: []byte(v)})
+		}
+		var buf bytes.Buffer
+		if err := snapshot.Write(ctx, m, &buf); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	export := mk(map[string]string{"a": "1", "b": "2", "c": "3"})
+	migrated := mk(map[string]string{"a": "1", "b": "X", "d": "4", "core/ha/lock": "z"})
+	missing, changed, added, err := compareSnapshots(strings.NewReader(export), strings.NewReader(migrated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(missing, ",") != "c" || strings.Join(changed, ",") != "b" || strings.Join(added, ",") != "d" {
+		t.Fatalf("missing=%v changed=%v added=%v", missing, changed, added)
 	}
 }

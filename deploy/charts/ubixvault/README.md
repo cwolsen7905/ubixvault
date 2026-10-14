@@ -147,6 +147,12 @@ Things to know:
   naming pod `-0`; a node drops its own address from it, so `-0` bootstraps and
   the rest join. This relies on a server with the self-skip rule (the release
   that introduced `storage.type=raft` in this chart).
+- **A wiped volume does not re-bootstrap.** Every pod gets
+  `UBIXVAULT_RAFT_PEERS` (the other replicas' API addresses). A pod that would
+  bootstrap on an empty volume first asks them; if one reports an initialized
+  cluster it refuses (`refusing to bootstrap`) and restarts until the Secret
+  holds a join token under its name, then joins. Replace it with `remove-peer`
+  first; see `docs/DEPLOYMENT.md`, "Replacing a Raft replica whose volume was lost".
 - **TLS to the leader.** Joiners reach `-0` at
   `<fullname>-0.<fullname>-headless.<ns>.svc`. The API certificate must cover
   that name, and if it does not chain to system roots set
