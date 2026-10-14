@@ -205,7 +205,7 @@ func (b *Backend) ConsistentGet(ctx context.Context, key string) (*storage.Entry
 		return nil, err
 	}
 	if term := b.Term(); b.readyTerm.Load() != term {
-		if err := b.Barrier(); err != nil {
+		if err := b.barrierCtx(ctx); err != nil {
 			return nil, err
 		}
 		if err := b.verifyLeader(ctx); err != nil {
@@ -217,6 +217,19 @@ func (b *Backend) ConsistentGet(ctx context.Context, key string) (*storage.Entry
 		b.readyTerm.Store(term)
 	}
 	return b.Get(ctx, key)
+}
+
+// barrierCtx is [Backend.Barrier] that gives up when ctx ends: the library's
+// future only bounds the enqueue, not the wait for the commit.
+func (b *Backend) barrierCtx(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() { done <- b.Barrier() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // verifyLeader confirms leadership with a quorum round trip, giving up when

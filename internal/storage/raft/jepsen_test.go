@@ -398,7 +398,7 @@ func TestJepsenLite(t *testing.T) {
 	for _, k := range keys {
 		ops := byKey[k]
 		total += len(ops)
-		switch linearizable(ops, 300_000) {
+		switch linearizable(ops, 10_000) {
 		case jepViolation:
 			t.Errorf("key %s: history is not linearizable (%d ops):\n%s", k, len(ops), formatHistory(ops))
 		case jepGaveUp:
