@@ -69,6 +69,8 @@ type Backend struct {
 	haMu    sync.Mutex
 	haTaken bool             // an HA lock handle exists; writes are fenced
 	held    map[*Lock]uint64 // handles holding the lock, with their term
+
+	promo promoter
 }
 
 var _ storage.Backend = (*Backend)(nil)

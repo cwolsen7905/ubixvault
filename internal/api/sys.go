@@ -99,6 +99,11 @@ func WithVersion(v string) Option {
 	return func(h *Handler) { h.version = v }
 }
 
+// WithGauge registers an extra gauge on /v1/sys/metrics, read at scrape time.
+func WithGauge(name, help string, fn func() float64) Option {
+	return func(h *Handler) { h.metrics.RegisterGauge(name, help, fn) }
+}
+
 // WithRateLimit installs l as the default (global) rate-limit quota, applied to
 // any path with no more-specific named quota and keyed by client. Health,
 // metrics, and the console are exempt. A persisted default (sys/quotas/config)

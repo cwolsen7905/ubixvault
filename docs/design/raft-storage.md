@@ -659,14 +659,32 @@ settled on the shorter name; D-023 now says `raft`).
   wrong/no ALPN, server outside the CA); token expiry, reuse, tamper, 8-way
   concurrent redeem; join over TLS.
 
-**Not built (later slices):** the ALPN mux on the core cluster listener and the
-`sys/ha/cluster-ca` binding of `Credentials` (needs `internal/cluster`, outside
-this lane); the bridge-leaf (24h) issued in the join response; the
-caught-up non-voter to voter promotion loop (the library does not expose
-per-follower match index, so it needs a joiner-reported applied index; slice 6);
-cluster-CA rotation procedure; `-storage raft` flag and config; `sys/storage/raft/*` and CLI; offline
-`snapshot restore -storage raft`; metrics; chart; fault-injection harness and
-Jepsen-lite.
+- Slice 6 (in progress, three ordered MRs):
+  - **A. Flag, config, wiring (built).** `-storage raft` (`-data`,
+    `-raft-node-id`, `-raft-advertise-addr`, `-raft-bootstrap`); `-ha` is
+    implied. `cluster.Mux` terminates mutual TLS on the cluster listener and
+    dispatches on ALPN (Raft vs. forwarding); `cluster.Certs` is the transport's
+    `Credentials` (the CA in the barrier). The transport is built before the
+    barrier exists, so its credentials are lazy and refuse every handshake until
+    unseal: that is "a sealed replica does not vote" with no transport restart.
+    `Certs.IssueBridge` (`raft.LeafIssuer`) mints the 24h leaf, `Certs.SetBridge`
+    installs it on a sealed joiner (memory only; a restart before first unseal
+    needs a new token), and `Backend.AcceptJoin` issues it *before* burning the
+    token. Promotion: the joiner reports its applied index
+    (`Backend.ReportApplied`), and `RunPromotion` promotes after it stays within
+    16 entries for 10s with fresh reports; the report transport is MR B.
+    Metrics `ubixvault_raft_*`. Offline `snapshot restore -storage raft` into an
+    empty directory.
+  - **B. Operator API and CLI.** `sys/storage/raft/{join,join-token,configuration,
+    remove-peer,snapshot,snapshot-force,autopilot/state}`, `operator raft …`, the
+    joiner's retry-join and applied-index report loop, persistence of the bridge
+    credential.
+  - **C. Recovery and CA rotation.** Offline `peers.json` recovery (consumed on
+    start) and the cluster-CA rotation procedure.
+
+**Not built (later slices):** the `sys/storage/raft/*` API and CLI, the joiner
+report/retry-join loop and `peers.json` recovery (slice 6 MR B/C); cluster-CA
+rotation procedure (MR C); chart; fault-injection harness and Jepsen-lite.
 
 **Findings while building**
 
