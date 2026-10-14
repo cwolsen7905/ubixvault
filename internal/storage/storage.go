@@ -22,6 +22,12 @@ import (
 // rules enforced by [ValidateKey].
 var ErrInvalidKey = errors.New("storage: invalid key")
 
+// ErrFailed is returned by a backend that has failed permanently and cannot
+// serve again without repair (a replicated state machine that could not apply
+// a committed entry). Core seals the vault and reports unhealthy rather than
+// retrying: the replica must be replaced or restored.
+var ErrFailed = errors.New("storage: backend failed")
+
 // Entry is a single key/value pair stored in a [Backend]. Value is opaque bytes;
 // the storage layer never interprets it.
 type Entry struct {

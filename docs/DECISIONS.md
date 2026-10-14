@@ -651,3 +651,19 @@ v1 (transport starts after unseal). Compare-and-swap/transactions are **not**
 added now; the command format reserves a `txn` op and per-key Raft index
 versions so they can be added later without a format change (the prerequisite
 for multi-active serving named in D-021).
+
+**HA wiring (slice 4).** `raft.Backend` implements `HABackend`: leadership is the
+lock and the Raft term is `Holder.Generation`. The leader writes a holder record
+`{holder, advertise, node, term}` at `core/ha/raft-holder` — under the barrier's
+reserved `core/` prefix, so it is never exposed as a secret — before `Acquire`
+returns. A record counts only while its node is the current leader and its term
+the current term, so a deposed leader's record reads as "no holder". `Release`
+clears the record and calls `LeadershipTransfer`; a single voter has nowhere to
+transfer to, so it stays leader but its writes are fenced (`ErrFenced`) until it
+acquires again. Once a lock handle exists, every write requires a held handle for
+the current term. The lock ignores TTL/renew/retry options. On a permanent state
+machine failure (`storage.ErrFailed`, which `raft.ErrFailed` wraps) the lock's
+`lost` channel closes and `Acquire`/`Holder` return it; core seals the vault and
+`Core.HAFailed` reports it, rather than retrying — the replica must be replaced
+or restored.
+

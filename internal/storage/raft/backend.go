@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -63,6 +64,10 @@ type Backend struct {
 	fsm   *fsm
 	log   *raftboltdb.BoltStore
 	apply time.Duration
+
+	haMu    sync.Mutex
+	haTaken bool             // an HA lock handle exists; writes are fenced
+	held    map[*Lock]uint64 // handles holding the lock, with their term
 }
 
 var _ storage.Backend = (*Backend)(nil)
@@ -152,7 +157,7 @@ func Open(cfg Config) (*Backend, error) {
 	if apply <= 0 {
 		apply = defaultApplyTimeout
 	}
-	return &Backend{cfg: cfg, r: r, fsm: f, log: logStore, apply: apply}, nil
+	return &Backend{cfg: cfg, r: r, fsm: f, log: logStore, apply: apply, held: map[*Lock]uint64{}}, nil
 }
 
 // Close shuts the node down and releases its files.
@@ -218,7 +223,16 @@ func (b *Backend) List(_ context.Context, prefix string) ([]string, error) {
 	return b.fsm.list(prefix)
 }
 
+// propose commits c through the log, fenced by the HA lock once one is in use.
 func (b *Backend) propose(ctx context.Context, c command) error {
+	if err := b.fenceCheck(); err != nil {
+		return err
+	}
+	return b.proposeRaw(ctx, c)
+}
+
+// proposeRaw commits c without the HA fence; the lock's own record uses it.
+func (b *Backend) proposeRaw(ctx context.Context, c command) error {
 	if b.fsm.failed.Load() {
 		return ErrFailed
 	}

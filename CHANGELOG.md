@@ -6,6 +6,14 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Raft storage implements `HABackend`** (not yet selectable: the `-storage raft`
+  flag is a later slice). Raft leadership is the HA lock and the term is the
+  fencing generation; releasing the lock transfers leadership. A replica whose
+  Raft state machine fails permanently now seals itself and reports the failure
+  (`Core.HAFailed`) instead of retrying.
+
 ### Changed
 
 - **Storage keys must be valid UTF-8** on every backend (`storage.ValidateKey`),

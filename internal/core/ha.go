@@ -63,7 +63,8 @@ type ha struct {
 	advert      string       // JSON haAdvert for the lock row
 	lock        storage.Lock // this replica's handle on the HA lock
 	active      atomic.Bool
-	activeSince atomic.Int64 // unix nanos when this replica last became active
+	failed      atomic.Pointer[error] // the permanent backend failure, if any
+	activeSince atomic.Int64          // unix nanos when this replica last became active
 	stepDown    chan struct{}
 
 	mu           sync.Mutex
@@ -135,6 +136,16 @@ func (c *Core) Leader(ctx context.Context) (LeaderInfo, error) {
 		info.APIAddr = h.Advertise // a bare URL
 	}
 	return info, nil
+}
+
+// HAFailed returns the permanent storage failure that made this replica seal
+// itself, or nil. A replica reporting one is unhealthy and must be replaced or
+// restored; sealing and unsealing do not clear it.
+func (c *Core) HAFailed() error {
+	if e := c.ha.failed.Load(); e != nil {
+		return *e
+	}
+	return nil
 }
 
 // ActiveSince reports when this replica last became active, or the zero time
@@ -254,6 +265,15 @@ func (c *Core) RunHA(ctx context.Context, logf func(format string, args ...any))
 			cancel()
 			if ctx.Err() != nil {
 				return nil
+			}
+			if errors.Is(err, storage.ErrFailed) {
+				// The backend cannot serve again without repair: seal and
+				// report unhealthy instead of contending for a lock it can
+				// never hold. An unseal attempt lands here again and re-seals.
+				c.ha.failed.Store(&err)
+				logf("ERROR: storage backend failed, sealing: %v", err)
+				c.Seal()
+				continue
 			}
 			if !errors.Is(err, context.Canceled) {
 				logf("WARNING: HA lock: %v", err)

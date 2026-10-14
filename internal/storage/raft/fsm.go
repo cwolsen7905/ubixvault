@@ -3,9 +3,9 @@ package raft
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	hraft "github.com/hashicorp/raft"
@@ -19,13 +19,19 @@ import (
 // failed to apply a committed entry. The node must not skip the entry (that
 // would fork its state from the cluster); it stops serving and is repaired by
 // replacement or restore (docs/design/raft-storage.md "FSM apply failure").
-var ErrFailed = errors.New("raft: state machine failed; node must be replaced or restored")
+//
+// It wraps [storage.ErrFailed], which is what core keys on to seal the vault
+// and report unhealthy.
+var ErrFailed = fmt.Errorf("%w: raft state machine failed; node must be replaced or restored", storage.ErrFailed)
 
 // fsm is the replicated state machine: an ordered key/value bbolt file. It is
 // deterministic — no clocks, randomness or I/O besides its own file.
 type fsm struct {
 	db     *bbolt.DB
 	failed atomic.Bool
+	// failedCh is closed when failed is first set, for waiters (the HA lock).
+	failedCh   chan struct{}
+	failedOnce sync.Once
 }
 
 func openFSM(path string) (*fsm, error) {
@@ -45,11 +51,12 @@ func openFSM(path string) (*fsm, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("raft: init fsm: %w", err)
 	}
-	return &fsm{db: db}, nil
+	return &fsm{db: db, failedCh: make(chan struct{})}, nil
 }
 
 func (f *fsm) fail(err error) error {
 	f.failed.Store(true)
+	f.failedOnce.Do(func() { close(f.failedCh) })
 	return fmt.Errorf("%w: %v", ErrFailed, err)
 }
 
