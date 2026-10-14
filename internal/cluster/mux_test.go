@@ -7,10 +7,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
+	"os"
+	"path/filepath"
 )
 
 type sealedStore struct{}
@@ -165,5 +169,147 @@ func TestExpiredBridgeIsNotUsed(t *testing.T) {
 	j.now = func() time.Time { return now.Add(25 * time.Hour) }
 	if j.RootCAs() != nil {
 		t.Fatal("expired bridge still used")
+	}
+}
+
+// toggleStore is a barrier that can be sealed and unsealed under a test.
+type toggleStore struct {
+	Storage
+	sealed bool
+}
+
+func (s *toggleStore) Get(ctx context.Context, k string) (*storage.Entry, error) {
+	if s.sealed {
+		return nil, errors.New("sealed")
+	}
+	return s.Storage.Get(ctx, k)
+}
+
+func newBridge(t *testing.T) (ca, cert, key []byte, store storage.Backend) {
+	t.Helper()
+	store = storage.NewMemoryBackend()
+	active := NewCerts(store)
+	if err := active.EnsureCA(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ca, cert, key, _, err := active.IssueBridge(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ca, cert, key, store
+}
+
+func TestBridgeSurvivesRestartUntilUnsealed(t *testing.T) {
+	ca, cert, key, mem := newBridge(t)
+	path := filepath.Join(t.TempDir(), "bridge.json")
+
+	// First run: sealed joiner installs the bridge, which is persisted 0600.
+	store := &toggleStore{Storage: mem, sealed: true}
+	j := NewCerts(store)
+	if err := j.PersistBridge(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.SetBridge(ca, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("bridge file: %v mode=%v", err, st)
+	}
+
+	// Restart before the first unseal: a new process finds it.
+	j2 := NewCerts(store)
+	if err := j2.PersistBridge(path); err != nil {
+		t.Fatal(err)
+	}
+	if j2.RootCAs() == nil {
+		t.Fatal("restarted joiner lost its bridge credential")
+	}
+
+	// Once the barrier is readable the credential is dropped from disk.
+	store.sealed = false
+	if j2.RootCAs() == nil {
+		t.Fatal("unsealed replica has no identity")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bridge file still present after unseal: %v", err)
+	}
+}
+
+func TestExpiredPersistedBridgeIsDiscarded(t *testing.T) {
+	ca, cert, key, _ := newBridge(t)
+	path := filepath.Join(t.TempDir(), "bridge.json")
+	if err := writeBridgeFile(path, ca, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	j := NewCerts(sealedStore{})
+	j.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
+	if err := j.PersistBridge(path); err != nil {
+		t.Fatal(err)
+	}
+	if j.RootCAs() != nil {
+		t.Fatal("expired persisted bridge was used")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired bridge file kept: %v", err)
+	}
+}
+
+func TestCorruptPersistedBridgeIsDiscarded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bridge.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j := NewCerts(sealedStore{})
+	if err := j.PersistBridge(path); err != nil {
+		t.Fatalf("PersistBridge on a corrupt file = %v, want it ignored", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("corrupt bridge file kept")
+	}
+}
+
+// A sealed joiner holding only a bridge leaf can make a request of its own to
+// the active replica's cluster listener (the applied-index report), and the
+// handler sees it as a direct peer rather than a forwarded client.
+func TestSealedJoinerHTTPClientReachesActive(t *testing.T) {
+	ctx := context.Background()
+	mem := storage.NewMemoryBackend()
+	active := NewCerts(mem)
+	if err := active.EnsureCA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m, addr := startMux(t, active)
+	var direct atomic.Bool
+	srv := &http.Server{
+		Handler: ServerHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			direct.Store(DirectPeer(r))
+			w.WriteHeader(http.StatusNoContent)
+		}), func() bool { return true }),
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() { _ = srv.Serve(m.HTTP()) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	ca, cert, key, _, err := active.IssueBridge(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := NewCerts(sealedStore{})
+	if err := joiner.SetBridge(ca, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := joiner.HTTPClient().Post("https://"+addr+"/x", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("joiner request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || !direct.Load() {
+		t.Fatalf("status %d, direct=%v", resp.StatusCode, direct.Load())
+	}
+
+	// Without a bridge there is no identity to dial with.
+	if _, err := NewCerts(sealedStore{}).HTTPClient().Post("https://"+addr+"/x", "application/json", nil); err == nil {
+		t.Fatal("a sealed replica with no bridge reached the cluster listener")
 	}
 }

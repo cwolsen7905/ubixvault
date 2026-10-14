@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -77,6 +78,7 @@ func usage() {
 	fmt.Println("  operator snapshot save <f> back up the encrypted store (requires -token)")
 	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
 	fmt.Println("  (server -storage raft is experimental; restore with: operator snapshot restore -storage raft -data <dir> -raft-advertise-addr <host:port> <f>)")
+	fmt.Println("  operator raft <list-peers|join|join-token|remove-peer|snapshot|autopilot-state>  manage a -storage raft cluster")
 	fmt.Println("  operator rekey init        rotate the unseal shares (start; then update/status/cancel)")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
@@ -262,6 +264,12 @@ func runServer(args []string) error {
 	var forwarder *cluster.Forwarder
 	if c.HAEnabled() {
 		certs = cluster.NewCerts(c.Barrier())
+		if raftB != nil {
+			// A joiner restarted before its first unseal keeps its bridge leaf.
+			if err := certs.PersistBridge(filepath.Join(*dataDir, "raft", "bridge.json")); err != nil {
+				return err
+			}
+		}
 		raftCreds.set(certs)
 		c.OnActive(func() {
 			if ensureClusterCA(certs) {
@@ -310,8 +318,15 @@ func runServer(args []string) error {
 		log.Printf("rate limiting: %.4g req/s per client (burst %.4g)", *rateLimit, burst)
 	}
 
+	var joiner *raftJoiner
 	if raftB != nil {
 		opts = append(opts, raftGauges(raftB)...)
+		nodeID, advertise, err := raft.resolve(*haClusterAddr)
+		if err != nil {
+			return err
+		}
+		joiner = &raftJoiner{nodeID: nodeID, advertise: advertise, certs: certs, node: raftB}
+		opts = append(opts, api.WithRaft(api.RaftOptions{Node: raftB, Issuer: certs, Join: joiner.Join}))
 	}
 	handler := api.NewHandler(c, opts...)
 	if forwarder != nil {
@@ -400,6 +415,19 @@ func runServer(args []string) error {
 
 	// A joined non-voter is promoted once it reports being caught up.
 	if raftB != nil {
+		joiner.ctx = ctx
+		if addrs := raft.retryAddrs(); len(addrs) > 0 {
+			caPEM := ""
+			if *raft.leaderCACert != "" {
+				b, err := os.ReadFile(*raft.leaderCACert) //nolint:gosec // G304: operator-provided path
+				if err != nil {
+					return fmt.Errorf("read -raft-leader-ca-cert: %w", err)
+				}
+				caPEM = string(b)
+			}
+			go joiner.retry(ctx, addrs, caPEM, tokenSource(*raft.joinTokenFile))
+		}
+		go newAppliedReporter(joiner.nodeID, raftB, certs).run(ctx)
 		go raftB.RunPromotion(ctx, raftstore.Promotion{}, func(id string) {
 			log.Printf("raft: promoted %q to voter", id) //nolint:gosec // G706: node IDs are validated by the join flow
 		})
@@ -602,6 +630,8 @@ func runOperator(args []string) error {
 		return operatorSnapshot(args[1:])
 	case "rekey":
 		return operatorRekey(args[1:])
+	case "raft":
+		return operatorRaft(args[1:])
 	default:
 		return fmt.Errorf("unknown operator subcommand %q", args[0])
 	}

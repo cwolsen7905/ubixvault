@@ -205,10 +205,25 @@ func ServerHandler(api http.Handler, active func() bool) http.Handler {
 		}
 		if addr := r.Header.Get(clientAddrHeader); addr != "" {
 			r.RemoteAddr = addr
+		} else {
+			// A forwarding standby always sets the header, so a request without
+			// it was made by the peer itself, not on a client's behalf.
+			r = r.WithContext(context.WithValue(r.Context(), directPeerKey{}, true))
 		}
 		r.Header.Del(clientAddrHeader)
 		api.ServeHTTP(w, r)
 	})
+}
+
+type directPeerKey struct{}
+
+// DirectPeer reports whether r reached the cluster listener from a peer acting
+// for itself (as a joiner reporting its applied index does), as opposed to a
+// request a standby forwarded for a client. Only meaningful on a request that
+// passed through [ServerHandler].
+func DirectPeer(r *http.Request) bool {
+	v, _ := r.Context().Value(directPeerKey{}).(bool)
+	return v
 }
 
 // writeError matches the API's error body ({"errors": [...]}).

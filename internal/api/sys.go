@@ -74,6 +74,7 @@ type Handler struct {
 	metrics        *metrics.Metrics
 	quotas         *quota.Manager // rate-limit quotas incl. the default (always non-nil)
 	trustForwarded bool           // key rate limits by X-Forwarded-For
+	raft           *RaftOptions   // sys/storage/raft/*; nil unless -storage raft
 	version        string
 	startTime      time.Time
 	mux            *http.ServeMux
@@ -345,6 +346,8 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 	mux.HandleFunc("LIST /v1/auth/ldap/groups", h.authenticate(h.ldapListGroups))
 	mux.HandleFunc("DELETE /v1/auth/ldap/groups/{name}", h.authenticate(h.ldapDeleteGroup))
 	handleWrite(mux, "/v1/auth/ldap/login/{username}", h.ldapLogin)
+
+	h.registerRaft(mux)
 
 	h.mux = mux
 	for _, opt := range opts {

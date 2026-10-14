@@ -177,7 +177,10 @@ func standbyEndpoint(path string) bool {
 		return true
 	}
 	switch path {
-	case "/v1/sys/seal-status", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/init", "/v1/sys/leader":
+	case "/v1/sys/seal-status", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/init", "/v1/sys/leader",
+		// operator raft join runs on the joining node, which is sealed and a
+		// standby (not a member yet) and cannot forward.
+		"/v1/sys/storage/raft/join":
 		return true
 	default:
 		return false

@@ -218,6 +218,17 @@ func (c *Core) Snapshot(ctx context.Context, w io.Writer) error {
 	return snapshot.Write(ctx, c.phys, w)
 }
 
+// SealConfigRaw returns the stored seal configuration exactly as persisted, or
+// nil on an uninitialized store. It identifies which unseal keys open this
+// store; snapshot restore compares it with a snapshot's copy.
+func (c *Core) SealConfigRaw(ctx context.Context) ([]byte, error) {
+	e, err := c.phys.Get(ctx, sealConfigPath)
+	if err != nil || e == nil {
+		return nil, err
+	}
+	return e.Value, nil
+}
+
 // Tokens returns the token store, for authentication by upper layers.
 func (c *Core) Tokens() *token.Store { return c.tokens }
 
