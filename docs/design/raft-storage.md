@@ -609,8 +609,7 @@ parallelized once 4 lands.
 
 First MR (`feat/raft-storage`), package `internal/storage/raft`. The package
 is named `raft`, not `raftstore` as drafted above (the lane and import path
-settled on the shorter name; D-023 still says `raftstore` and should be
-corrected when it is next edited).
+settled on the shorter name; D-023 now says `raft`).
 
 **Built:**
 
@@ -641,7 +640,8 @@ Jepsen-lite.
 
 **Findings while building**
 
-- **Keys must be valid UTF-8.** Keys travel as JSON strings in log entries and in
+- **Keys must be valid UTF-8** *(resolved: `storage.ValidateKey` now rejects
+  them for every backend, with a conformance case).* Original finding: Keys travel as JSON strings in log entries and in
   the v1 snapshot format, and `encoding/json` silently rewrites invalid UTF-8.
   The Raft backend rejects such keys with `ErrInvalidKey` instead of letting
   them read back different. The file, memory and MySQL backends do not enforce
@@ -677,8 +677,13 @@ copies of those files, not this repository; recorded for the licence review.
 raft v1.8.0 and raft-boltdb v2.4.2 were not taken because they raise the `go`
 directive to 1.26.0; v1.7.3 / v2.3.1 keep it at 1.25.0 (CI and the Dockerfile
 are already on 1.26). Upgrading is a one-line follow-up when the directive is
-bumped on purpose. `govulncheck` was not available in the build environment, so
-its result still needs to be recorded before D-023 moves to Accepted.
+bumped on purpose. `govulncheck` v1.9.0 (DB
+2026-10-08, go1.27.2) reports **0 vulnerabilities affecting the code** and none in
+`hashicorp/raft`, `raft-boltdb`, bbolt or `go-hclog`. It lists 4 advisories in
+required module `golang.org/x/crypto@v0.54.0` (GO-2026-6355, -6354, -6303 fixed
+in v0.55/v0.56; GO-2026-5932 has no fix) in code the binary does not call; they
+predate and are unrelated to Raft, and a `x/crypto` bump is a separate change.
+D-023 is Accepted.
 
 ## Open questions
 

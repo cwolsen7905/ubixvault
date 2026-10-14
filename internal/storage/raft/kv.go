@@ -3,7 +3,6 @@ package raft
 import (
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"go.etcd.io/bbolt"
 
@@ -25,12 +24,6 @@ func checkKey(key string) error {
 		return err
 	}
 	if len(key) > maxKeyLen {
-		return storage.ErrInvalidKey
-	}
-	// Keys travel as JSON strings in log entries and snapshots, which would
-	// silently rewrite invalid UTF-8; refuse it rather than store a key that
-	// reads back differently.
-	if !utf8.ValidString(key) {
 		return storage.ErrInvalidKey
 	}
 	return nil

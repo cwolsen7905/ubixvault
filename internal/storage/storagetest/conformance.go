@@ -131,7 +131,7 @@ func RunBackendConformance(t *testing.T, newBackend func(t *testing.T) storage.B
 
 	t.Run("RejectsInvalidKeys", func(t *testing.T) {
 		b := newBackend(t)
-		for _, k := range []string{"", "/a", "a/", "a//b", "a/../b", ".", "..", "a/./b"} {
+		for _, k := range []string{"", "/a", "a/", "a//b", "a/../b", ".", "..", "a/./b", "bad/\xff"} {
 			if _, err := b.Get(ctx, k); !errors.Is(err, storage.ErrInvalidKey) {
 				t.Errorf("Get(%q): want storage.ErrInvalidKey, got %v", k, err)
 			}

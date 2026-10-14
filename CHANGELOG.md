@@ -6,6 +6,12 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Storage keys must be valid UTF-8** on every backend (`storage.ValidateKey`),
+  matching what the Raft backend already enforced. Barrier paths are ASCII, so no
+  existing store is affected.
+
 ## [1.5.0] — 2026-09-30
 
 **The console runs a vault's whole lifecycle, and delegated tokens form a tree.**

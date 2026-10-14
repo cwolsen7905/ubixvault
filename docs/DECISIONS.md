@@ -606,7 +606,7 @@ ceiling of the tokens it issues.
 
 ## D-023 — Integrated storage: `hashicorp/raft` with bbolt, behind `HABackend`
 
-**Status:** Proposed · 2026-10-13 · Design: `docs/design/raft-storage.md`
+**Status:** Accepted · 2026-10-13 · Design: `docs/design/raft-storage.md`
 
 **Decision:** add a third storage backend, `-storage raft`, so a cluster needs no
 external database. Consensus is **`hashicorp/raft`**, with **`raft-boltdb/v2`**
@@ -620,7 +620,7 @@ only ciphertext, and snapshots reuse the existing `ubixvault-snapshot v1`
 format, which is also the MySQL → Raft migration and rollback vehicle. The
 operator surface is Vault's `sys/storage/raft/*` / `operator raft`. MySQL stays
 supported. The library is confined to one package
-(`internal/storage/raftstore`) and the log store sits behind an interface.
+(`internal/storage/raft`) and the log store sits behind an interface.
 
 **Why:** the MySQL backend plus D-021 already gives replicas and planned
 maintenance; Raft earns its place only by removing the external database as a
@@ -644,7 +644,9 @@ offline, verifiable snapshot cutover.
 **Trade-off:** the dependency tree grows beyond today's two third-party modules
 (`hashicorp/raft` and its transitives, `raft-boltdb/v2`, bbolt). The exact
 `go mod graph` delta, licences and a `govulncheck` result are recorded in the
-slice-1 MR before this ADR moves to Accepted. A sealed replica does not vote in
+slice-1 MR before this ADR moves to Accepted. `govulncheck` (v1.9.0, DB of
+2026-10-08): no vulnerabilities affect the code; none are in the Raft
+dependencies (see the design note, Implementation status). A sealed replica does not vote in
 v1 (transport starts after unseal). Compare-and-swap/transactions are **not**
 added now; the command format reserves a `txn` op and per-key Raft index
 versions so they can be added later without a format change (the prerequisite
