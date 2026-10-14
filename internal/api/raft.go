@@ -54,6 +54,8 @@ type RaftOptions struct {
 	// credential, and report whether the node is joined (false with Retry set
 	// means it keeps trying in the background).
 	Join func(ctx context.Context, req RaftJoinRequest) (joined bool, err error)
+	// RotateCA replaces the cluster CA (cluster.Certs.Rotate). Active node only.
+	RotateCA func(ctx context.Context) error
 }
 
 // WithRaft enables the sys/storage/raft/* endpoints over a Raft backend.
@@ -77,6 +79,7 @@ func (h *Handler) registerRaft(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/sys/storage/raft/snapshot", h.authenticate(h.raftEnabled(h.raftSnapshotSave)))
 	handleWrite(mux, "/v1/sys/storage/raft/snapshot", h.authenticate(h.raftEnabled(h.raftSudo(h.raftSnapshotRestore(false)))))
 	handleWrite(mux, "/v1/sys/storage/raft/snapshot-force", h.authenticate(h.raftEnabled(h.raftSudo(h.raftSnapshotRestore(true)))))
+	handleWrite(mux, "/v1/sys/storage/raft/rotate-ca", h.authenticate(h.raftEnabled(h.raftSudo(h.raftRotateCA))))
 	mux.HandleFunc("GET /v1/sys/storage/raft/autopilot/state", h.authenticate(h.raftEnabled(h.raftAutopilotState)))
 }
 
@@ -487,4 +490,18 @@ func (h *Handler) raftAutopilotState(w http.ResponseWriter, _ *http.Request) {
 		resp.Servers[leaderID] = sv
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// raftRotateCA replaces the cluster CA on the leader. The other nodes lose the
+// cluster transport until they are re-seated, which the operator does next.
+func (h *Handler) raftRotateCA(w http.ResponseWriter, r *http.Request) {
+	if h.raft.RotateCA == nil || !h.raft.Node.IsLeader() {
+		writeError(w, http.StatusServiceUnavailable, "rotate the cluster CA on the Raft leader")
+		return
+	}
+	if err := h.raft.RotateCA(r.Context()); err != nil {
+		raftError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

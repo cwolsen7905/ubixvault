@@ -81,6 +81,12 @@ func (c *Client) RaftRemovePeer(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/sys/storage/raft/remove-peer", map[string]string{"server_id": id}, nil)
 }
 
+// RaftRotateCA replaces the cluster CA; call it on the leader. The other nodes
+// must then be re-seated.
+func (c *Client) RaftRotateCA(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/sys/storage/raft/rotate-ca", nil, nil)
+}
+
 // RaftAutopilotServer is one entry of [RaftAutopilotState].
 type RaftAutopilotServer struct {
 	ID        string `json:"id"`

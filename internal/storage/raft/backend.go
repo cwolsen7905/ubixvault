@@ -151,6 +151,11 @@ func Open(cfg Config) (*Backend, error) {
 		}
 	}
 
+	if err := recoverFromFile(raftDir, rc, f, logStore, logStore, snaps, cfg.Transport.t); err != nil {
+		closeAll()
+		return nil, err
+	}
+
 	r, err := hraft.NewRaft(rc, f, logStore, logStore, snaps, cfg.Transport.t)
 	if err != nil {
 		closeAll()
