@@ -1,0 +1,45 @@
+name: Raft Jepsen-lite (nightly)
+
+# Concurrent clients against an in-process three-node Raft cluster under
+# random crashes, partitions and leadership transfers; per-key linearizability,
+# no lost acknowledged write, one acknowledging node per term, convergence.
+# internal/storage/raft/jepsen_test.go. The seed is in the log; replay the plan
+# with RAFT_JEPSEN_SEED=<seed>.
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Per-run duration (Go duration)"
+        default: "10m"
+      seed:
+        description: "Seed to replay (empty: random)"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  jepsen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Run Jepsen-lite (3 runs, race detector)
+        env:
+          RAFT_JEPSEN_DURATION: ${{ inputs.duration || '10m' }}
+          RAFT_JEPSEN_SEED: ${{ inputs.seed }}
+        run: |
+          set -o pipefail
+          go test -race -count=3 -timeout 80m -run 'TestJepsenLite' -v ./internal/storage/raft/ 2>&1 | tee jepsen.log
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jepsen-log
+          path: jepsen.log

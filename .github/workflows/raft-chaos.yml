@@ -1,0 +1,78 @@
+name: Raft chaos, migration, bench (kind)
+
+# Slice 8 of docs/design/raft-storage.md on kind: the chaos suite (leader
+# freeze, partition, full restart, PVC loss, the wiped-pod-0 guard), the
+# MySQL -> Raft migration rehearsal (both paths) with rollback, and the
+# MariaDB-vs-Raft performance baseline. See test/e2e/raft/*.sh. Longer than
+# raft-e2e, so it runs on the files that matter, weekly, and on demand.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "internal/storage/raft/**"
+      - "cmd/ubixvault/raft*.go"
+      - "deploy/charts/**"
+      - "test/e2e/raft/**"
+      - ".github/workflows/raft-chaos.yml"
+  schedule:
+    - cron: "41 4 * * 0" # Sundays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    name: Chaos
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t ubixvault:e2e --build-arg VERSION=e2e-${GITHUB_SHA::8} .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: raft
+          config: test/e2e/raft/kind.yaml
+      - name: Load the image into the cluster
+        run: kind load docker-image ubixvault:e2e --name raft
+      - name: Run the chaos suite
+        run: test/e2e/raft/chaos.sh
+
+  migrate:
+    name: Migration (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [orphan, parallel]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t ubixvault:e2e --build-arg VERSION=e2e-${GITHUB_SHA::8} .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: raft
+          config: test/e2e/raft/kind.yaml
+      - name: Load the image into the cluster
+        run: kind load docker-image ubixvault:e2e --name raft
+      - name: Rehearse the migration and rollback
+        run: MODE=${{ matrix.mode }} test/e2e/raft/migrate.sh
+
+  bench:
+    name: Performance baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t ubixvault:e2e --build-arg VERSION=e2e-${GITHUB_SHA::8} .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: raft
+          config: test/e2e/raft/kind.yaml
+      - name: Load the image into the cluster
+        run: kind load docker-image ubixvault:e2e --name raft
+      - name: Run the baseline
+        run: test/e2e/raft/bench.sh
