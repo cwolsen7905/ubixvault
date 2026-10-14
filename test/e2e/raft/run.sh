@@ -5,6 +5,9 @@
 # back through the Service from the surviving majority, then checks the killed
 # node rejoins and the cluster is whole again.
 #
+# The raft configuration endpoint answers {"config":{...}} (Vault wraps it in
+# "data"); the jq filters below accept either.
+#
 # Needs: a kind cluster from kind.yaml, the image loaded as ubixvault:e2e,
 # kubectl, helm, jq. Run from the repo root.
 set -euo pipefail
@@ -22,7 +25,8 @@ step() { printf '\n=== %s\n' "$*"; }
 die() { echo "FAIL: $*"; dump; exit 1; }
 dump() {
   k get pods -o wide || true
-  for p in 0 1 2; do echo "--- ${FULL}-$p"; k logs "${FULL}-$p" --tail=40 2>&1 || true; done
+  for p in 0 1 2; do echo "--- ${FULL}-$p"; k logs "${FULL}-$p" --tail=40 2>&1 || true
+    echo "--- ${FULL}-$p (previous container)"; k logs "${FULL}-$p" --previous --tail=20 2>&1 || true; done
 }
 trap 'rc=$?; [ $rc -ne 0 ] && dump; exit $rc' EXIT
 
@@ -36,8 +40,8 @@ api_pod() { # pod method path [body] — straight to one pod's API
     "http://${pod}.${FULL}-headless.${NS}.svc:8200$p"
 }
 
-voters() { api "GET" /v1/sys/storage/raft/configuration 2>/dev/null | jq -r '[.data.config.servers[]? | select(.voter)] | length' 2>/dev/null || echo 0; }
-leader_id() { api "GET" /v1/sys/storage/raft/configuration 2>/dev/null | jq -r '.data.config.servers[]? | select(.leader) | .node_id' 2>/dev/null || true; }
+voters() { api "GET" /v1/sys/storage/raft/configuration 2>/dev/null | jq -r '[(.data // .).config.servers[]? | select(.voter)] | length' 2>/dev/null || echo 0; }
+leader_id() { api "GET" /v1/sys/storage/raft/configuration 2>/dev/null | jq -r '(.data // .).config.servers[]? | select(.leader) | .node_id' 2>/dev/null || true; }
 
 wait_for() { # description timeout-seconds command...
   local what=$1 t=$2; shift 2

@@ -73,6 +73,10 @@ console-e2e: ## Drive the /ui/ console in headless Chrome against a fresh server
 fuzz: ## Fuzz the policy (HCL/JSON) parser 30s; swap the target for others
 	go test -run=x -fuzz=FuzzParseDocument -fuzztime=30s ./internal/policy/
 
+.PHONY: jepsen
+jepsen: ## Jepsen-lite against the in-process Raft cluster (RAFT_JEPSEN_DURATION, RAFT_JEPSEN_SEED)
+	RAFT_JEPSEN_DURATION=$${RAFT_JEPSEN_DURATION:-2m} go test -race -count=1 -timeout 60m -run TestJepsenLite -v ./internal/storage/raft/
+
 .PHONY: tidy
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy

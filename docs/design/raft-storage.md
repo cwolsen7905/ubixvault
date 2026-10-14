@@ -513,6 +513,7 @@ instance is snapshotted and cut over on its own). D-021 rolls HA out to dev at
 | Network partition | Majority side keeps/elects a leader; minority leader steps down within the lease and its writes fail. Pre-vote prevents term inflation on heal. | None; minority catches up on heal. |
 | Paused leader (GC/CPU/VM freeze) | Resumes believing it leads; its next `Apply` fails (new term) ⇒ `ErrFenced`, steps down. A stale read within the lease is possible and bounded. | None. |
 | Disk full on a node | bbolt write fails ⇒ FSM fail-stop on that node (never skips an entry); it leaves quorum, is reported unhealthy. Persisting on every node ⇒ cluster read-only/503. | Grow PVC / compact; alert on `ubixvault_raft_disk_*`. |
+| Pod `-0` (or any bootstrapper) restarts on a wiped volume while the cluster lives | Without a guard it would found a second single-voter cluster under its old ID. With `-raft-peers` it asks the others, finds an initialized cluster, **refuses to bootstrap** and restarts until given a join token, then joins. | `remove-peer`, mint a token into the join Secret, restart the pod. |
 | Corrupt `fsm.db` / `raft.db` | Detected at open (checksum/bbolt panic caught); node refuses to start. | Wipe PVC and re-join (normal replacement). |
 | Slow disk (fsync latency) | Heartbeat misses ⇒ spurious elections / flapping. | Faster storage class; alert on fsync/commit latency; raise timeouts last. |
 | Snapshot restore mid-flight crash | Raft snapshot install is atomic via the snapshot store; node reverts to previous state and retries. | None. |
@@ -596,7 +597,7 @@ supported deployment).
 | 5 | Cluster transport + join | ALPN-mux on the cluster listener, bridge leaves, join-token flow, non-voter→voter promotion | harness + 3-process local test; join-token abuse tests |
 | 6 | Operator API + CLI | `sys/storage/raft/*`, `operator raft …`, `peers.json` recovery, autopilot-state subset, metrics, docs | API tests; compatibility check against Vault CLI shapes |
 | 7 ✅ | Chart + docs | `storage.type: raft`, headless Service, PVC template, PDB/anti-affinity rules, NetworkPolicy, `DEPLOYMENT.md` Raft + upgrade sections | `helm template`/lint; kind e2e smoke (3 pods, kill leader) |
-| 8 | Chaos + migration e2e | kind chaos suite, migration + rollback rehearsal, performance baseline vs MySQL (write/list latency), nightly Jepsen-lite | pass criteria written into the MR; numbers recorded in this note |
+| 8 ✅ | Chaos + migration e2e | kind chaos suite, migration + rollback rehearsal, performance baseline vs MySQL (write/list latency), nightly Jepsen-lite | pass criteria written into the MR; numbers recorded in this note |
 | 9 | Release | MINOR (additive), README/POSITIONING/ROADMAP/SECURITY updates; dev rollout then prod via `kubernetes`-repo MRs | per the soak policy above |
 
 Slices 1–3 are the risk: they should land with the in-process harness green
@@ -714,6 +715,69 @@ settled on the shorter name; D-023 now says `raft`).
       `operator raft rotate-ca` replace the CA record (`Certs.Rotate`); nodes
       pick it up when restarted, so rotation is a runbook, not one call (below).
 
+- Slice 8 (chaos, migration, baseline, Jepsen-lite). **Built; the kind
+  scenarios and the numbers below have not been run yet** (the lane has no
+  Docker/kind; they run in the `raft-chaos` workflow on the first push, and the
+  figures are to be copied from its job summaries into this note).
+  - **Bootstrap guard.** The slice 7 agent's risk, confirmed by reading the
+    code: pod `-0` on a wiped PVC with `-raft-retry-join` naming only itself
+    bootstraps. `-raft-peers` (chart: `UBIXVAULT_RAFT_PEERS`, every ordinal's API
+    address) makes a node that would bootstrap on an empty directory ask its
+    peers' `seal-status` first; `initialized: true` anywhere means it refuses
+    (`refusing to bootstrap`, pod restarts) and, if a join token is present
+    under its name, joins them instead. Unreachable peers do not block
+    (first install; a wholly lost cluster is a snapshot restore). Unit test
+    `TestGuardBootstrap`; kind scenario 5 of `chaos.sh`.
+  - **Jepsen-lite** (`internal/storage/raft/jepsen_test.go`): four clients,
+    `Put`/`Delete`/`ConsistentGet` on three keys against a three-node
+    in-process cluster while a nemesis crashes nodes (disk kept), partitions
+    them, and transfers leadership. Per-key linearizability by a Wing-Gong
+    search (unknown outcomes optional; unread unknown writes pruned), no
+    acknowledged write lost (a final strict read per key joins the history),
+    at most one node acknowledging writes in a term, and replicas converging.
+    A 2s smoke runs in `make ci`; `raft-jepsen.yml` runs 3 x 10m nightly under
+    `-race` with the seed in the log. The checker has a step budget; a key it
+    cannot decide is logged as inconclusive, not passed silently. **Not
+    covered:** wrapping-token single use across a leader change (a core
+    property, tested at the API layer), disk-full and torn-write faults.
+  - **Chaos on kind** (`test/e2e/raft/chaos.sh`): a client writes through the
+    Service with no retries throughout and every acknowledged write must read
+    back from the Service and from each replica. Scenarios: leader freeze
+    (`docker pause` of the leader's kind node; new leader within 45s; the thawed
+    node's direct writes never acknowledge a value the cluster lacks);
+    partition (iptables FORWARD DROP on the leader's node between its pod and
+    the others, so kindnet needs no change; the isolated minority leader must
+    refuse writes); full restart (scale 0 and back, PVCs kept, auto-unseal);
+    PVC loss on `-2` (remove-peer, wipe, token, re-join); PVC loss on `-0` (the
+    guard). The 45s bounds are loose on purpose; the measured gaps print in the
+    job summary.
+  - **Migration rehearsal** (`migrate.sh`, `MODE=orphan|parallel`): MariaDB HA
+    release seeded (20 KV entries, a transit key and ciphertext, a policy, a
+    non-root token) -> freeze -> `operator raft export-mysql` (new; offline,
+    count + digest; `snapshot save` itself is API-only) -> offline restore into
+    `-0`'s PVC -> Raft with the same KEK -> join -> engine-level reads equal,
+    `operator raft digest -against` shows no export entry missing -> rollback
+    into the emptied database and back to the MySQL release with a write made
+    on Raft intact. The script also asserts that a plain `helm upgrade` to raft
+    is refused.
+  - **Baseline** (`bench.sh`): the same write (1 and 8 clients), read and list
+    load through the Service on MariaDB HA and on Raft, p50/p95/p99, plus the
+    leader-lease check: the Raft term must not move across the load.
+
+    | Backend | Load | p50/p95/p99 ms | req/s |
+    | --- | --- | --- | --- |
+    | MariaDB | | *pending first run* | |
+    | Raft | | *pending first run* | |
+
+    Lease: library default 500ms (heartbeat/election 1s) is what the chart
+    runs; *confirmation on the PVCs pending the first run* (term unchanged is
+    the pass criterion; a change fails the job).
+  - **Findings for other lanes.** `GET sys/storage/raft/configuration` answers
+    `{"config":...}` at the top level; Vault wraps it as `{"data":{"config":...}}`
+    and its CLI/clients read `data`. The scripts accept either. `operator
+    snapshot save -storage mysql` (slice 2's plan) was never wired in
+    `cmd/ubixvault/main.go`; `operator raft export-mysql` covers it.
+
 ### Cluster CA rotation
 
 Rotate when the CA key may be exposed, or around year 8 of its 10-year life.
@@ -828,9 +892,17 @@ D-023 is Accepted.
   differs. **Decided (slice 5): no**; auto-unseal deployments (both ours) are
   unaffected.
 - **StatefulSet recreation vs. a parallel release** for the dev/prod cutover
-  (see Kubernetes). Needs a dry run against the real Helm history.
+  (see Kubernetes). **Decided (slice 8): the same release with
+  `--cascade=orphan`**, because it is the only path that leaves Service, Ingress
+  and node names untouched; the parallel release remains documented
+  (`DEPLOYMENT.md`) for in-cluster clients that cannot be repointed. Both are
+  rehearsed by `migrate.sh`. The dry run against the real dev Helm history is
+  still the build lane's step before the dev cutover.
 - **Log store:** `raft-boltdb/v2` (default here) vs `hashicorp/raft-wal`.
-  Decide on slice 8's measurements, not before.
+  Decide on slice 8's measurements, not before: **open until the first
+  `bench.sh` numbers exist** (see Slice 8 below). Nothing in slice 8 argued for
+  switching; the write p99 and the term-stability check are the evidence to
+  read.
 - **Strict reads default:** lease-based local reads (this note) vs
   `VerifyLeader` on every active read. Measure the cost in slice 4; the
   decision-bearing call sites use strict reads either way.

@@ -457,6 +457,99 @@ first), a lost quorum (`operator raft recover`) and cluster-CA rotation
 (`operator raft rotate-ca`) are described in
 [the design note](design/raft-storage.md).
 
+### Replacing a Raft replica whose volume was lost
+
+A replica that comes back with an empty volume is a stranger wearing an old
+name: the cluster's configuration still lists it as a voter, but it has none of
+the log. Replace it deliberately.
+
+1. If it was the leader, hand over first: `PUT /v1/sys/step-down`.
+2. `ubixvault operator raft remove-peer <pod-name>` on any replica.
+3. `ubixvault operator raft join-token` on the leader, and put the token in
+   the join Secret under the pod's name (`<fullname>-N`; the chart mounts the
+   Secret at `storage.raft.join.mountPath` and reads `<pod-name>` from it).
+4. Delete the pod (and its PVC if it is still the damaged one). It starts,
+   joins as a non-voter, catches up from a snapshot, and is promoted.
+5. `operator raft list-peers`: all voters present.
+
+**Pod `-0` is guarded.** Every pod gets the other replicas' API addresses in
+`UBIXVAULT_RAFT_PEERS`. A node that would bootstrap (empty volume, no join to
+make) first asks them whether a cluster already exists; if any answers
+`initialized: true` it refuses to bootstrap, logs `refusing to bootstrap`, and
+the pod restarts until it is given a join token as in step 3, at which point it
+joins instead. Without the guard, a `-0` rescheduled onto a wiped volume would
+found a second single-voter cluster under the same node ID. The guard cannot
+tell "volume lost, others alive" from a first install if the others are
+unreachable, so a wholly lost cluster is still restored from a snapshot
+(`operator snapshot restore -storage raft`), never by letting `-0` bootstrap.
+
+### Migrating from MySQL to Raft
+
+Offline, one maintenance window, no dual-write (design:
+[Migrating from the MySQL backend](design/raft-storage.md#migrating-from-the-mysql-backend)).
+Unseal material, tokens, leases, policies and mounts are unchanged because
+nothing above storage changes; the new release **must use the same auto-unseal
+key (or Shamir shares)**. The whole procedure, and the rollback, are rehearsed
+in CI by `test/e2e/raft/migrate.sh`.
+
+Names below assume the release `vault` (`<fullname>` = `vault-ubixvault`).
+
+1. **Prepare.** A recent `operator snapshot save` exists; note the KEK Secret;
+   confirm the database/DSN of this instance is its own (dev and prod must not
+   share a database).
+2. **Freeze.** `kubectl scale statefulset <fullname> --replicas=0`. Clients
+   retry (ESO/PHP resolvers already tolerate an outage). The database is now
+   quiescent.
+3. **Export** the ciphertext directly from the database, no unseal needed:
+   `ubixvault operator raft export-mysql -storage-mysql-dsn <dsn> mysql.snap`.
+   It prints the entry count and a SHA-256 over the sorted entries.
+4. **Import** into pod `-0`'s volume *before it exists*: create the PVC under
+   the name the StatefulSet will adopt (`data-<fullname>-0`), mount it in a
+   one-shot pod running the same image as user 65532 and run
+   `ubixvault operator snapshot restore -storage raft -data /var/lib/ubixvault
+   -raft-node-id <fullname>-0 -raft-advertise-addr
+   <fullname>-0.<fullname>-headless.<namespace>.svc:8201 mysql.snap`. The node
+   ID and advertise address are persisted in the cluster configuration, so they
+   must be the pod's real ones. A restore into a directory that holds Raft
+   state is refused.
+5. **Start Raft.** Recreate the StatefulSet (next section) with
+   `storage.type=raft`, `replicaCount=3`. Pod `-0` starts from the restored
+   volume, unseals with the same key and serves.
+6. **Verify on `-0`:** `sys/health`, a known KV read, a login, a transit round
+   trip, and `operator raft digest -against mysql.snap <snapshot-of-cluster>`:
+   no entry of the export may be missing (a running cluster adds a few of its
+   own and may re-encrypt some; they are listed).
+7. **Join `-1` and `-2`:** a join token each, in the join Secret; wait for both
+   to be promoted (`operator raft list-peers`).
+8. **Soak** with the MySQL database untouched and unreferenced (dev: at least a
+   week; prod: two weeks and one full backup cycle).
+
+**Recreating the StatefulSet.** `volumeClaimTemplates` and `serviceName` are
+immutable, and the MySQL-mode set has neither a data volume nor a headless
+Service, so a plain `helm upgrade` is refused. Two ways, both rehearsed:
+
+| | Same release (`--cascade=orphan`) | Parallel release |
+| --- | --- | --- |
+| Steps | scale to 0, `kubectl delete statefulset <fullname> --cascade=orphan`, `helm upgrade --set storage.type=raft ...` | `helm install vault-raft ...` next to the old, which stays scaled to 0 |
+| Names | unchanged: Service, Ingress, NetworkPolicy, PDB, backup CronJob, node names | new release name: Service DNS name changes; Ingress host moves by values |
+| Rollback | restore a Raft snapshot into the emptied database, delete the Raft StatefulSet with `--cascade=orphan`, `helm upgrade --set storage.type=mysql ...` | restore a Raft snapshot into the emptied database, scale the old StatefulSet back up |
+| Helm history | one release; `helm rollback` cannot cross the StatefulSet change, use the steps above | two releases; the old is untouched until deleted |
+
+**Recommendation: the same release.** The design requires that the namespaces,
+Services and Ingress do not change and that clients are not touched; only that
+path keeps them. Use the parallel release when something in-cluster addresses
+the Service by DNS name and cannot be repointed in the window, or when an
+untouched, instantly restartable old release is worth more than keeping the
+names. (`migrate.sh` measures the client-visible outage of both; the figures are
+in the design note once the first CI run has produced them.)
+
+**Rollback** (until the soak ends): snapshot Raft
+(`operator raft snapshot save`: it carries every write since cutover), empty the
+database (`DROP DATABASE`/`CREATE DATABASE` — destructive, an operator action),
+`operator snapshot restore -storage mysql -storage-mysql-dsn <dsn> <file>`, then
+bring the `storage.type=mysql` release back as in the table. No secret, token
+or lease is invalidated in either direction.
+
 ### Enabling HA on an existing single-replica install
 
 A replica from before HA takes no lock and fences nothing, so it must never run

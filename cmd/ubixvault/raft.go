@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,8 +31,12 @@ type raftOpts struct {
 	bootstrap *bool
 
 	retryJoin     *string // comma-separated leader API addresses
+	peers         *string // comma-separated API addresses of the other replicas (bootstrap guard)
 	leaderCACert  *string
 	joinTokenFile *string
+
+	// guarded is set by guardBootstrap: peers to join instead of bootstrapping.
+	guarded []string
 }
 
 func raftFlags(fs *flag.FlagSet) *raftOpts {
@@ -42,6 +49,8 @@ func raftFlags(fs *flag.FlagSet) *raftOpts {
 			"start an empty data directory as a single-voter cluster; set false on nodes that will join an existing one"),
 		retryJoin: fs.String("raft-retry-join", os.Getenv("UBIXVAULT_RAFT_RETRY_JOIN"),
 			"comma-separated leader API addresses to join (retrying until it works); implies this node does not bootstrap; addresses naming this node itself are ignored, so a list holding only this node bootstraps. The token comes from -raft-join-token-file or $UBIXVAULT_RAFT_JOIN_TOKEN"),
+		peers: fs.String("raft-peers", os.Getenv("UBIXVAULT_RAFT_PEERS"),
+			"comma-separated API addresses of the other replicas. Only consulted when this node would bootstrap on an empty data directory: if any of them reports an initialized cluster, the node refuses to found a second one under the same ID (a replica whose volume was lost) and instead joins them when a join token is available"),
 		leaderCACert: fs.String("raft-leader-ca-cert", os.Getenv("UBIXVAULT_RAFT_LEADER_CA_CERT"),
 			"PEM file with the CA that signed the leaders' API certificates (default: system roots)"),
 		joinTokenFile: fs.String("raft-join-token-file", os.Getenv("UBIXVAULT_RAFT_JOIN_TOKEN_FILE"),
@@ -106,12 +115,20 @@ func (l *lazyCreds) Leaf() (*tls.Certificate, error) {
 // node named first sees only itself, joins nobody and bootstraps; the others
 // join it.
 func (r *raftOpts) retryAddrs() []string {
+	if r.guarded != nil {
+		return r.guarded
+	}
+	return r.parseAddrs(*r.retryJoin)
+}
+
+// parseAddrs splits a comma-separated address list, dropping this node.
+func (r *raftOpts) parseAddrs(list string) []string {
 	self := *r.nodeID
 	if self == "" {
 		self, _ = os.Hostname()
 	}
 	var out []string
-	for _, a := range strings.Split(*r.retryJoin, ",") {
+	for _, a := range strings.Split(list, ",") {
 		if a = strings.TrimSpace(a); a != "" && !addrIsSelf(a, self) {
 			out = append(out, a)
 		}
@@ -168,6 +185,12 @@ func openRaft(r *raftOpts, dataDir, clusterListen, clusterAddr string, creds clu
 		return nil, nil, fmt.Errorf("-storage raft: cluster listener: %w", err)
 	}
 	bootstrap := *r.bootstrap
+	if bootstrap && r.retryAddrs() == nil {
+		if err := r.guardBootstrap(dataDir); err != nil {
+			_ = ln.Close()
+			return nil, nil, err
+		}
+	}
 	if r.retryAddrs() != nil {
 		bootstrap = false // a node told where to join must never found its own cluster
 	}
@@ -186,6 +209,66 @@ func openRaft(r *raftOpts, dataDir, clusterListen, clusterAddr string, creds clu
 		return nil, nil, err
 	}
 	return mux, b, nil
+}
+
+// guardBootstrap stops a node whose volume was lost from founding a second
+// cluster under its old ID. A node that would bootstrap (no -raft-retry-join,
+// no Raft state on disk) first asks -raft-peers whether any of them already
+// holds an initialized cluster; if one does, bootstrapping is refused. With a
+// join token available the node joins that cluster instead (r.guarded), else
+// it fails the start so the pod restarts until an operator provides one.
+// Unreachable peers prove nothing and are ignored: on a first install they do
+// not exist yet, and a wholly lost cluster is restored from a snapshot.
+func (r *raftOpts) guardBootstrap(dataDir string) error {
+	peers := r.parseAddrs(*r.peers)
+	if len(peers) == 0 {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "raft", "raft.db")); err == nil {
+		return nil // prior state: never bootstraps anyway
+	}
+	var found string
+	for _, p := range peers {
+		if peerInitialized(*r.leaderCACert, p) {
+			found = p
+			break
+		}
+	}
+	if found == "" {
+		return nil
+	}
+	if _, err := tokenSource(*r.joinTokenFile)(); err != nil {
+		return fmt.Errorf("refusing to bootstrap: %s reports an initialized cluster but this node's data directory is empty (lost volume?). "+
+			"Remove the old member (`operator raft remove-peer`), mint a join token (`operator raft join-token`) and provide it in the join Secret under this node's name (%v)", found, err)
+	}
+	r.guarded = peers
+	log.Printf("raft: %s reports an initialized cluster and this data directory is empty: joining it instead of bootstrapping", found) //nolint:gosec // G706: operator-configured address
+	return nil
+}
+
+// peerInitialized asks one replica's API whether its vault is initialized.
+func peerInitialized(caFile, addr string) bool {
+	hc := &http.Client{Timeout: 3 * time.Second}
+	if caFile != "" {
+		if pem, err := os.ReadFile(caFile); err == nil { //nolint:gosec // G304: operator-provided path
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(pem) {
+				hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}}
+			}
+		}
+	}
+	resp, err := hc.Get(strings.TrimRight(addr, "/") + "/v1/sys/seal-status") //nolint:gosec // G107: operator-configured peer address
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var st struct {
+		Initialized bool `json:"initialized"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&st) != nil {
+		return false
+	}
+	return st.Initialized
 }
 
 // raftGauges exposes the node's consensus counters on /v1/sys/metrics.
