@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -201,6 +202,9 @@ func (b *Backend) Put(ctx context.Context, e *storage.Entry) error {
 	if err := checkKey(e.Key); err != nil {
 		return err
 	}
+	if strings.HasPrefix(e.Key, tokenPrefix) {
+		return storage.ErrInvalidKey
+	}
 	return b.propose(ctx, command{Op: opPut, Key: e.Key, Value: e.Value})
 }
 
@@ -208,6 +212,9 @@ func (b *Backend) Put(ctx context.Context, e *storage.Entry) error {
 func (b *Backend) Delete(ctx context.Context, key string) error {
 	if err := checkKey(key); err != nil {
 		return err
+	}
+	if strings.HasPrefix(key, tokenPrefix) {
+		return storage.ErrInvalidKey
 	}
 	return b.propose(ctx, command{Op: opDelete, Key: key})
 }

@@ -16,6 +16,10 @@ type op string
 const (
 	opPut    op = "put"
 	opDelete op = "delete"
+	// Join-token lifecycle (jointoken.go). Burn is a single committed step so
+	// a token cannot be spent twice.
+	opTokenMint op = "token-mint"
+	opTokenBurn op = "token-burn"
 	// opTxn is reserved for conditional multi-key transactions
 	// (docs/design/raft-storage.md "CAS and transactions"). It is never
 	// proposed, and a node that meets one refuses it.
@@ -27,6 +31,8 @@ type command struct {
 	Op      op     `json:"op"`
 	Key     string `json:"key"`
 	Value   []byte `json:"value,omitempty"`
+	// Now is the proposer's clock (unix nanos) for token ops; the FSM has none.
+	Now int64 `json:"now,omitempty"`
 }
 
 func (c command) encode() ([]byte, error) {
@@ -46,7 +52,7 @@ func decodeCommand(data []byte) (command, error) {
 		return command{}, fmt.Errorf("%w: version %d (this build speaks %d)", errUnknownCommand, c.Version, commandVersion)
 	}
 	switch c.Op {
-	case opPut, opDelete:
+	case opPut, opDelete, opTokenMint, opTokenBurn:
 	default:
 		return command{}, fmt.Errorf("%w: op %q", errUnknownCommand, c.Op)
 	}

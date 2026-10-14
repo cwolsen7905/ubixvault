@@ -642,8 +642,29 @@ settled on the shorter name; D-023 now says `raft`).
   Two handles on one node (the Initialize handle and the RunHA handle) are both
   granted while the node leads; the holder record names the last writer.
 
-**Not built (later slices):** cluster-CA mTLS/ALPN transport and the join-token
-flow; `-storage raft` flag and config; `sys/storage/raft/*` and CLI; offline
+- Slice 5 (transport + join, library side): `NewTLSTransport` is a
+  `raft.StreamLayer` over TLS 1.3 with a client certificate required and ALPN
+  `ubixvault-raft/1`. Peers are accepted if their leaf chains to the CA from an
+  injected `Credentials` (consulted per handshake, so a rotated leaf/CA applies
+  to the next connection); there is no hostname check, since leaves carry no
+  stable name. Join tokens: `MintJoinToken` (256-bit, only the SHA-256 is
+  replicated, default 15 min), `RedeemJoinToken` (verify and burn in one
+  committed log entry, so concurrent or cross-failover redemption has one
+  winner; `ErrTokenInvalid/Expired/Used`), `JoinNode` (burn then `AddNonvoter`).
+  The proposer's clock rides in the command; the FSM reads none. Records live
+  under the reserved key prefix `raft-internal/join-token/` (included in
+  snapshots, refused by public `Put`/`Delete`), expired ones pruned on the next
+  mint. Decision: **a sealed replica does not vote** (person, decision 189).
+  Tests: 3-node cluster over mTLS; refused peers (no cert, wrong CA, expired,
+  wrong/no ALPN, server outside the CA); token expiry, reuse, tamper, 8-way
+  concurrent redeem; join over TLS.
+
+**Not built (later slices):** the ALPN mux on the core cluster listener and the
+`sys/ha/cluster-ca` binding of `Credentials` (needs `internal/cluster`, outside
+this lane); the bridge-leaf (24h) issued in the join response; the
+caught-up non-voter to voter promotion loop (the library does not expose
+per-follower match index, so it needs a joiner-reported applied index; slice 6);
+cluster-CA rotation procedure; `-storage raft` flag and config; `sys/storage/raft/*` and CLI; offline
 `snapshot restore -storage raft`; metrics; chart; fault-injection harness and
 Jepsen-lite.
 
@@ -699,7 +720,7 @@ D-023 is Accepted.
 - **Should a sealed replica vote?** This note says no (transport only after
   unseal; fewer at-rest identities, simpler). It means a full restart under
   Shamir needs a quorum of operators' unseals before writes resume. Vault
-  differs. Decide before slice 5; auto-unseal deployments (both ours) are
+  differs. **Decided (slice 5): no**; auto-unseal deployments (both ours) are
   unaffected.
 - **StatefulSet recreation vs. a parallel release** for the dev/prod cutover
   (see Kubernetes). Needs a dry run against the real Helm history.
