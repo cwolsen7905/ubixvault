@@ -8,6 +8,12 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ### Added
 
+- **Raft integrated-storage backend (experimental, not yet selectable)**
+  (`internal/storage/raft`, ADR D-023, design in `docs/design/raft-storage.md`):
+  `hashicorp/raft` with a bbolt state machine behind `storage.Backend`, snapshots
+  in the `ubixvault-snapshot v1` format, and internal membership operations. It is
+  exercised only by in-process tests: there is no `-storage raft` flag, operator
+  API, peer TLS or chart support yet, so nothing changes for any deployment.
 - **Raft storage implements `HABackend`** (not yet selectable: the `-storage raft`
   flag is a later slice). Raft leadership is the HA lock and the term is the
   fencing generation; releasing the lock transfers leadership. A replica whose
@@ -16,6 +22,8 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ### Changed
 
+- **CI:** a GitLab merge-request pipeline mirrors the GitHub CI (lint, build and
+  test, integration, vulnerability scan, console end-to-end). No product change.
 - **Storage keys must be valid UTF-8** on every backend (`storage.ValidateKey`),
   matching what the Raft backend already enforced. Barrier paths are ASCII, so no
   existing store is affected.
