@@ -7,14 +7,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
-	"os"
-	"path/filepath"
 )
 
 type sealedStore struct{}
@@ -309,7 +309,8 @@ func TestSealedJoinerHTTPClientReachesActive(t *testing.T) {
 	}
 
 	// Without a bridge there is no identity to dial with.
-	if _, err := NewCerts(sealedStore{}).HTTPClient().Post("https://"+addr+"/x", "application/json", nil); err == nil {
+	if r, err := NewCerts(sealedStore{}).HTTPClient().Post("https://"+addr+"/x", "application/json", nil); err == nil {
+		_ = r.Body.Close()
 		t.Fatal("a sealed replica with no bridge reached the cluster listener")
 	}
 }

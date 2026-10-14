@@ -42,9 +42,9 @@ type raftJoiner struct {
 }
 
 const (
-	joinBackoffMin = time.Second
-	joinBackoffMax = 30 * time.Second
-	joinAttempt    = 15 * time.Second
+	joinInitialBackoff = time.Second
+	joinBackoffCap     = 30 * time.Second
+	joinAttempt        = 15 * time.Second
 )
 
 // member reports whether this node is already in the Raft configuration, i.e.
@@ -137,10 +137,10 @@ func (j *raftJoiner) Join(ctx context.Context, req api.RaftJoinRequest) (bool, e
 func (j *raftJoiner) retry(ctx context.Context, addrs []string, caPEM string, token func() (string, error)) {
 	lo, hi := j.backoffMin, j.backoffMax
 	if lo <= 0 {
-		lo = joinBackoffMin
+		lo = joinInitialBackoff
 	}
 	if hi <= 0 {
-		hi = joinBackoffMax
+		hi = joinBackoffCap
 	}
 	wait := lo
 	for {
@@ -244,13 +244,13 @@ func (a *appliedReporter) reportOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, //nolint:gosec // G704: the leader address comes from the Raft configuration, and the call is mutually authenticated
 		"https://"+leaderAddr+"/v1/sys/storage/raft/report-applied", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := a.hc.Do(req)
+	resp, err := a.hc.Do(req) //nolint:gosec // G704: see above
 	if err != nil {
 		return err
 	}
