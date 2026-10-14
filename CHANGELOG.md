@@ -28,6 +28,17 @@ All notable changes to uBixVault are documented here. The format is based on
   `operator snapshot restore -storage raft` restores offline into an empty data
   directory. New `ubixvault_raft_*` gauges on `/v1/sys/metrics`. Library side of
   joining: 24h bridge leaf for a sealed joiner and non-voter to voter promotion.
+
+- **Raft operator API and CLI (experimental)**: `sys/storage/raft/` `join`,
+  `join-token`, `configuration`, `remove-peer`, `snapshot` (GET save / POST
+  restore), `snapshot-force` and `autopilot/state`, and `ubixvault operator raft
+  list-peers | join | join-token | remove-peer | snapshot save|restore|force-restore
+  | autopilot-state`. A new node joins declaratively with `-raft-retry-join`,
+  `-raft-join-token-file` (or `$UBIXVAULT_RAFT_JOIN_TOKEN`) and
+  `-raft-leader-ca-cert`; a non-voter reports its applied index to the leader so
+  it is promoted. The bridge credential is kept in `<data>/raft/bridge.json`
+  (0600) until the first unseal, so a restart before then does not need a new
+  token. `join-accept` and `report-applied` are internal endpoints.
   The operator API and CLI (`sys/storage/raft/*`) follow in the next change, so
   a second node cannot be joined from the command line yet.
 
