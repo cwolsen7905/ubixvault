@@ -88,12 +88,43 @@ metrics:
 #          Single active writer — replicaCount stays 1; this is durability, not
 #          multi-writer HA. When mysql, the persistence PVC below is not used.
 storage:
-  type: file                 # file | mysql
+  type: file                 # file | mysql | raft
   mysql:
     # A Secret holding the go-sql-driver DSN, e.g.
     #   ubixvault:PASSWORD@tcp(mariadb.db:3306)/ubixvault?tls=true
     dsnSecret: ""            # REQUIRED when type=mysql
     dsnSecretKey: dsn
+  # Used when type=raft: integrated Raft storage on a PVC per replica
+  # (docs/design/raft-storage.md). Implies HA; replicaCount must be odd (3
+  # recommended). Block storage with honest fsync only — never NFS/SMB. Pod -0
+  # bootstraps the cluster; the others join with single-use tokens (see the
+  # chart README). Use ha.antiAffinity=hard where there are >= replicaCount nodes.
+  raft:
+    persistence:
+      size: 10Gi
+      accessModes:
+        - ReadWriteOnce
+      # storageClass: ""     # "" = cluster default
+    join:
+      # Secret with one key per joining pod, named after the pod
+      # (<fullname>-1, <fullname>-2), each holding a token from
+      # `operator raft join-token`. Default: <fullname>-raft-join (you create
+      # it after `operator init`; joiners retry until it appears).
+      tokenSecret: ""
+      mountPath: /etc/ubixvault/raft-join
+      # CA that signed the API certificate the joiners verify the leader
+      # against (needed when tls.enabled and the cert does not chain to system
+      # roots). A Secret in this namespace.
+      leaderCASecret: ""
+      leaderCASecretKey: ca.crt
+      caMountPath: /etc/ubixvault/raft-ca
+  # NetworkPolicy for the pods (raft only): the API port from anywhere in the
+  # cluster (or the listed sources), the cluster port from the pods themselves.
+  networkPolicy:
+    enabled: false
+    # extra `from` peers for the API port; empty = any pod in the namespace
+    # and (if ingress.enabled) the ingress controller must be added here.
+    apiFrom: []
 
 # --- Persistence -----------------------------------------------------------
 # The encrypted data directory (storage.type=file only). The whole vault at

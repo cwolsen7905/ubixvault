@@ -595,7 +595,7 @@ supported deployment).
 | 4 | HA wiring | `raft.Lock` implementing `HABackend` (term = generation), Barrier-on-active, step-down as `LeadershipTransfer`, `-ha` semantics, flags | existing HA/forward tests reused against raft; fencing tests |
 | 5 | Cluster transport + join | ALPN-mux on the cluster listener, bridge leaves, join-token flow, non-voter→voter promotion | harness + 3-process local test; join-token abuse tests |
 | 6 | Operator API + CLI | `sys/storage/raft/*`, `operator raft …`, `peers.json` recovery, autopilot-state subset, metrics, docs | API tests; compatibility check against Vault CLI shapes |
-| 7 | Chart + docs | `storage.type: raft`, headless Service, PVC template, PDB/anti-affinity rules, NetworkPolicy, `DEPLOYMENT.md` Raft + upgrade sections | `helm template`/lint; kind e2e smoke (3 pods, kill leader) |
+| 7 ✅ | Chart + docs | `storage.type: raft`, headless Service, PVC template, PDB/anti-affinity rules, NetworkPolicy, `DEPLOYMENT.md` Raft + upgrade sections | `helm template`/lint; kind e2e smoke (3 pods, kill leader) |
 | 8 | Chaos + migration e2e | kind chaos suite, migration + rollback rehearsal, performance baseline vs MySQL (write/list latency), nightly Jepsen-lite | pass criteria written into the MR; numbers recorded in this note |
 | 9 | Release | MINOR (additive), README/POSITIONING/ROADMAP/SECURITY updates; dev rollout then prod via `kubernetes`-repo MRs | per the soak policy above |
 
@@ -740,9 +740,38 @@ it with a fresh `join-token`. If quorum cannot be restored, use
 **Not built:** a graceful rotation that trusts an old-and-new CA bundle for a
 window, which would avoid the full restart.
 
-**Not built (later slices):** `autopilot/configuration`; chart (slice 7);
-fault-injection harness and Jepsen-lite (slices 3 and 8); trust-bundle CA
+**Not built (later slices):** `autopilot/configuration`; fault-injection harness and Jepsen-lite (slices 3 and 8); trust-bundle CA
 rotation (above).
+
+**Slice 7 — chart (`deploy/charts/ubixvault`, `test/e2e/raft`)**
+
+- `storage.type: raft` renders a StatefulSet (`OrderedReady`) with a PVC per pod
+  (`storage.raft.persistence`), `-storage raft -ha`, a headless Service
+  (`<fullname>-headless`, `publishNotReadyAddresses`), the PDB and anti-affinity
+  rules of `ha.*`, and an optional NetworkPolicy (`storage.networkPolicy`): the
+  cluster port from vault pods only, the API port from the namespace or
+  `apiFrom`. `replicaCount` must be 1, 3, 5 or 7. The `file` and `mysql`
+  renderings are unchanged and `file` is still the default.
+- **Identity** comes from the downward API: `UBIXVAULT_RAFT_NODE_ID=$(POD_NAME)`,
+  advertise `$(POD_NAME).<fullname>-headless.$(POD_NAMESPACE).svc:8201`.
+- **Bootstrap/join without a shell.** The image is distroless and every pod has
+  the same spec, so the chart gives all pods the same `-raft-retry-join` (pod
+  `-0`'s API address). A node drops its own address from the list
+  (`retryAddrs`, `cmd/ubixvault/raft.go`): `-0` is left with nothing and
+  bootstraps; `-1`/`-2` join. Tokens are single-use, so the join Secret
+  (`<fullname>-raft-join`) has one key per pod, named after the pod, mounted
+  `optional` and read through `-raft-join-token-file=…/$(POD_NAME)`; joiners
+  retry until it exists. The operator creates it after `operator init`.
+- **Deliberately not done:** automatic token minting (a Job holding a root or
+  sudo token would be a standing credential for a cheap convenience), and
+  `podManagementPolicy: Parallel`.
+- **Verification:** `helm lint`/`template` for the raft, MySQL-HA and default
+  renderings; `.github/workflows/raft-e2e.yml` runs `test/e2e/raft/run.sh` on
+  kind (3 nodes up via join tokens, auto-unseal, write, force-kill the leader,
+  read back within 60s from the new leader, killed node returns, 3 voters,
+  every replica serves the data, hard anti-affinity and 3 PVCs).
+  kind's default CNI does not enforce NetworkPolicy; the e2e only proves the
+  policy does not break the cluster, not that it blocks anything.
 
 **Findings while building**
 

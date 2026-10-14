@@ -1,8 +1,16 @@
-{{- if and (gt (int .Values.replicaCount) 1) (not .Values.ha.enabled) -}}
-{{- fail "replicaCount > 1 needs ha.enabled=true (active/standby over storage.type=mysql); without HA every replica would write the same storage" -}}
+{{- $raft := eq .Values.storage.type "raft" -}}
+{{- $ha := include "ubixvault.haEnabled" . -}}
+{{- if and (gt (int .Values.replicaCount) 1) (not $ha) -}}
+{{- fail "replicaCount > 1 needs ha.enabled=true (active/standby over storage.type=mysql) or storage.type=raft; without HA every replica would write the same storage" -}}
 {{- end -}}
-{{- if and .Values.ha.enabled (ne .Values.storage.type "mysql") -}}
-{{- fail "ha.enabled requires storage.type=mysql (the file backend cannot elect an active replica)" -}}
+{{- if and .Values.ha.enabled (not (has .Values.storage.type (list "mysql" "raft"))) -}}
+{{- fail "ha.enabled requires storage.type=mysql or raft (the file backend cannot elect an active replica)" -}}
+{{- end -}}
+{{- if and $raft (not (has (int .Values.replicaCount) (list 1 3 5 7))) -}}
+{{- fail "storage.type=raft needs an odd replicaCount (1, 3, 5 or 7): an even size tolerates no more failures than the odd size below it" -}}
+{{- end -}}
+{{- if and $raft (not .Values.storage.raft.persistence.size) -}}
+{{- fail "storage.type=raft needs storage.raft.persistence.size: every replica keeps its Raft log on its own volume" -}}
 {{- end -}}
 {{- if not (has .Values.ha.antiAffinity (list "soft" "hard" "none")) -}}
 {{- fail "ha.antiAffinity must be soft, hard or none" -}}
@@ -16,8 +24,8 @@
 {{- if and .Values.autoUnseal.enabled (not .Values.sealTransit.enabled) (not .Values.autoUnseal.existingSecret) (not .Values.autoUnseal.create) -}}
 {{- fail "autoUnseal.enabled is true: set autoUnseal.existingSecret, or autoUnseal.create with autoUnseal.key" -}}
 {{- end -}}
-{{- if not (has .Values.storage.type (list "file" "mysql")) -}}
-{{- fail "storage.type must be \"file\" or \"mysql\"" -}}
+{{- if not (has .Values.storage.type (list "file" "mysql" "raft")) -}}
+{{- fail "storage.type must be \"file\", \"mysql\" or \"raft\"" -}}
 {{- end -}}
 {{- if and (eq .Values.storage.type "mysql") (not .Values.storage.mysql.dsnSecret) -}}
 {{- fail "storage.type=mysql requires storage.mysql.dsnSecret (a Secret holding the DSN)" -}}
@@ -34,7 +42,7 @@ metadata:
   labels:
     {{- include "ubixvault.labels" . | nindent 4 }}
 spec:
-  serviceName: {{ include "ubixvault.fullname" . }}
+  serviceName: {{ if $raft }}{{ include "ubixvault.fullname" . }}-headless{{ else }}{{ include "ubixvault.fullname" . }}{{ end }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
@@ -70,6 +78,11 @@ spec:
             {{- if eq .Values.storage.type "mysql" }}
             - -storage
             - mysql
+            {{- else if $raft }}
+            - -storage
+            - raft
+            - -data
+            - {{ .Values.persistence.mountPath | quote }}
             {{- else }}
             - -data
             - {{ .Values.persistence.mountPath | quote }}
@@ -104,7 +117,7 @@ spec:
             - -seal-transit-tls-skip-verify
             {{- end }}
             {{- end }}
-            {{- if .Values.ha.enabled }}
+            {{- if $ha }}
             - -ha
             - -ha-cluster-listen
             - {{ printf "0.0.0.0:%d" (int .Values.ha.clusterPort) | quote }}
@@ -119,7 +132,34 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
-            {{- if .Values.ha.enabled }}
+            {{- if $raft }}
+            # Stable identity: node ID = pod name, address = the pod's DNS name
+            # under the headless Service (the address is persisted in the Raft
+            # configuration, so it must survive a reschedule; a pod IP would not).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: UBIXVAULT_RAFT_NODE_ID
+              value: $(POD_NAME)
+            - name: UBIXVAULT_RAFT_ADVERTISE_ADDR
+              value: {{ printf "$(POD_NAME).%s-headless.$(POD_NAMESPACE).svc:%d" (include "ubixvault.fullname" .) (int .Values.ha.clusterPort) | quote }}
+            # The same list on every pod: -0 sees only itself in it and
+            # bootstraps; the others join through it.
+            - name: UBIXVAULT_RAFT_RETRY_JOIN
+              value: {{ printf "%s://%s-0.%s-headless.$(POD_NAMESPACE).svc:%d" (ternary "https" "http" .Values.tls.enabled) (include "ubixvault.fullname" .) (include "ubixvault.fullname" .) (int .Values.containerPort) | quote }}
+            - name: UBIXVAULT_RAFT_JOIN_TOKEN_FILE
+              value: {{ printf "%s/$(POD_NAME)" .Values.storage.raft.join.mountPath | quote }}
+            {{- if .Values.storage.raft.join.leaderCASecret }}
+            - name: UBIXVAULT_RAFT_LEADER_CA_CERT
+              value: {{ printf "%s/ca.crt" .Values.storage.raft.join.caMountPath | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $ha }}
             # Replicas advertise their pod IP: other replicas forward to
             # https://$POD_IP:<clusterPort>, and sys/leader reports the API URL.
             - name: POD_IP
@@ -155,7 +195,7 @@ spec:
             - name: api
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
-            {{- if .Values.ha.enabled }}
+            {{- if $ha }}
             - name: cluster
               containerPort: {{ .Values.ha.clusterPort }}
               protocol: TCP
@@ -185,7 +225,7 @@ spec:
           # which is also what lets a rolling update move from pod to pod.
           readinessProbe:
             httpGet:
-              path: {{ if .Values.ha.enabled }}/v1/sys/health?standbyok=true{{ else }}/v1/sys/health{{ end }}
+              path: {{ if $ha }}/v1/sys/health?standbyok=true{{ else }}/v1/sys/health{{ end }}
               port: api
               scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
@@ -194,9 +234,19 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
-            {{- if eq .Values.storage.type "file" }}
+            {{- if or (eq .Values.storage.type "file") $raft }}
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- if $raft }}
+            - name: raft-join
+              mountPath: {{ .Values.storage.raft.join.mountPath }}
+              readOnly: true
+            {{- if .Values.storage.raft.join.leaderCASecret }}
+            - name: raft-ca
+              mountPath: {{ .Values.storage.raft.join.caMountPath }}
+              readOnly: true
+            {{- end }}
             {{- end }}
             {{- if .Values.tls.enabled }}
             - name: tls
@@ -208,6 +258,24 @@ spec:
               mountPath: {{ .Values.audit.persistence.mountPath }}
             {{- end }}
       volumes:
+        {{- if $raft }}
+        # One key per joining pod, named after the pod (<fullname>-1, -2, ...),
+        # each a single-use token from `operator raft join-token`. Optional so
+        # pod -0 (and a first rollout) starts without it; a joiner re-reads its
+        # file on every attempt and waits until the token appears.
+        - name: raft-join
+          secret:
+            secretName: {{ default (printf "%s-raft-join" (include "ubixvault.fullname" .)) .Values.storage.raft.join.tokenSecret }}
+            optional: true
+        {{- if .Values.storage.raft.join.leaderCASecret }}
+        - name: raft-ca
+          secret:
+            secretName: {{ .Values.storage.raft.join.leaderCASecret }}
+            items:
+              - key: {{ .Values.storage.raft.join.leaderCASecretKey }}
+                path: ca.crt
+        {{- end }}
+        {{- end }}
         {{- if eq .Values.storage.type "file" }}
         {{- if not .Values.persistence.enabled }}
         - name: data
@@ -234,7 +302,7 @@ spec:
       {{- if .Values.affinity }}
       affinity:
         {{- toYaml .Values.affinity | nindent 8 }}
-      {{- else if and .Values.ha.enabled (eq .Values.ha.antiAffinity "soft") }}
+      {{- else if and $ha (eq .Values.ha.antiAffinity "soft") }}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -244,7 +312,7 @@ spec:
                 labelSelector:
                   matchLabels:
                     {{- include "ubixvault.selectorLabels" . | nindent 20 }}
-      {{- else if and .Values.ha.enabled (eq .Values.ha.antiAffinity "hard") }}
+      {{- else if and $ha (eq .Values.ha.antiAffinity "hard") }}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -257,9 +325,23 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if or (and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim)) (and .Values.audit.enabled .Values.audit.persistence.enabled) }}
+  {{- if or $raft (and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim)) (and .Values.audit.enabled .Values.audit.persistence.enabled) }}
   volumeClaimTemplates:
-    {{- if and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+    {{- if $raft }}
+    - metadata:
+        name: data
+        labels:
+          {{- include "ubixvault.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.storage.raft.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.raft.persistence.size }}
+        {{- if .Values.storage.raft.persistence.storageClass }}
+        storageClassName: {{ .Values.storage.raft.persistence.storageClass | quote }}
+        {{- end }}
+    {{- else if and (eq .Values.storage.type "file") .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
     - metadata:
         name: data
         labels:

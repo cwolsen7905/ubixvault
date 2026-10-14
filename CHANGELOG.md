@@ -8,6 +8,14 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ### Added
 
+- **Helm chart: `storage.type=raft`.** A three-replica integrated-storage cluster
+  from the chart: StatefulSet with a PVC per pod and stable DNS identities via a
+  headless Service, pod `-0` bootstraps and the others join with single-use
+  tokens, PodDisruptionBudget and anti-affinity as for HA, and an optional
+  NetworkPolicy for the cluster port. `file` and `mysql` renderings and the
+  `file` default are unchanged. A kind e2e (`raft-e2e` workflow) brings up three
+  nodes, writes, force-kills the leader and reads back. Docs: chart README,
+  `DEPLOYMENT.md` Raft upgrade section.
 - **Raft integrated-storage backend (experimental, not yet selectable)**
   (`internal/storage/raft`, ADR D-023, design in `docs/design/raft-storage.md`):
   `hashicorp/raft` with a bbolt state machine behind `storage.Backend`, snapshots

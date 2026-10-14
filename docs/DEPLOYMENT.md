@@ -432,6 +432,31 @@ snapshot you took before upgrading.**
 If an old-version pod restarts *during* the rollout after a migration, it
 refuses to start against the newer schema; the rollout replaces it in turn.
 
+### Raft (integrated storage) clusters on Kubernetes
+
+With `storage.type=raft` (see the [chart README](../deploy/charts/ubixvault/README.md#deploying-with-raft-storage))
+each replica holds the data on its own volume; there is no database to migrate
+and the schema rules above do not apply. The upgrade is still a rolling one.
+
+1. Take a snapshot (`operator raft snapshot save`, or the backup CronJob) and
+   check `operator raft list-peers`: every voter present and healthy.
+2. `helm upgrade` with the new image. The StatefulSet replaces one pod at a
+   time, highest ordinal first, and only moves on once the replaced pod is
+   unsealed and ready; the PodDisruptionBudget keeps a second voter from being
+   drained meanwhile. A leader being replaced transfers leadership first.
+3. Wait for `kubectl rollout status`, then `list-peers` again before any other
+   change. **Never roll a cluster that already has a voter down:** with 3 voters
+   a second loss means no quorum.
+4. Roll back by `helm rollback` the same way. Raft log and snapshot formats are
+   versioned; a binary refuses data it does not understand rather than guess,
+   so keep the pre-upgrade snapshot until the new version has soaked.
+
+Operations that are not a rollout: adding a replica (mint a join token, extend
+the join Secret, raise an odd `replicaCount`), removing one (`remove-peer`
+first), a lost quorum (`operator raft recover`) and cluster-CA rotation
+(`operator raft rotate-ca`) are described in
+[the design note](design/raft-storage.md).
+
 ### Enabling HA on an existing single-replica install
 
 A replica from before HA takes no lock and fences nothing, so it must never run

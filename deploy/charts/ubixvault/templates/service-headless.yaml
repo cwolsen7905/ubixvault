@@ -1,0 +1,24 @@
+{{- if eq .Values.storage.type "raft" -}}
+# Gives each pod a stable DNS name (<pod>.<fullname>-headless.<ns>.svc): that
+# name is the Raft address persisted in the cluster configuration. Not-ready
+# pods are published too, or a sealed or still-joining node could not be found
+# by its peers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ubixvault.fullname" . }}-headless
+  labels:
+    {{- include "ubixvault.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: api
+      port: {{ .Values.containerPort }}
+      targetPort: api
+    - name: cluster
+      port: {{ .Values.ha.clusterPort }}
+      targetPort: cluster
+  selector:
+    {{- include "ubixvault.selectorLabels" . | nindent 4 }}
+{{- end }}

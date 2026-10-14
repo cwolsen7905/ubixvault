@@ -64,3 +64,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-auto-unseal" (include "ubixvault.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{/* "true" (else empty) when replicas elect an active: ha.enabled, or raft, which always does. */}}
+{{- define "ubixvault.haEnabled" -}}
+{{- if or .Values.ha.enabled (eq .Values.storage.type "raft") -}}true{{- end -}}
+{{- end -}}

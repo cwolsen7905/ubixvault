@@ -95,6 +95,75 @@ rescheduled freely — it reconnects to the same store and auto-unseals. Enable
 scheduled backups afterward (see [Backups](#backups)) once you have created a
 least-privilege `sys/snapshot` token Secret.
 
+## Deploying with Raft storage
+
+`storage.type=raft` runs the vault on its own replicated storage: every replica
+keeps a full copy on its own PVC and the cluster elects the active replica, so
+no external database is needed. It implies HA. Design and trade-offs:
+[`docs/design/raft-storage.md`](../../../docs/design/raft-storage.md).
+
+What the chart creates: a StatefulSet (`OrderedReady`, one PVC per pod, node ID
+= pod name), a headless Service `<fullname>-headless` giving each pod a stable
+DNS name (the address recorded in the Raft configuration), the PodDisruptionBudget,
+and with `storage.networkPolicy.enabled` a NetworkPolicy that limits the cluster
+port to the vault pods. `replicaCount` must be odd (3 recommended).
+
+```sh
+# 1. Secrets: the auto-unseal KEK (a restarted replica must unseal unattended)
+kubectl -n $NS create secret generic ubixvault-kek \
+  --from-literal=auto-unseal-key="$(openssl rand -hex 32)"
+
+# 2. Install. Pod -0 starts, bootstraps a one-node cluster and waits to be
+#    initialised; pods -1 and -2 are not created until -0 is ready.
+helm install vault deploy/charts/ubixvault -n $NS \
+  --set storage.type=raft --set replicaCount=3 \
+  --set ha.antiAffinity=hard \
+  --set tls.existingSecret=ubixvault-tls --set autoUnseal.existingSecret=ubixvault-kek
+
+# 3. Initialise once on -0 — SAVE the recovery keys and root token.
+kubectl -n $NS exec vault-ubixvault-0 -- ubixvault operator init -address https://127.0.0.1:8200 -tls-skip-verify
+
+# 4. Admit the other pods: one single-use token each (15 min by default), in a
+#    Secret with one key per pod. The joiners retry until the Secret appears.
+for i in 1 2; do
+  kubectl -n $NS exec vault-ubixvault-0 -- ubixvault operator raft join-token \
+    -address https://127.0.0.1:8200 -tls-skip-verify -token "$ROOT"   # prints "Join token: <t>"
+done
+kubectl -n $NS create secret generic vault-ubixvault-raft-join \
+  --from-literal=vault-ubixvault-1=<token-1> --from-literal=vault-ubixvault-2=<token-2>
+
+# 5. Verify (each pod joins as a non-voter, catches up, is promoted to voter).
+kubectl -n $NS exec vault-ubixvault-0 -- ubixvault operator raft list-peers \
+  -address https://127.0.0.1:8200 -tls-skip-verify -token "$ROOT"
+```
+
+`-tls-skip-verify` is only for these in-pod calls to `127.0.0.1` (the certificate
+does not name it); use `-ca-cert` from outside. The Secret name is `<fullname>-raft-join` unless
+`storage.raft.join.tokenSecret` is set; the key must equal the pod name.
+
+Things to know:
+
+- **Bootstrap is by ordinal.** Every pod gets the same `-raft-retry-join` list,
+  naming pod `-0`; a node drops its own address from it, so `-0` bootstraps and
+  the rest join. This relies on a server with the self-skip rule (the release
+  that introduced `storage.type=raft` in this chart).
+- **TLS to the leader.** Joiners reach `-0` at
+  `<fullname>-0.<fullname>-headless.<ns>.svc`. The API certificate must cover
+  that name, and if it does not chain to system roots set
+  `storage.raft.join.leaderCASecret` (a Secret holding the CA, key
+  `storage.raft.join.leaderCASecretKey`).
+- **Storage.** Block storage with honest `fsync`; never NFS/SMB.
+  `storage.raft.persistence.size` defaults to 10Gi. `persistence.*` (file
+  backend) is not used.
+- **Scale down** with `operator raft remove-peer` first, then lower
+  `replicaCount`. A PVC outlives its pod: delete it explicitly when a node is
+  gone for good.
+- **Switching an existing install** to raft recreates the StatefulSet
+  (`volumeClaimTemplates` and `serviceName` are immutable) — follow the
+  migration steps in the design doc, not a plain `helm upgrade`.
+- **Recovery and CA rotation** (`operator raft recover`, `rotate-ca`): see the
+  design doc.
+
 ## Design notes
 
 - **StatefulSet.** With file storage: 1 replica and a `volumeClaimTemplate` for
@@ -138,7 +207,12 @@ least-privilege `sys/snapshot` token Secret.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `replicaCount` | `1` | 1 unless `ha.enabled`; then 3 is recommended. |
-| `ha.enabled` | `false` | Active/standby HA; requires `storage.type=mysql`. |
+| `ha.enabled` | `false` | Active/standby HA; requires `storage.type=mysql` or `raft` (raft implies it). |
+| `storage.type` | `file` | `file`, `mysql` or `raft`. |
+| `storage.raft.persistence.size` | `10Gi` | Per-replica Raft volume (`.storageClass`, `.accessModes` too). |
+| `storage.raft.join.tokenSecret` | `<fullname>-raft-join` | Secret with one single-use join token per joining pod, keyed by pod name. |
+| `storage.raft.join.leaderCASecret` | `""` | CA the joiners verify the leader's API certificate against. |
+| `storage.networkPolicy.enabled` | `false` | Raft only: cluster port from the vault pods only. |
 | `ha.clusterPort` | `8201` | Replica-to-replica port (mutual TLS). |
 | `ha.lockTTL` / `ha.retryInterval` | `15s` / `500ms` | Unplanned failover bound / standby lock retry. |
 | `ha.podDisruptionBudget.enabled` / `.maxUnavailable` | `true` / `1` | PDB when HA is on. |
