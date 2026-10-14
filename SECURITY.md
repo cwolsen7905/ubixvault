@@ -5,19 +5,20 @@ take vulnerability reports seriously and appreciate coordinated disclosure.
 
 ## Project status (read this first)
 
-uBixVault is a **pre-1.0 beta** (currently `v0.2.0-beta.10`). The cryptographic
-core — the AES-256-GCM barrier, in-house Shamir seal/unseal, and all
-cryptography — is implemented and tested, and the project builds from the Go
-standard library plus a single third-party dependency (the MySQL driver). But:
+uBixVault is a **1.x release**: the HTTP API, CLI, storage format and chart
+values are stable under SemVer ([`docs/VERSIONING.md`](docs/VERSIONING.md)). The
+cryptographic core — the AES-256-GCM barrier, in-house Shamir seal/unseal, and
+all cryptography — is implemented and tested, and the project builds from the Go
+standard library plus a small set of third-party dependencies. But:
 
-- it has **not had an external security review**, and
-- it is **not production-hardened**.
+- it has **not had an independent security audit**, and
+- Raft integrated storage is **experimental** (no production soak yet).
 
-Treat it accordingly: it is suitable for sandbox, development, and
-internal/low-blast-radius use. For production secrets, use
-[HashiCorp Vault](https://www.vaultproject.io/) or [OpenBao](https://openbao.org/)
-until the 1.0 gates in [`docs/ROADMAP.md`](docs/ROADMAP.md) — including an
-external review — are met. The threat model is documented in
+API stability is not a security assurance. For high-blast-radius production
+secrets, prefer [HashiCorp Vault](https://www.vaultproject.io/) or
+[OpenBao](https://openbao.org/) until an external review lands (an open
+milestone in [`docs/ROADMAP.md`](docs/ROADMAP.md)), and start with
+low-criticality secrets. The threat model is documented in
 [`docs/DESIGN.md` §5](docs/DESIGN.md) and the honest scope in
 [`docs/POSITIONING.md`](docs/POSITIONING.md).
 
