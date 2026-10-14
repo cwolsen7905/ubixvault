@@ -91,3 +91,36 @@ func TestRecoverRaftStagesPeers(t *testing.T) {
 		t.Fatalf("peers.json not staged: %v", err)
 	}
 }
+
+func TestRetryAddrsSkipsSelf(t *testing.T) {
+	const list = "https://vault-0.vault-headless.ns.svc:8200, https://vault-1.vault-headless.ns.svc:8200"
+	cases := []struct {
+		name, node, join string
+		want             []string
+	}{
+		{"first node sees only itself", "vault-0", "https://vault-0.vault-headless.ns.svc:8200", nil},
+		{"other node joins the first", "vault-2", list, []string{"https://vault-0.vault-headless.ns.svc:8200", "https://vault-1.vault-headless.ns.svc:8200"}},
+		{"self is dropped from a mixed list", "vault-1", list, []string{"https://vault-0.vault-headless.ns.svc:8200"}},
+		{"bare host and port", "vault-0", "vault-0:8200", nil},
+		{"prefix of another name is not self", "vault", "https://vault-0.x:8200", []string{"https://vault-0.x:8200"}},
+		{"unset", "vault-0", "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("t", flag.ContinueOnError)
+			r := raftFlags(fs)
+			if err := fs.Parse([]string{"-raft-node-id", c.node, "-raft-retry-join", c.join}); err != nil {
+				t.Fatal(err)
+			}
+			got := r.retryAddrs()
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("got %v, want %v", got, c.want)
+				}
+			}
+		})
+	}
+}

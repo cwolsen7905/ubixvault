@@ -41,7 +41,7 @@ func raftFlags(fs *flag.FlagSet) *raftOpts {
 		bootstrap: fs.Bool("raft-bootstrap", !envFalse("UBIXVAULT_RAFT_BOOTSTRAP"),
 			"start an empty data directory as a single-voter cluster; set false on nodes that will join an existing one"),
 		retryJoin: fs.String("raft-retry-join", os.Getenv("UBIXVAULT_RAFT_RETRY_JOIN"),
-			"comma-separated leader API addresses to join (retrying until it works); implies this node does not bootstrap. The token comes from -raft-join-token-file or $UBIXVAULT_RAFT_JOIN_TOKEN"),
+			"comma-separated leader API addresses to join (retrying until it works); implies this node does not bootstrap; addresses naming this node itself are ignored, so a list holding only this node bootstraps. The token comes from -raft-join-token-file or $UBIXVAULT_RAFT_JOIN_TOKEN"),
 		leaderCACert: fs.String("raft-leader-ca-cert", os.Getenv("UBIXVAULT_RAFT_LEADER_CA_CERT"),
 			"PEM file with the CA that signed the leaders' API certificates (default: system roots)"),
 		joinTokenFile: fs.String("raft-join-token-file", os.Getenv("UBIXVAULT_RAFT_JOIN_TOKEN_FILE"),
@@ -100,15 +100,39 @@ func (l *lazyCreds) Leaf() (*tls.Certificate, error) {
 	return nil, errors.New("cluster identity not available yet")
 }
 
-// retryAddrs is the parsed -raft-retry-join list, nil when unset.
+// retryAddrs is the parsed -raft-retry-join list, nil when unset. Addresses
+// whose host is this node itself ("<node-id>" or "<node-id>.<domain>") are
+// dropped, so every replica of a StatefulSet can be given the same list: the
+// node named first sees only itself, joins nobody and bootstraps; the others
+// join it.
 func (r *raftOpts) retryAddrs() []string {
+	self := *r.nodeID
+	if self == "" {
+		self, _ = os.Hostname()
+	}
 	var out []string
 	for _, a := range strings.Split(*r.retryJoin, ",") {
-		if a = strings.TrimSpace(a); a != "" {
+		if a = strings.TrimSpace(a); a != "" && !addrIsSelf(a, self) {
 			out = append(out, a)
 		}
 	}
 	return out
+}
+
+// addrIsSelf reports whether the API address a points at the node called self.
+func addrIsSelf(a, self string) bool {
+	if self == "" {
+		return false
+	}
+	host := a
+	if u, err := url.Parse(a); err == nil && u.Host != "" {
+		host = u.Hostname()
+	} else if h, _, err := net.SplitHostPort(a); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	self = strings.ToLower(self)
+	return host == self || strings.HasPrefix(host, self+".")
 }
 
 func (r *raftOpts) resolve(clusterAddr string) (nodeID, advertise string, err error) {
