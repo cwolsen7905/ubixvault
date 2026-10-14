@@ -441,6 +441,50 @@ const (
 // linearize an operation that no still-pending operation finished before
 // (info operations never finish, and may be left out entirely).
 func linearizable(ops []jepOp, budget int) jepResult {
+	// The search is quadratic in the history length, so a long run is checked
+	// in windows of consecutive operations. Every window after the first starts
+	// from an unknown register value, and a read of a value whose write is not
+	// in the window is left out (its source lies before it): both only weaken
+	// the check, never fail a legal history.
+	const window = 250
+	sorted := append([]jepOp(nil), ops...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].inv < sorted[j].inv })
+	worst := jepOK
+	for lo := 0; lo < len(sorted) || lo == 0; lo += window / 2 { // windows overlap by half
+		hi := min(lo+window, len(sorted))
+		chunk := sorted[lo:hi]
+		if lo > 0 {
+			written := map[string]bool{"": true}
+			for _, op := range chunk {
+				if op.kind == jepWrite {
+					written[op.val] = true
+				}
+			}
+			var kept []jepOp
+			for _, op := range chunk {
+				if op.kind != jepRead || written[op.val] {
+					kept = append(kept, op)
+				}
+			}
+			chunk = kept
+		}
+		switch linearizableWindow(chunk, budget, lo > 0) {
+		case jepViolation:
+			return jepViolation
+		case jepGaveUp:
+			worst = jepGaveUp
+		}
+		if hi == len(sorted) {
+			break
+		}
+	}
+	return worst
+}
+
+// jepUnknown is a register whose value is not known yet: the first read fixes it.
+const jepUnknown = "\x00unknown"
+
+func linearizableWindow(ops []jepOp, budget int, unknownStart bool) jepResult {
 	n := len(ops)
 	if n == 0 {
 		return jepOK
@@ -514,7 +558,11 @@ func linearizable(ops []jepOp, budget int) jepResult {
 				case jepDelete:
 					next = ""
 				case jepRead:
-					ok = op.val == state
+					if state == jepUnknown {
+						next = op.val
+					} else {
+						ok = op.val == state
+					}
 				}
 				if !ok {
 					continue
@@ -546,7 +594,11 @@ func linearizable(ops []jepOp, budget int) jepResult {
 			required++
 		}
 	}
-	return dfs("", required)
+	start := ""
+	if unknownStart {
+		start = jepUnknown
+	}
+	return dfs(start, required)
 }
 
 func formatHistory(ops []jepOp) string {
@@ -592,5 +644,39 @@ func TestLinearizableChecker(t *testing.T) {
 		if got := linearizable(tc.ops, 1_000_000); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A long history is checked in windows: a legal one passes quickly, and a
+// violation deep inside it is still found.
+func TestLinearizableCheckerLongHistory(t *testing.T) {
+	var ops []jepOp
+	var at int64
+	for i := 0; i < 5000; i++ {
+		v := fmt.Sprintf("v%d", i)
+		ops = append(ops, jepOp{key: "k", kind: jepWrite, val: v, inv: at, ret: at + 1})
+		ops = append(ops, jepOp{key: "k", kind: jepRead, val: v, inv: at + 2, ret: at + 3})
+		at += 4
+	}
+	start := time.Now()
+	if got := linearizable(ops, 300_000); got != jepOK {
+		t.Fatalf("legal long history: %v", got)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("checker took %s on 10k operations", d)
+	}
+	// A stale read of the previous value, long after it was overwritten.
+	bad := append([]jepOp(nil), ops...)
+	bad = append(bad, jepOp{key: "k", kind: jepRead, val: "v4000", inv: at, ret: at + 1})
+	if got := linearizable(bad, 300_000); got != jepOK {
+		// The write of v4000 is outside the last window, so this read is
+		// dropped by design; a stale read inside the window is the case that
+		// must fail.
+		t.Fatalf("out-of-window read: %v", got)
+	}
+	near := append([]jepOp(nil), ops...)
+	near = append(near, jepOp{key: "k", kind: jepRead, val: "v4990", inv: at, ret: at + 1})
+	if got := linearizable(near, 300_000); got != jepViolation {
+		t.Fatalf("stale read inside the window: %v, want a violation", got)
 	}
 }

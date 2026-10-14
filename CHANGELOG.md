@@ -6,6 +6,11 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.0] — YYYY-MM-DD (date set at the tag)
+
+> Integrated storage (Raft) ships as **experimental** in this release: selectable,
+> rehearsed and measured, still carrying the label until the dev and prod soak.
+
 ### Added
 
 - **Raft chaos suite, migration rehearsal, baseline and Jepsen-lite.** kind
@@ -72,6 +77,29 @@ All notable changes to uBixVault are documented here. The format is based on
   rotate-ca` / `POST sys/storage/raft/rotate-ca` (sudo, leader) replaces the
   cluster CA; every node must then be restarted and unsealed to pick it up
   (runbook in `docs/design/raft-storage.md`).
+
+### Fixed
+
+- **Raft: the advertised address was resolved to a pod IP.** `NewMuxTransport`
+  resolved the DNS name it was given and the bootstrap entry stored that IP in
+  the Raft configuration, so a bootstrapped node (pod `-0`) was recorded at an
+  address that is stale after the first reschedule. The name is kept. Found by
+  the chaos suite.
+- **Raft: a newly elected leader could answer `ConsistentGet` from a state
+  machine that had not applied the previous leader's tail**, returning an
+  overwritten value. It now applies a barrier in its own term before the first
+  consistent read. Found by Jepsen-lite.
+- **`sys/storage/raft/configuration` and `autopilot/state` answer in Vault's
+  `data` envelope**, so `vault operator raft list-peers` and clients built on
+  Vault's API read them. (Other lane.)
+- **raft e2e:** the install waited on a pod before it existed; the checks read
+  the old response shape.
+
+### Deprecated
+
+- The top-level keys of the raft `configuration` and `autopilot/state`
+  responses (`config`, `servers`, ...) are still emitted next to `data` and will
+  be dropped once `internal/client` reads `data`.
 
 ### Changed
 
