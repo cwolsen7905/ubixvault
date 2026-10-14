@@ -114,10 +114,16 @@ stop_writer() {
 # verify_acked [pod] — every acknowledged write must read back, through the
 # Service or straight from one replica (a standby forwards, so each must).
 verify_acked() {
-  local base=$SVC out
+  local base=$SVC out="" n
   [ -n "${1:-}" ] && base="http://$1.${FULL}-headless.${NS}.svc:8200"
-  k exec -i loadgen -- sh -c 'cat > /tmp/verify.sh' < "$HERE/verify.sh"
-  out=$(k exec loadgen -- sh /tmp/verify.sh "$base" "$ROOT")
-  echo "$out" | tail -5
-  [ "$(echo "$out" | tail -n1)" = "missing=0" ] || fail "acknowledged writes lost (reading ${1:-the Service})"
+  # An exec that dies before the script prints its verdict is the harness, not
+  # data loss: retry it, and show what it said.
+  for n in 1 2 3; do
+    k exec -i loadgen -- sh -c 'cat > /tmp/verify.sh' < "$HERE/verify.sh" 2>&1 || true
+    out=$(k exec loadgen -- sh /tmp/verify.sh "$base" "$ROOT" 2>&1 || true)
+    echo "$out" | tail -5
+    echo "$out" | tail -n1 | grep -q '^missing=' && break
+    echo "verify attempt $n gave no verdict; retrying"; sleep 2
+  done
+  [ "$(echo "$out" | tail -n1)" = "missing=0" ] || fail "acknowledged writes lost or unverifiable (reading ${1:-the Service})"
 }
