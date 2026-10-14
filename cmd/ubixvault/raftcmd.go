@@ -12,7 +12,7 @@ import (
 	raftstore "github.com/cwolsen7905/ubixvault/internal/storage/raft"
 )
 
-const raftUsage = "usage: operator raft list-peers | join | join-token | remove-peer <id> | snapshot save|restore|force-restore <file> | autopilot-state | rotate-ca | recover -data <dir> -peers <file>"
+const raftUsage = "usage: operator raft list-peers | join | join-token | remove-peer <id> | snapshot save|restore|force-restore <file> | autopilot-state | rotate-ca | recover -data <dir> -peers <file> | export-mysql <file> | digest <file>"
 
 func operatorRaft(args []string) error {
 	if len(args) < 1 {
@@ -35,6 +35,10 @@ func operatorRaft(args []string) error {
 		return operatorRaftRotateCA(args[1:])
 	case "recover":
 		return operatorRaftRecover(args[1:])
+	case "export-mysql":
+		return operatorRaftExportMySQL(args[1:])
+	case "digest":
+		return operatorRaftDigest(args[1:])
 	default:
 		return fmt.Errorf("unknown raft subcommand %q\n%s", args[0], raftUsage)
 	}
