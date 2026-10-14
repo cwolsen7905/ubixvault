@@ -36,8 +36,67 @@ credentials — over a Vault-API-compatible HTTP interface.
 - **Dynamic database credentials** — short-lived MariaDB users generated on demand and auto-revoked on lease expiry.
 - **Audit logging** — fail-closed; records who accessed what, with the client token HMAC'd (never logged in the clear).
 - **High availability** — active/standby replicas over MySQL/MariaDB storage (`-ha`, chart `ha.enabled`): one active replica holds a fenced lock in the database, standbys forward to it, and a node drain or rolling upgrade hands over in about half a second (no failed requests in the kind failover test). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#high-availability-activestandby).
+- **Raft integrated storage (EXPERIMENTAL)** — a replicated, self-contained storage backend (`-storage raft`, chart `storage.type=raft`) with no external database: see [Raft integrated storage](#raft-integrated-storage-experimental) below.
 - **Web console** — `/ui/`, served from the binary with no external assets: sign in with userpass, LDAP or a token; initialize and unseal; KV v2 with version history; ACL policies; token creation; PKI. Beta: Transit and auth-method management are not in it yet.
 - **Works with Vault's own tooling** — the `vault` CLI, External Secrets Operator and other clients built on HashiCorp's Go client (`github.com/hashicorp/vault/api`) work unmodified: `PUT`/`POST` on every write, `?list=true`, durations in seconds, Vault's request and response shapes (checked end to end).
+
+## Raft integrated storage (experimental)
+
+> **EXPERIMENTAL in 1.6.0.** Raft storage has not had a production soak. It
+> ships behind this label so it can be tried, tested and migrated to on
+> non-critical clusters; the label is dropped only after a dev/prod soak.
+> Like everything here it has **not been independently security-audited** (see
+> the notice at the top). For production secrets keep the MySQL or file backend
+> until the label is gone.
+
+Raft integrated storage replicates the encrypted store across the replicas
+themselves (the same operational model as Vault's integrated storage, built on
+`hashicorp/raft`), so a cluster needs no MySQL/MariaDB. Data is still sealed by
+the encryption barrier; nodes only ever hold and exchange ciphertext. Design:
+[`docs/design/raft-storage.md`](docs/design/raft-storage.md).
+
+**What "experimental" means here**
+
+- **No soak yet.** It passes the unit, chaos and Jepsen-lite suites in CI, but
+  has not run long enough against real workloads to be trusted with them.
+- **No compatibility promise for the Raft on-disk format yet**, beyond the
+  rolling-upgrade gating described in the design note.
+- **Migration is documented, not battle-tested.** The path from MySQL, and the
+  rollback, is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#migrating-from-mysql-to-raft);
+  rehearse it on a copy first.
+- The server logs a warning at start-up whenever `-storage raft` is used.
+
+**Enable it**
+
+```sh
+# a single node (it bootstraps itself); add -ha and the cluster flags for more
+./bin/ubixvault server -storage raft -data ./data \
+  -raft-node-id node-a -raft-advertise-addr node-a.example:8201
+```
+
+Further nodes start with `-raft-bootstrap=false` and join with a single-use
+join token minted on the leader. On Kubernetes, set `storage.type=raft` and
+`replicaCount=3` in the Helm chart (see the
+[chart README](deploy/charts/ubixvault/README.md#deploying-with-raft-storage)
+and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)); the chart creates the
+StatefulSet, per-pod volumes, headless Service and, optionally
+(`storage.networkPolicy.enabled`), a NetworkPolicy for the cluster port.
+
+**Operator commands** (`ubixvault operator raft <command>`; the matching
+`sys/storage/raft/*` API is shaped like Vault's, so `vault operator raft
+list-peers` works too):
+
+| Command | Purpose |
+| --- | --- |
+| `list-peers` | Cluster members, leader and voter status |
+| `join-token` | Mint a single-use join token (needs `sudo`) |
+| `join` | Have a fresh node join a leader |
+| `remove-peer` | Remove a node from the cluster |
+| `snapshot save` / `restore` | Back up and restore the whole store |
+| `autopilot-state` | Cluster health as this node sees it |
+| `rotate-ca` | Replace the cluster CA (disruptive; see [`SECURITY.md`](SECURITY.md)) |
+| `recover` | Offline `peers.json` recovery after quorum loss (can lose writes) |
+| `export-mysql` / `digest` | Migration helpers (MySQL snapshot export and comparison) |
 
 ## Quickstart
 
