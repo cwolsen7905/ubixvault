@@ -792,6 +792,21 @@ settled on the shorter name; D-023 now says `raft`).
     step-down, write p99 31ms against a 500ms lease. Confirmed for this
     storage; it is a CI VM's disk, so a production storage class should be
     checked the same way (the metric and `bench.sh` are the tool).
+  - **Chaos numbers** (first `chaos.sh` run on main, kind, 3 replicas, one
+    write / 100ms with no retries): leader node frozen: another leader after
+    **6s**, and the thawed node's three direct writes answered 200 only because
+    it forwarded them (all readable); leader partitioned from the majority: new
+    leader after **11s**, the isolated node answered 503 to every write; after
+    both, 93 of 109 attempted writes were acknowledged and **all 93 read back
+    from the Service and every replica**; full restart (scale 0 then 3, PVCs
+    kept, auto-unseal): leader and three ready replicas **18s** after scale-up,
+    nothing lost; PVC loss on `-2` (remove-peer, wipe, token): back as a voter
+    in **19s**. Scenario 5 (wiped `-0`) showed the guard refusing as designed,
+    then exposed a real bug in the join that follows: the transport resolved
+    the advertise DNS name and bootstrapped the pod IP into the configuration
+    (stale at the first reschedule, so a restarted `-0` was an unreachable
+    "voter" that `list-peers` still counted). Fixed (`NewMuxTransport` keeps
+    the name; `TestMuxTransportKeepsAdvertisedName`); the re-run is pending.
   - **Migration rehearsal numbers** (`migrate.sh`, both modes passed): export
     48 entries; the migrated cluster's snapshot held all 48 with none changed
     and none added; client-visible outage from freeze to the first read served
