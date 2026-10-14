@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,10 @@ type raftOpts struct {
 	nodeID    *string
 	advertise *string
 	bootstrap *bool
+
+	retryJoin     *string // comma-separated leader API addresses
+	leaderCACert  *string
+	joinTokenFile *string
 }
 
 func raftFlags(fs *flag.FlagSet) *raftOpts {
@@ -35,6 +40,12 @@ func raftFlags(fs *flag.FlagSet) *raftOpts {
 			"host:port other nodes reach this one's cluster listener on (default: host of -ha-cluster-addr)"),
 		bootstrap: fs.Bool("raft-bootstrap", !envFalse("UBIXVAULT_RAFT_BOOTSTRAP"),
 			"start an empty data directory as a single-voter cluster; set false on nodes that will join an existing one"),
+		retryJoin: fs.String("raft-retry-join", os.Getenv("UBIXVAULT_RAFT_RETRY_JOIN"),
+			"comma-separated leader API addresses to join (retrying until it works); implies this node does not bootstrap. The token comes from -raft-join-token-file or $UBIXVAULT_RAFT_JOIN_TOKEN"),
+		leaderCACert: fs.String("raft-leader-ca-cert", os.Getenv("UBIXVAULT_RAFT_LEADER_CA_CERT"),
+			"PEM file with the CA that signed the leaders' API certificates (default: system roots)"),
+		joinTokenFile: fs.String("raft-join-token-file", os.Getenv("UBIXVAULT_RAFT_JOIN_TOKEN_FILE"),
+			"file holding the join token for -raft-retry-join (re-read on every attempt)"),
 	}
 }
 
@@ -89,6 +100,17 @@ func (l *lazyCreds) Leaf() (*tls.Certificate, error) {
 	return nil, errors.New("cluster identity not available yet")
 }
 
+// retryAddrs is the parsed -raft-retry-join list, nil when unset.
+func (r *raftOpts) retryAddrs() []string {
+	var out []string
+	for _, a := range strings.Split(*r.retryJoin, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 func (r *raftOpts) resolve(clusterAddr string) (nodeID, advertise string, err error) {
 	nodeID = *r.nodeID
 	if nodeID == "" {
@@ -121,6 +143,10 @@ func openRaft(r *raftOpts, dataDir, clusterListen, clusterAddr string, creds clu
 	if err != nil {
 		return nil, nil, fmt.Errorf("-storage raft: cluster listener: %w", err)
 	}
+	bootstrap := *r.bootstrap
+	if r.retryAddrs() != nil {
+		bootstrap = false // a node told where to join must never found its own cluster
+	}
 	mux := cluster.NewMux(ln, creds)
 	tr, err := raftstore.NewMuxTransport(mux.Raft(), advertise, creds, os.Stderr)
 	if err != nil {
@@ -129,7 +155,7 @@ func openRaft(r *raftOpts, dataDir, clusterListen, clusterAddr string, creds clu
 	}
 	b, err := raftstore.Open(raftstore.Config{
 		NodeID: nodeID, DataDir: dataDir, Transport: tr,
-		Bootstrap: *r.bootstrap, LogOutput: os.Stderr,
+		Bootstrap: bootstrap, LogOutput: os.Stderr,
 	})
 	if err != nil {
 		_ = mux.Close()

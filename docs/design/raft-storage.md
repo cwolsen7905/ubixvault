@@ -675,16 +675,41 @@ settled on the shorter name; D-023 now says `raft`).
     16 entries for 10s with fresh reports; the report transport is MR B.
     Metrics `ubixvault_raft_*`. Offline `snapshot restore -storage raft` into an
     empty directory.
-  - **B. Operator API and CLI.** `sys/storage/raft/{join,join-token,configuration,
-    remove-peer,snapshot,snapshot-force,autopilot/state}`, `operator raft …`, the
-    joiner's retry-join and applied-index report loop, persistence of the bridge
-    credential.
+  - **B. Operator API and CLI (built).** `sys/storage/raft/{join,join-token,
+    configuration,remove-peer,snapshot,snapshot-force,autopilot/state}` and
+    `operator raft list-peers|join|join-token|remove-peer|snapshot|autopilot-state`.
+    - *Join is two calls.* The operator's `join` goes to the **joining** node
+      (sealed, served locally even as a standby) with the leader's API address,
+      CA and token; that node calls the leader's internal `join-accept`
+      (token is the only credential; every token failure is the same 403),
+      installs the returned bridge leaf, and replicates as a non-voter.
+      `-raft-retry-join` does the same declaratively with backoff, re-reading the
+      token file each attempt and stopping once the node is in the configuration.
+      A token burned by a response that never arrived needs a new token.
+    - *Applied-index report* is `report-applied`, sent by a non-voter to the
+      leader's **cluster listener** over mutual TLS (works while sealed, using the
+      bridge leaf). The handler accepts it only from a peer speaking for itself
+      (`cluster.DirectPeer`: a forwarding standby always stamps the client
+      address), so a public-API client cannot nudge a promotion.
+    - *Bridge persistence:* `<data>/raft/bridge.json`, 0600, written atomically,
+      loaded at start unless expired, and deleted as soon as the barrier is
+      readable. It holds a 24h private key at rest on the node's own volume.
+    - *Snapshot restore* keeps membership. The non-force form refuses a snapshot
+      whose `core/seal-config` differs from the live store's (it would change the
+      unseal keys; also true of a snapshot from before a rekey); `snapshot-force`
+      skips that check, and every replica must then be re-sealed and unsealed with
+      the restored store's keys. Snapshots carry no cluster ID, so this is the
+      available approximation.
+    - *Autopilot state* is membership and leader only: the consensus library does
+      not expose per-follower progress, so `last_contact` and follower
+      `last_index` are omitted. `autopilot/configuration` is not built.
+    - `remove-peer` refuses the leader (step down first) and the last voter.
   - **C. Recovery and CA rotation.** Offline `peers.json` recovery (consumed on
     start) and the cluster-CA rotation procedure.
 
-**Not built (later slices):** the `sys/storage/raft/*` API and CLI, the joiner
-report/retry-join loop and `peers.json` recovery (slice 6 MR B/C); cluster-CA
-rotation procedure (MR C); chart; fault-injection harness and Jepsen-lite.
+**Not built (later slices):** `peers.json` recovery and the cluster-CA rotation
+procedure (slice 6 MR C); `autopilot/configuration`; chart; fault-injection
+harness and Jepsen-lite.
 
 **Findings while building**
 

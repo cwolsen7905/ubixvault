@@ -23,6 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -71,6 +75,7 @@ type Certs struct {
 	bridgePool *x509.CertPool
 	bridgeLeaf *tls.Certificate
 	bridgeEnd  time.Time
+	bridgePath string // where SetBridge persists the credential ("" = memory only)
 }
 
 // NewCerts returns a replica's certificates over the barrier.
@@ -166,6 +171,9 @@ func (c *Certs) loadLocked(ctx context.Context) error {
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)
 	c.ca, c.caKey, c.pool, c.leaf = ca, key, pool, nil
+	// The barrier is readable: the bridge credential has done its job, and a
+	// private key at rest is not worth keeping.
+	c.dropBridgeLocked()
 	return nil
 }
 
@@ -333,6 +341,115 @@ func (c *Certs) SetBridge(caPEM, certPEM, keyPEM []byte) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.bridgePath != "" {
+		if err := writeBridgeFile(c.bridgePath, caPEM, certPEM, keyPEM); err != nil {
+			return err
+		}
+	}
 	c.bridgePool, c.bridgeLeaf, c.bridgeEnd = pool, &pair, leaf.NotAfter
 	return nil
+}
+
+// PersistBridge makes SetBridge keep the credential in path (mode 0600), and
+// loads one left there by a previous run, so a joiner restarted before its
+// first unseal can still speak Raft until the leaf expires. The file is removed
+// once the barrier is readable. An expired or unreadable file is removed and
+// reported as absent.
+func (c *Certs) PersistBridge(path string) error {
+	c.mu.Lock()
+	c.bridgePath = path
+	c.mu.Unlock()
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is derived from the operator's -data directory
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cluster: read bridge credential: %w", err)
+	}
+	var rec bridgeRecord
+	if err := json.Unmarshal(data, &rec); err == nil {
+		// SetBridge rewrites the same file; that is harmless.
+		if err = c.SetBridge(rec.CAPEM, rec.CertPEM, rec.KeyPEM); err == nil {
+			c.mu.Lock()
+			expired := !c.now().Before(c.bridgeEnd)
+			if expired {
+				c.bridgePool, c.bridgeLeaf = nil, nil
+			}
+			c.mu.Unlock()
+			if !expired {
+				return nil
+			}
+		}
+	}
+	_ = os.Remove(path)
+	return nil
+}
+
+type bridgeRecord struct {
+	CAPEM   []byte `json:"ca_pem"`
+	CertPEM []byte `json:"cert_pem"`
+	KeyPEM  []byte `json:"key_pem"`
+}
+
+func writeBridgeFile(path string, caPEM, certPEM, keyPEM []byte) error {
+	blob, err := json.Marshal(bridgeRecord{CAPEM: caPEM, CertPEM: certPEM, KeyPEM: keyPEM})
+	if err != nil {
+		return fmt.Errorf("cluster: encode bridge credential: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".bridge-*")
+	if err != nil {
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after the rename
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	if _, err := tmp.Write(blob); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("cluster: persist bridge credential: %w", err)
+	}
+	return nil
+}
+
+// dropBridgeLocked forgets the bridge credential and its file.
+func (c *Certs) dropBridgeLocked() {
+	if c.bridgeLeaf == nil && c.bridgePath == "" {
+		return
+	}
+	c.bridgePool, c.bridgeLeaf = nil, nil
+	if c.bridgePath != "" {
+		_ = os.Remove(c.bridgePath)
+	}
+}
+
+// HTTPClient returns a client that dials a peer's cluster listener with this
+// replica's identity (mutual TLS), including the bridge leaf of a sealed
+// joiner. Requests go to https://<peer advertise address>.
+func (c *Certs) HTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				cfg, err := c.clientTLS(ctx)
+				if err != nil {
+					return nil, err
+				}
+				d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: cfg}
+				return d.DialContext(ctx, network, addr)
+			},
+			TLSHandshakeTimeout: 5 * time.Second,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
 }
