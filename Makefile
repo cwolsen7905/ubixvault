@@ -85,10 +85,12 @@ docker: ## Build the container image (tagged with VERSION)
 	docker build -t $(IMAGE):$(VERSION) --build-arg VERSION=$(VERSION) .
 
 .PHONY: helm-lint
-helm-lint: ## Lint the Helm chart, single-replica and HA
+helm-lint: ## Lint the Helm chart: single-replica, MySQL HA and Raft
 	helm lint $(CHART) --set tls.existingSecret=tls --set autoUnseal.existingSecret=kek
 	helm lint $(CHART) --set tls.existingSecret=tls --set autoUnseal.existingSecret=kek \
 		--set storage.type=mysql --set storage.mysql.dsnSecret=dsn --set ha.enabled=true --set replicaCount=3
+	helm lint $(CHART) --set tls.existingSecret=tls --set autoUnseal.existingSecret=kek \
+		--set storage.type=raft --set replicaCount=3 --set storage.networkPolicy.enabled=true
 
 .PHONY: helm-template
 helm-template: ## Render the Helm chart to stdout

@@ -1,0 +1,14 @@
+# The client pod, pinned to the control-plane node so draining or killing a
+# vault node never takes it down. Test-only.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: loadgen
+spec:
+  nodeSelector: {node-role.kubernetes.io/control-plane: ""}
+  tolerations:
+    - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+  containers:
+    - name: loadgen
+      image: curlimages/curl:8.10.1
+      command: ["sh", "-c", "sleep infinity"]

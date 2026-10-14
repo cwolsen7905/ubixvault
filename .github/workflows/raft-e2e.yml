@@ -1,0 +1,45 @@
+name: Raft cluster (kind)
+
+# A three-node integrated-storage (Raft) cluster from the Helm chart on kind:
+# bootstrap, join, auto-unseal, write, force-kill the leader, read back from
+# the surviving majority, and the killed node coming back. See
+# test/e2e/raft/run.sh.
+on:
+  push:
+    branches: ["**"] # every branch the GitLab mirror pushes, i.e. every MR
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "deploy/charts/**"
+      - "test/e2e/raft/**"
+      - "Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/raft-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  raft:
+    name: Three nodes, kill the leader
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t ubixvault:e2e --build-arg VERSION=e2e-${GITHUB_SHA::8} .
+
+      - name: Create the kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: raft
+          config: test/e2e/raft/kind.yaml
+
+      - name: Load the image into the cluster
+        run: kind load docker-image ubixvault:e2e --name raft
+
+      - name: Run the scenario
+        run: test/e2e/raft/run.sh
