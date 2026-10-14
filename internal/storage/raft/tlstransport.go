@@ -154,3 +154,31 @@ func NewTLSTransport(bind, advertise string, creds Credentials, logOut io.Writer
 	})
 	return &Transport{t: nt, addr: nt.LocalAddr()}, nil
 }
+
+// NewMuxTransport is [NewTLSTransport] for a listener that is shared with other
+// protocols: ln yields connections whose TLS handshake is already done and
+// whose peer has already been authenticated against the cluster CA and ALPN
+// (the cluster listener's mux does both before dispatching on
+// [ALPNProtocol]). Outbound connections are dialed with creds exactly as in
+// [NewTLSTransport]. advertise is required: the shared listener's own address
+// is not necessarily one peers can reach.
+func NewMuxTransport(ln net.Listener, advertise string, creds Credentials, logOut io.Writer) (*Transport, error) {
+	if creds == nil || ln == nil {
+		return nil, errors.New("raft: mux transport requires a listener and credentials")
+	}
+	if advertise == "" {
+		return nil, errors.New("raft: mux transport requires an advertise address")
+	}
+	adv, err := net.ResolveTCPAddr("tcp", advertise)
+	if err != nil {
+		return nil, fmt.Errorf("raft: resolve advertise address: %w", err)
+	}
+	s := &tlsStream{ln: ln, adv: adv, creds: creds}
+	nt := hraft.NewNetworkTransportWithConfig(&hraft.NetworkTransportConfig{
+		Stream:  s,
+		MaxPool: 3,
+		Timeout: 10 * time.Second,
+		Logger:  newLogger("transport", logOut),
+	})
+	return &Transport{t: nt, addr: nt.LocalAddr()}, nil
+}

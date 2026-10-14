@@ -32,6 +32,7 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/seal"
 	"github.com/cwolsen7905/ubixvault/internal/snapshot"
 	"github.com/cwolsen7905/ubixvault/internal/storage"
+	raftstore "github.com/cwolsen7905/ubixvault/internal/storage/raft"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
@@ -75,6 +76,7 @@ func usage() {
 	fmt.Println("  operator seal              re-seal (requires -token)")
 	fmt.Println("  operator snapshot save <f> back up the encrypted store (requires -token)")
 	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
+	fmt.Println("  (server -storage raft is experimental; restore with: operator snapshot restore -storage raft -data <dir> -raft-advertise-addr <host:port> <f>)")
 	fmt.Println("  operator rekey init        rotate the unseal shares (start; then update/status/cancel)")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
@@ -84,8 +86,9 @@ func usage() {
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8200", "address to listen on")
-	storageType := fs.String("storage", "file", "storage backend: file or mysql")
-	dataDir := fs.String("data", "./data", "directory for encrypted storage (-storage file)")
+	storageType := fs.String("storage", "file", "storage backend: file, mysql or raft (experimental)")
+	dataDir := fs.String("data", "./data", "directory for encrypted storage (-storage file) or Raft state (-storage raft)")
+	raft := raftFlags(fs)
 	storageDSN := fs.String("storage-mysql-dsn", os.Getenv("UBIXVAULT_STORAGE_DSN"),
 		"MySQL/MariaDB DSN for -storage mysql (or $UBIXVAULT_STORAGE_DSN)")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate file (enables HTTPS)")
@@ -134,6 +137,17 @@ func runServer(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	isRaft := *storageType == "raft"
+	if isRaft {
+		// A Raft cluster of one is a valid deployment, and the election is the
+		// Raft leader's: HA is not optional.
+		*haEnabled = true
+	}
+	if *haEnabled {
+		if err := deriveClusterAddrs(*listen, haClusterListen, haClusterAddr); err != nil {
+			return err
+		}
+	}
 
 	// Refuse to serve secrets in the clear over a network: without TLS, only bind
 	// to loopback unless explicitly overridden.
@@ -142,12 +156,31 @@ func runServer(args []string) error {
 		return err
 	}
 
-	phys, haBackend, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
-	if err != nil {
-		return err
+	var (
+		phys      storage.Backend
+		haBackend storage.HABackend
+		raftMux   *cluster.Mux
+		raftB     *raftstore.Backend
+		raftCreds = &lazyCreds{}
+	)
+	var err error
+	if isRaft {
+		raftMux, raftB, err = openRaft(raft, *dataDir, *haClusterListen, *haClusterAddr, raftCreds)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = raftB.Close() }()
+		defer func() { _ = raftMux.Close() }()
+		phys, haBackend = raftB, raftB
+		log.Printf("WARNING: -storage raft is EXPERIMENTAL; see docs/design/raft-storage.md")
+	} else {
+		phys, haBackend, err = openStorageBackend(*storageType, *dataDir, *storageDSN)
+		if err != nil {
+			return err
+		}
 	}
 	if *haEnabled && haBackend == nil {
-		return fmt.Errorf("-ha requires -storage mysql (the %s backend cannot elect an active replica)", *storageType)
+		return fmt.Errorf("-ha requires -storage mysql or raft (the %s backend cannot elect an active replica)", *storageType)
 	}
 
 	// At most one auto-unseal mode may be configured.
@@ -200,19 +233,6 @@ func runServer(args []string) error {
 				return err
 			}
 		}
-		if *haClusterListen == "" {
-			host, _, err := net.SplitHostPort(*listen)
-			if err != nil {
-				return fmt.Errorf("-ha: derive -ha-cluster-listen from -listen %q: %w", *listen, err)
-			}
-			*haClusterListen = net.JoinHostPort(host, "8201")
-		}
-		if *haClusterAddr == "" {
-			// The cluster listener is always TLS, whatever the API does.
-			if *haClusterAddr, err = defaultAdvertise(*haClusterListen, true); err != nil {
-				return err
-			}
-		}
 		holder, err := haHolderID()
 		if err != nil {
 			return err
@@ -242,6 +262,7 @@ func runServer(args []string) error {
 	var forwarder *cluster.Forwarder
 	if c.HAEnabled() {
 		certs = cluster.NewCerts(c.Barrier())
+		raftCreds.set(certs)
 		c.OnActive(func() {
 			if ensureClusterCA(certs) {
 				return
@@ -289,6 +310,9 @@ func runServer(args []string) error {
 		log.Printf("rate limiting: %.4g req/s per client (burst %.4g)", *rateLimit, burst)
 	}
 
+	if raftB != nil {
+		opts = append(opts, raftGauges(raftB)...)
+	}
 	handler := api.NewHandler(c, opts...)
 	if forwarder != nil {
 		forwarder.ServeLocally(handler, c.Active)
@@ -305,22 +329,30 @@ func runServer(args []string) error {
 
 	var clusterSrv *http.Server
 	if certs != nil {
-		ln, err := net.Listen("tcp", *haClusterListen)
-		if err != nil {
-			return fmt.Errorf("-ha: cluster listener: %w", err)
-		}
 		clusterSrv = &http.Server{
 			Handler:           cluster.ServerHandler(handler, c.Active),
-			TLSConfig:         certs.ServerTLS(),
 			ReadHeaderTimeout: 10 * time.Second,
 			ErrorLog:          serverLog,
 		}
+		var serve func() error
+		if raftMux != nil {
+			// Raft and forwarding share the listener; the mux terminates TLS.
+			serve = func() error { return clusterSrv.Serve(raftMux.HTTP()) }
+			log.Printf("cluster listener on %s (mutual TLS, ALPN: raft + forwarding)", *haClusterListen)
+		} else {
+			ln, err := net.Listen("tcp", *haClusterListen)
+			if err != nil {
+				return fmt.Errorf("-ha: cluster listener: %w", err)
+			}
+			clusterSrv.TLSConfig = certs.ServerTLS()
+			serve = func() error { return clusterSrv.ServeTLS(ln, "", "") }
+			log.Printf("HA cluster listener on %s (mutual TLS)", ln.Addr())
+		}
 		go func() {
-			if err := clusterSrv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("ERROR: HA cluster listener: %v", err)
 			}
 		}()
-		log.Printf("HA cluster listener on %s (mutual TLS)", ln.Addr())
 	}
 
 	srv := &http.Server{
@@ -366,6 +398,13 @@ func runServer(args []string) error {
 		}()
 	}
 
+	// A joined non-voter is promoted once it reports being caught up.
+	if raftB != nil {
+		go raftB.RunPromotion(ctx, raftstore.Promotion{}, func(id string) {
+			log.Printf("raft: promoted %q to voter", id) //nolint:gosec // G706: node IDs are validated by the join flow
+		})
+	}
+
 	// Revoke expired dynamic-database leases in the background (active only).
 	go handler.RunLeaseSweeper(ctx, time.Minute)
 
@@ -389,8 +428,8 @@ func runServer(args []string) error {
 	}
 
 	storageDesc := *storageType
-	if *storageType == "file" {
-		storageDesc = "file:" + *dataDir
+	if *storageType == "file" || isRaft {
+		storageDesc = *storageType + ":" + *dataDir
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -730,7 +769,8 @@ func operatorSnapshotSave(args []string) error {
 // source (e.g. file -> mysql) is how a vault migrates between backends.
 func operatorSnapshotRestore(args []string) error {
 	fs := flag.NewFlagSet("operator snapshot restore", flag.ExitOnError)
-	storageType := fs.String("storage", "file", "storage backend to restore into: file or mysql")
+	storageType := fs.String("storage", "file", "storage backend to restore into: file, mysql or raft")
+	raft := raftFlags(fs)
 	dataDir := fs.String("data", "", "data directory to restore into (-storage file; must be empty/new)")
 	storageDSN := fs.String("storage-mysql-dsn", os.Getenv("UBIXVAULT_STORAGE_DSN"),
 		"MySQL/MariaDB DSN to restore into (-storage mysql; or $UBIXVAULT_STORAGE_DSN)")
@@ -747,6 +787,13 @@ func operatorSnapshotRestore(args []string) error {
 	}
 	defer func() { _ = f.Close() }()
 
+	if *storageType == "raft" {
+		if err := restoreIntoRaft(raft, *dataDir, f); err != nil {
+			return err
+		}
+		fmt.Printf("restored %s into the Raft data directory %s — start the server with -storage raft on it and unseal\n", path, *dataDir)
+		return nil
+	}
 	backend, _, err := openStorageBackend(*storageType, *dataDir, *storageDSN)
 	if err != nil {
 		return err
@@ -788,8 +835,10 @@ func openStorageBackend(storageType, dataDir, dsn string) (storage.Backend, stor
 		// The HA lock comes from the unwrapped backend; its fencing applies to
 		// writes that reach it through the retry wrapper too.
 		return storage.NewRetryBackend(b), b, nil
+	case "raft":
+		return nil, nil, fmt.Errorf("-storage raft is opened by the server and by snapshot restore only")
 	default:
-		return nil, nil, fmt.Errorf("unknown -storage %q (want file or mysql)", storageType)
+		return nil, nil, fmt.Errorf("unknown -storage %q (want file, mysql or raft)", storageType)
 	}
 }
 

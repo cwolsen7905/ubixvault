@@ -20,6 +20,17 @@ All notable changes to uBixVault are documented here. The format is based on
   Raft state machine fails permanently now seals itself and reports the failure
   (`Core.HAFailed`) instead of retrying.
 
+- **`-storage raft` (experimental)**: select the Raft backend with
+  `-storage raft -data <dir>` and `-raft-node-id`, `-raft-advertise-addr`,
+  `-raft-bootstrap=false` (nodes that will join). The cluster listener now
+  multiplexes Raft and request forwarding by ALPN, authenticated by the
+  `sys/ha/cluster-ca` identity; a sealed replica does not vote. HA is implied.
+  `operator snapshot restore -storage raft` restores offline into an empty data
+  directory. New `ubixvault_raft_*` gauges on `/v1/sys/metrics`. Library side of
+  joining: 24h bridge leaf for a sealed joiner and non-voter to voter promotion.
+  The operator API and CLI (`sys/storage/raft/*`) follow in the next change, so
+  a second node cannot be joined from the command line yet.
+
 ### Changed
 
 - **CI:** a GitLab merge-request pipeline mirrors the GitHub CI (lint, build and
