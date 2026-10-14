@@ -355,3 +355,46 @@ func TestServerHandlerRefusesWhenNotActive(t *testing.T) {
 		t.Fatalf("not-active cluster request = %d (handler called: %v), want 503 without forwarding on", rec.Code, called)
 	}
 }
+
+func TestRotateReplacesCA(t *testing.T) {
+	ctx := context.Background()
+	mem := storage.NewMemoryBackend()
+	c := NewCerts(mem)
+	if err := c.EnsureCA(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := mem.Get(ctx, caPath)
+	oldPool, oldLeaf, err := c.identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rotate(ctx); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	after, _ := mem.Get(ctx, caPath)
+	if string(before.Value) == string(after.Value) {
+		t.Fatal("Rotate kept the old CA record")
+	}
+	// The new leaf verifies under the new CA and not the old one.
+	newPool, newLeaf, err := c.identity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(newLeaf.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: newPool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		t.Fatalf("new leaf under new CA: %v", err)
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: oldPool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err == nil {
+		t.Fatal("new leaf verifies under the old CA")
+	}
+	if string(oldLeaf.Certificate[0]) == string(newLeaf.Certificate[0]) {
+		t.Fatal("leaf was not reissued")
+	}
+	// A standby loads the rotated CA from the barrier.
+	if _, _, err := NewCerts(mem).identity(ctx); err != nil {
+		t.Fatalf("standby identity: %v", err)
+	}
+}

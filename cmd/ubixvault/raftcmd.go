@@ -12,7 +12,7 @@ import (
 	raftstore "github.com/cwolsen7905/ubixvault/internal/storage/raft"
 )
 
-const raftUsage = "usage: operator raft list-peers | join | join-token | remove-peer <id> | snapshot save|restore|force-restore <file> | autopilot-state | recover -data <dir> -peers <file>"
+const raftUsage = "usage: operator raft list-peers | join | join-token | remove-peer <id> | snapshot save|restore|force-restore <file> | autopilot-state | rotate-ca | recover -data <dir> -peers <file>"
 
 func operatorRaft(args []string) error {
 	if len(args) < 1 {
@@ -31,6 +31,8 @@ func operatorRaft(args []string) error {
 		return operatorRaftSnapshot(args[1:])
 	case "autopilot-state":
 		return operatorRaftAutopilot(args[1:])
+	case "rotate-ca":
+		return operatorRaftRotateCA(args[1:])
 	case "recover":
 		return operatorRaftRecover(args[1:])
 	default:
@@ -290,5 +292,26 @@ func recoverRaft(r *raftOpts, dataDir, peersPath string) error {
 	fmt.Println("WARNING: writes acknowledged only by members missing from the list can be lost.")
 	fmt.Println("Start this node with -storage raft; it applies the list once and deletes the file.")
 	fmt.Println("Wipe the data directory of every other node and re-join them with a join token.")
+	return nil
+}
+
+func operatorRaftRotateCA(args []string) error {
+	fs := flag.NewFlagSet("operator raft rotate-ca", flag.ExitOnError)
+	cc := registerClientFlags(fs, true)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c, err := cc.newClient()
+	if err != nil {
+		return err
+	}
+	if err := c.RaftRotateCA(context.Background()); err != nil {
+		return err
+	}
+	fmt.Println("The cluster CA was replaced on this node (the leader).")
+	fmt.Println("Nodes keep trusting the old CA until restarted, so quorum may be lost meanwhile.")
+	fmt.Println("Now re-seal or restart every node (followers first, the leader last) and unseal them.")
+	fmt.Println("A node that missed the new CA must be removed, wiped and re-joined (operator raft remove-peer / join-token).")
+	fmt.Println("See docs/design/raft-storage.md, \"Cluster CA rotation\".")
 	return nil
 }

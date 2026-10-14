@@ -78,7 +78,7 @@ func usage() {
 	fmt.Println("  operator snapshot save <f> back up the encrypted store (requires -token)")
 	fmt.Println("  operator snapshot restore -data <dir> <f>  restore a snapshot offline")
 	fmt.Println("  (server -storage raft is experimental; restore with: operator snapshot restore -storage raft -data <dir> -raft-advertise-addr <host:port> <f>)")
-	fmt.Println("  operator raft <list-peers|join|join-token|remove-peer|snapshot|autopilot-state|recover>  manage a -storage raft cluster")
+	fmt.Println("  operator raft <list-peers|join|join-token|remove-peer|snapshot|autopilot-state|rotate-ca|recover>  manage a -storage raft cluster")
 	fmt.Println("  operator rekey init        rotate the unseal shares (start; then update/status/cancel)")
 	fmt.Println("  version                    print the version")
 	fmt.Println("\nGlobal operator flags: -address (or $UBIXVAULT_ADDR), -token (or $UBIXVAULT_TOKEN)")
@@ -326,7 +326,7 @@ func runServer(args []string) error {
 			return err
 		}
 		joiner = &raftJoiner{nodeID: nodeID, advertise: advertise, certs: certs, node: raftB}
-		opts = append(opts, api.WithRaft(api.RaftOptions{Node: raftB, Issuer: certs, Join: joiner.Join}))
+		opts = append(opts, api.WithRaft(api.RaftOptions{Node: raftB, Issuer: certs, Join: joiner.Join, RotateCA: certs.Rotate}))
 	}
 	handler := api.NewHandler(c, opts...)
 	if forwarder != nil {

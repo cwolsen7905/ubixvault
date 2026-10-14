@@ -95,6 +95,22 @@ func (c *Certs) EnsureCA(ctx context.Context) error {
 		return err
 	}
 
+	return c.createCALocked(ctx)
+}
+
+// Rotate replaces the cluster CA with a new one. Only the active replica may
+// call it. Other replicas keep the old CA cached until they are re-sealed or
+// restarted, and lose the cluster transport meanwhile; see "Cluster CA
+// rotation" in docs/design/raft-storage.md.
+func (c *Certs) Rotate(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.createCALocked(ctx)
+}
+
+// createCALocked generates a CA, persists it to the barrier and loads it,
+// replacing any CA held in memory.
+func (c *Certs) createCALocked(ctx context.Context) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("cluster: generate CA key: %w", err)
@@ -128,6 +144,7 @@ func (c *Certs) EnsureCA(ctx context.Context) error {
 	if err := c.store.Put(ctx, &storage.Entry{Key: caPath, Value: blob}); err != nil {
 		return fmt.Errorf("cluster: persist CA: %w", err)
 	}
+	c.ca = nil // force a reload of the record just written
 	return c.loadLocked(ctx)
 }
 

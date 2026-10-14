@@ -84,7 +84,7 @@ func TestRaftEndpointsDisabledWithoutRaft(t *testing.T) {
 func TestRaftOperatorEndpointsNeedToken(t *testing.T) {
 	h, _ := raftHandler(t, &fakeRaft{leader: true}, nil)
 	for _, c := range [][2]string{
-		{"GET", "configuration"}, {"POST", "join-token"}, {"POST", "remove-peer"},
+		{"GET", "configuration"}, {"POST", "join-token"}, {"POST", "remove-peer"}, {"POST", "rotate-ca"},
 		{"GET", "snapshot"}, {"POST", "snapshot"}, {"POST", "snapshot-force"}, {"GET", "autopilot/state"},
 	} {
 		if rec := do(t, h, c[0], "/v1/sys/storage/raft/"+c[1], `{}`); rec.Code != http.StatusUnauthorized {
@@ -321,5 +321,31 @@ func TestRaftJoinEndpointServedByStandby(t *testing.T) {
 		if standbyEndpoint("/v1/sys/storage/raft/" + p) {
 			t.Errorf("%s must be forwarded to the active replica", p)
 		}
+	}
+}
+
+func TestRaftRotateCA(t *testing.T) {
+	rotations := 0
+	f := &fakeRaft{leader: true}
+	h := NewHandler(core.New(storage.NewMemoryBackend()), WithRaft(RaftOptions{
+		Node: f, RotateCA: func(context.Context) error { rotations++; return nil },
+	}))
+	init := decode[initResponse](t, do(t, h, "POST", "/v1/sys/init", `{"secret_shares":2,"secret_threshold":2}`))
+	do(t, h, "POST", "/v1/sys/unseal", `{"key":"`+init.Keys[0]+`"}`)
+	do(t, h, "POST", "/v1/sys/unseal", `{"key":"`+init.Keys[1]+`"}`)
+	root := init.RootToken
+
+	if c := doAuth(t, h, "POST", "/v1/sys/storage/raft/rotate-ca", `{}`, root).Code; c != http.StatusNoContent {
+		t.Fatalf("rotate-ca = %d, want 204", c)
+	}
+	if rotations != 1 {
+		t.Fatalf("rotations = %d", rotations)
+	}
+	f.leader = false
+	if c := doAuth(t, h, "POST", "/v1/sys/storage/raft/rotate-ca", `{}`, root).Code; c != http.StatusServiceUnavailable {
+		t.Errorf("rotate-ca on a follower = %d, want 503", c)
+	}
+	if rotations != 1 {
+		t.Fatalf("a follower rotated the CA")
 	}
 }

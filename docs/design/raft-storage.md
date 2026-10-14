@@ -4,7 +4,7 @@
 > engine choice). Builds on [D-021](../DECISIONS.md) /
 > [`ha-active-standby.md`](ha-active-standby.md); relates to `docs/ROADMAP.md`
 > ("Optional — only if the external database should go away"). Slices 1, 2
-> (core) and part of 3 are built; see [Implementation status](#implementation-status).
+> (core), 3–5 and 6 (operator API, CLI, recovery, CA rotation) are built; see [Implementation status](#implementation-status).
 
 ## Goal
 
@@ -329,10 +329,8 @@ operator-supplied certificates, no cert-manager, no shared secret.
   full restart. Auto-unseal makes this automatic.
 - **Rotation / revocation:** leaves are short-lived, so removal from the
   configuration plus the next leaf cycle ends a node's access; a suspected CA
-  compromise needs a cluster-CA rotation that also re-seats Raft peers. No
-  rotation procedure is documented for `sys/ha/cluster-ca` today, so one is
-  added in slice 5 (the CA is regenerated on the next activation if its record
-  is deleted — to be confirmed against `internal/cluster`).
+  compromise needs a cluster-CA rotation that also re-seats Raft peers; see
+  [Cluster CA rotation](#cluster-ca-rotation).
 - **Bootstrap window:** before first unseal after `init`, a single node has no
   CA and no peers; the transport is simply not listening. The CA is created at
   init (barrier exists) and the node issues its first leaf at first unseal.
@@ -518,7 +516,7 @@ instance is snapshotted and cut over on its own). D-021 rolls HA out to dev at
 | Corrupt `fsm.db` / `raft.db` | Detected at open (checksum/bbolt panic caught); node refuses to start. | Wipe PVC and re-join (normal replacement). |
 | Slow disk (fsync latency) | Heartbeat misses ⇒ spurious elections / flapping. | Faster storage class; alert on fsync/commit latency; raise timeouts last. |
 | Snapshot restore mid-flight crash | Raft snapshot install is atomic via the snapshot store; node reverts to previous state and retries. | None. |
-| Cluster CA / leaf expiry while sealed | Leaves are memory-only and reissued on unseal, so nothing expires at rest; the CA has a 10-year life with a rotation runbook. | Rotate at ~year 8. |
+| Cluster CA / leaf expiry while sealed | Leaves are memory-only and reissued on unseal, so nothing expires at rest; the CA has a 10-year life with a rotation runbook. | Rotate at ~year 8 ([Cluster CA rotation](#cluster-ca-rotation)). |
 | Lost unseal material | Same as every backend: the data is unrecoverable by design. | — |
 | Join token leaked | Single-use, 15-minute TTL; usable only until burned. A joined rogue node is removable and holds only ciphertext. | `remove-peer`; rotate cluster CA if its leaf might have been exfiltrated. |
 | Version skew in a rolling upgrade | New commands gated until all voters advertise support; old nodes never see an op they cannot apply. | Finish the roll. |
@@ -659,7 +657,7 @@ settled on the shorter name; D-023 now says `raft`).
   wrong/no ALPN, server outside the CA); token expiry, reuse, tamper, 8-way
   concurrent redeem; join over TLS.
 
-- Slice 6 (in progress, three ordered MRs):
+- Slice 6 (built, three ordered MRs):
   - **A. Flag, config, wiring (built).** `-storage raft` (`-data`,
     `-raft-node-id`, `-raft-advertise-addr`, `-raft-bootstrap`); `-ha` is
     implied. `cluster.Mux` terminates mutual TLS on the cluster listener and
@@ -704,12 +702,47 @@ settled on the shorter name; D-023 now says `raft`).
       not expose per-follower progress, so `last_contact` and follower
       `last_index` are omitted. `autopilot/configuration` is not built.
     - `remove-peer` refuses the leader (step down first) and the last voter.
-  - **C. Recovery and CA rotation.** Offline `peers.json` recovery (consumed on
-    start) and the cluster-CA rotation procedure.
+  - **C. Recovery and CA rotation (built).**
+    - `operator raft recover -data <dir> -peers <file>` stages
+      `<data>/raft/peers.json` (Vault's `[{"id","address","non_voter"}]` shape)
+      on a *stopped* node: it must list this node and at least one voter, with
+      unique IDs and addresses, and is refused while the log store's file lock
+      is held. The next start applies it with `RecoverCluster` and deletes it,
+      so it takes effect once; a bad file fails the start and is left in place.
+      It can lose writes acknowledged only by the dropped members.
+    - `POST sys/storage/raft/rotate-ca` (sudo, leader only) and
+      `operator raft rotate-ca` replace the CA record (`Certs.Rotate`); nodes
+      pick it up when restarted, so rotation is a runbook, not one call (below).
 
-**Not built (later slices):** `peers.json` recovery and the cluster-CA rotation
-procedure (slice 6 MR C); `autopilot/configuration`; chart; fault-injection
-harness and Jepsen-lite.
+### Cluster CA rotation
+
+Rotate when the CA key may be exposed, or around year 8 of its 10-year life.
+It is disruptive and not a rolling operation: `Certs` caches the CA in memory
+and leaves are memory-only, so the old CA stays trusted on a node until that
+node is re-sealed or restarted. During the window the cluster may lose quorum.
+The record is ordinary replicated barrier data, so a restarted node loads the
+new CA from its own state and issues a new leaf; this is exercised by
+`TestCARotationThenRestartReconverges`.
+
+1. Take a snapshot (`operator raft snapshot save`).
+2. On the leader: `operator raft rotate-ca`. Wait for it to return (it is
+   committed by a quorum) and for `list-peers` to show every node caught up.
+3. Re-seal or restart every node (followers first, the leader last) and unseal
+   them; with Shamir seals, have the key shares ready. Leaves are reissued from
+   the new CA and a leader is elected once a quorum has unsealed.
+4. Check `operator raft list-peers` and `autopilot-state`.
+
+A node that had not received the new CA record before it lost the transport
+cannot catch up: remove it (`remove-peer`), wipe its data directory and re-join
+it with a fresh `join-token`. If quorum cannot be restored, use
+`operator raft recover` on a survivor.
+
+**Not built:** a graceful rotation that trusts an old-and-new CA bundle for a
+window, which would avoid the full restart.
+
+**Not built (later slices):** `autopilot/configuration`; chart (slice 7);
+fault-injection harness and Jepsen-lite (slices 3 and 8); trust-bundle CA
+rotation (above).
 
 **Findings while building**
 

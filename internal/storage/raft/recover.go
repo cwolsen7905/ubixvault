@@ -10,7 +10,7 @@ import (
 
 	hraft "github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
-	bolt "go.etcd.io/bbolt"
+	"go.etcd.io/bbolt"
 )
 
 // peersFile is the name, inside the node's raft directory, of the recovery
@@ -100,7 +100,7 @@ func WriteRecovery(dataDir, nodeID string, peers []Server) error {
 	// rewrite membership under it.
 	probe, err := raftboltdb.New(raftboltdb.Options{
 		Path:        dbPath,
-		BoltOptions: &bolt.Options{Timeout: lockProbeTimeout},
+		BoltOptions: &bbolt.Options{Timeout: lockProbeTimeout},
 	})
 	if err != nil {
 		return fmt.Errorf("raft: log store is in use; stop the server first: %w", err)

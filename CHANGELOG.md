@@ -39,8 +39,14 @@ All notable changes to uBixVault are documented here. The format is based on
   it is promoted. The bridge credential is kept in `<data>/raft/bridge.json`
   (0600) until the first unseal, so a restart before then does not need a new
   token. `join-accept` and `report-applied` are internal endpoints.
-  The operator API and CLI (`sys/storage/raft/*`) follow in the next change, so
-  a second node cannot be joined from the command line yet.
+
+- **Raft quorum-loss recovery and cluster-CA rotation (experimental)**:
+  `ubixvault operator raft recover -data <dir> -peers <file>` stages a
+  `peers.json` on a stopped node, which the next start applies once and deletes
+  (writes acknowledged only by dropped members can be lost). `operator raft
+  rotate-ca` / `POST sys/storage/raft/rotate-ca` (sudo, leader) replaces the
+  cluster CA; every node must then be restarted and unsealed to pick it up
+  (runbook in `docs/design/raft-storage.md`).
 
 ### Changed
 
