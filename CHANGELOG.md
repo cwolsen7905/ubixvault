@@ -6,7 +6,7 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
-## [1.6.0] — YYYY-MM-DD (date set at the tag)
+## [1.6.0] — 2026-10-14
 
 > Integrated storage (Raft) ships as **experimental** in this release: selectable,
 > rehearsed and measured, still carrying the label until the dev and prod soak.
