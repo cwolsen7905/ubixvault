@@ -143,10 +143,15 @@ for p in 0 1 2; do verify_acked "${FULL}-$p"; done
 start_writer
 
 # ------------------------------------------------------ 4. PVC loss, pod -2
+remove_peer() { # pod — fails the run unless the API accepted it
+  local code
+  code=$(api POST /v1/sys/storage/raft/remove-peer -d "{\"server_id\":\"$1\"}" -o /dev/null -w '%{http_code}')
+  case "$code" in 200|204) ;; *) die "remove-peer $1 answered HTTP $code" ;; esac
+}
 wipe_and_rejoin() { # ordinal
   local pod=${FULL}-$1
   ensure_not_leader "$pod"
-  api POST /v1/sys/storage/raft/remove-peer -d "{\"server_id\":\"$pod\"}" >/dev/null || die "remove-peer $pod"
+  remove_peer "$pod"
   local tok; tok=$(mint_token)
   # The join Secret is read when the pod starts, so update it first.
   kubectl -n "$NS" patch secret "${FULL}-raft-join" --type merge \
@@ -166,7 +171,7 @@ note "- PVC loss (pod -2): wiped and re-joined, $(voters) voters, $(( $(date +%s
 step "5. PVC loss on pod -0: it must not found a second cluster"
 POD0=${FULL}-0
 ensure_not_leader "$POD0"
-api POST /v1/sys/storage/raft/remove-peer -d "{\"server_id\":\"$POD0\"}" >/dev/null || die "remove-peer $POD0"
+remove_peer "$POD0"
 # No token for -0 yet (an earlier one was burned at install): the guard must
 # refuse to bootstrap rather than come up as a fresh single-voter cluster.
 kubectl -n "$NS" patch secret "${FULL}-raft-join" --type json -p "[{\"op\":\"remove\",\"path\":\"/data/$POD0\"}]" >/dev/null 2>&1 || true

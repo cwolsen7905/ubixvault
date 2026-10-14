@@ -107,3 +107,33 @@ func joinerAddr(t *testing.T, b *Backend) string {
 	t.Helper()
 	return b.cfg.Transport.Addr()
 }
+
+// The advertised address is persisted in the configuration, so a DNS name must
+// stay a name (a resolved pod IP goes stale at the first reschedule), including
+// in the bootstrap entry.
+func TestMuxTransportKeepsAdvertisedName(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	certs := cluster.NewCerts(&lazyStore{})
+	mux := cluster.NewMux(ln, certs)
+	t.Cleanup(func() { _ = mux.Close() })
+	const name = "localhost:18201" // resolvable, and not the listener's address
+	tr, err := NewMuxTransport(mux.Raft(), name, credFn{certs}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Addr() != name {
+		t.Fatalf("transport address = %q, want the advertised name %q", tr.Addr(), name)
+	}
+	b, err := Open(testConfig(t, "n1", true, tr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	srv, err := b.Configuration()
+	if err != nil || len(srv) != 1 || srv[0].Address != name {
+		t.Fatalf("bootstrap configuration = %+v, %v; want address %q", srv, err, name)
+	}
+}
