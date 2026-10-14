@@ -102,10 +102,16 @@ func TestRaftConfigurationAndAutopilot(t *testing.T) {
 	h, root := raftHandler(t, f, nil)
 
 	cfg := decode[raftConfigResponse](t, doAuth(t, h, "GET", "/v1/sys/storage/raft/configuration", "", root))
-	if len(cfg.Config.Servers) != 3 || !cfg.Config.Servers[0].Leader || cfg.Config.Servers[1].Leader || cfg.Config.Servers[2].Voter || cfg.Config.Index != 42 {
+	if len(cfg.Data.Config.Servers) != 3 || !cfg.Data.Config.Servers[0].Leader || cfg.Data.Config.Servers[1].Leader || cfg.Data.Config.Servers[2].Voter || cfg.Data.Config.Index != 42 {
 		t.Fatalf("configuration = %+v", cfg)
 	}
+	if len(cfg.Config.Servers) != 3 {
+		t.Fatalf("legacy top-level config missing: %+v", cfg)
+	}
 	st := decode[raftAutopilotResponse](t, doAuth(t, h, "GET", "/v1/sys/storage/raft/autopilot/state", "", root))
+	if st.Data.Leader != "a" || !st.Data.Healthy {
+		t.Fatalf("autopilot data envelope = %+v", st)
+	}
 	if !st.Healthy || st.Leader != "a" || len(st.Voters) != 2 || st.FailureTolerance != 0 || st.Servers["c"].Status != "non-voter" || st.Servers["a"].Status != "leader" {
 		t.Fatalf("autopilot = %+v", st)
 	}

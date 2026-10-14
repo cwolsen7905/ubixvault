@@ -266,11 +266,23 @@ type raftServer struct {
 	Voter           bool   `json:"voter"`
 }
 
+type raftConfig struct {
+	Servers []raftServer `json:"servers"`
+	Index   uint64       `json:"index"`
+}
+
+// raftConfigData is Vault's shape: the configuration under "data".
+type raftConfigData struct {
+	Config raftConfig `json:"config"`
+}
+
+// raftConfigResponse answers with Vault's {"data":{"config":...}} envelope,
+// which the Vault CLI's `operator raft list-peers` expects. The top-level
+// "config" is the pre-1.6.0 shape, kept so older ubixvault clients (and
+// internal/client) keep working; Vault clients ignore it.
 type raftConfigResponse struct {
-	Config struct {
-		Servers []raftServer `json:"servers"`
-		Index   uint64       `json:"index"`
-	} `json:"config"`
+	Data   raftConfigData `json:"data"`
+	Config raftConfig     `json:"config"`
 }
 
 // raftServers lists the configuration with the leader flagged.
@@ -296,9 +308,8 @@ func (h *Handler) raftConfiguration(w http.ResponseWriter, _ *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	var resp raftConfigResponse
-	resp.Config.Servers = servers
-	resp.Config.Index = h.raft.Node.Stats().LastIndex
+	cfg := raftConfig{Servers: servers, Index: h.raft.Node.Stats().LastIndex}
+	resp := raftConfigResponse{Data: raftConfigData{Config: cfg}, Config: cfg}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -444,12 +455,19 @@ type raftAutopilotServer struct {
 	Voter       bool   `json:"voter"`
 }
 
-type raftAutopilotResponse struct {
+type raftAutopilotState struct {
 	Healthy          bool                           `json:"healthy"`
 	FailureTolerance int                            `json:"failure_tolerance"`
 	Leader           string                         `json:"leader"`
 	Voters           []string                       `json:"voters"`
 	Servers          map[string]raftAutopilotServer `json:"servers"`
+}
+
+// raftAutopilotResponse carries the state under Vault's "data" and, for older
+// clients, at the top level (embedded); see [raftConfigResponse].
+type raftAutopilotResponse struct {
+	raftAutopilotState
+	Data raftAutopilotState `json:"data"`
 }
 
 // raftAutopilotState is a subset of Vault's autopilot state, from what this
@@ -463,7 +481,7 @@ func (h *Handler) raftAutopilotState(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	leaderID, _ := h.raft.Node.Leader()
-	resp := raftAutopilotResponse{
+	resp := raftAutopilotState{
 		Healthy: leaderID != "", Leader: leaderID, Voters: []string{},
 		Servers: map[string]raftAutopilotServer{},
 	}
@@ -489,7 +507,7 @@ func (h *Handler) raftAutopilotState(w http.ResponseWriter, _ *http.Request) {
 		sv.LastIndex = st.LastIndex
 		resp.Servers[leaderID] = sv
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, raftAutopilotResponse{raftAutopilotState: resp, Data: resp})
 }
 
 // raftRotateCA replaces the cluster CA on the leader. The other nodes lose the
