@@ -107,7 +107,7 @@ func (f *fsm) Snapshot() (hraft.FSMSnapshot, error) {
 // Restore implements [hraft.FSM]: it atomically replaces the whole state with
 // the snapshot's contents, or leaves it untouched on error.
 func (f *fsm) Restore(rc io.ReadCloser) error {
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	return f.db.Update(func(tx *bbolt.Tx) error {
 		if err := tx.DeleteBucket(kvBucket); err != nil {
 			return err
