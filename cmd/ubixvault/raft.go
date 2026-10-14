@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,8 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crypto/tls"
-	"crypto/x509"
 	"github.com/cwolsen7905/ubixvault/internal/api"
 	"github.com/cwolsen7905/ubixvault/internal/cluster"
 	raftstore "github.com/cwolsen7905/ubixvault/internal/storage/raft"

@@ -50,8 +50,8 @@ func (m *Mux) Close() error {
 	var err error
 	m.once.Do(func() {
 		err = m.ln.Close()
-		m.raft.Close()
-		m.http.Close()
+		_ = m.raft.Close()
+		_ = m.http.Close()
 	})
 	return err
 }
