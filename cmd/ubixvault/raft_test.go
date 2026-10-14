@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -51,5 +53,41 @@ func TestRestoreIntoRaftOffline(t *testing.T) {
 	srv, _ := b.Configuration()
 	if len(srv) != 1 || srv[0].Address != "127.0.0.1:18999" || !srv[0].Voter {
 		t.Fatalf("configuration = %+v", srv)
+	}
+}
+
+func TestRecoverRaftStagesPeers(t *testing.T) {
+	dir := t.TempDir()
+	b, err := raftstore.Open(raftstore.Config{
+		NodeID: "n1", DataDir: dir, Transport: raftstore.NewInmemTransport("127.0.0.1:18998"), Bootstrap: true,
+		HeartbeatTimeout: 200 * time.Millisecond, ElectionTimeout: 200 * time.Millisecond, LeaderLeaseTimeout: 150 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	r := raftFlags(fs)
+	if err := fs.Parse([]string{"-raft-node-id", "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte(`[{"id":"n2","address":"h:1"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverRaft(r, dir, bad); err == nil {
+		t.Fatal("a list without this node was staged")
+	}
+	good := filepath.Join(t.TempDir(), "good.json")
+	if err := os.WriteFile(good, []byte(`[{"id":"n1","address":"h:1"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverRaft(r, dir, good); err != nil {
+		t.Fatalf("recoverRaft: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raft", "peers.json")); err != nil {
+		t.Fatalf("peers.json not staged: %v", err)
 	}
 }
