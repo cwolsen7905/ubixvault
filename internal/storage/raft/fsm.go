@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	hraft "github.com/hashicorp/raft"
 	"go.etcd.io/bbolt"
@@ -70,6 +72,7 @@ func (f *fsm) Apply(l *hraft.Log) any {
 	if err != nil {
 		return f.fail(err)
 	}
+	var applyErr error // an application result, not a state-machine failure
 	err = f.db.Update(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(metaBucket)
 		// Raft may re-apply from its log after a crash; an index at or below the
@@ -79,6 +82,39 @@ func (f *fsm) Apply(l *hraft.Log) any {
 		}
 		kv := tx.Bucket(kvBucket)
 		switch c.Op {
+		case opTokenMint:
+			// Prune long-expired records (kept a day so a stale redeem still
+			// reports ErrTokenUsed). Collect first: deleting under a cursor
+			// can skip the next key.
+			var stale [][]byte
+			cur := kv.Cursor()
+			for k, v := cur.Seek([]byte(tokenPrefix)); k != nil && strings.HasPrefix(string(k), tokenPrefix); k, v = cur.Next() {
+				if _, exp, ok := decodeTokenRecord(v); ok && exp < c.Now-int64(24*time.Hour) {
+					stale = append(stale, append([]byte(nil), k...))
+				}
+			}
+			for _, k := range stale {
+				if err := kv.Delete(k); err != nil {
+					return err
+				}
+			}
+			if err := kv.Put([]byte(c.Key), c.Value); err != nil {
+				return err
+			}
+		case opTokenBurn:
+			state, exp, ok := decodeTokenRecord(kv.Get([]byte(c.Key)))
+			switch {
+			case !ok:
+				applyErr = ErrTokenInvalid
+			case state == tokenSpent:
+				applyErr = ErrTokenUsed
+			case c.Now > exp:
+				applyErr = ErrTokenExpired
+			default:
+				if err := kv.Put([]byte(c.Key), encodeTokenRecord(tokenSpent, exp)); err != nil {
+					return err
+				}
+			}
 		case opPut:
 			if err := kv.Put([]byte(c.Key), c.Value); err != nil {
 				return err
@@ -95,7 +131,7 @@ func (f *fsm) Apply(l *hraft.Log) any {
 	if err != nil {
 		return f.fail(err)
 	}
-	return nil
+	return applyErr
 }
 
 // Snapshot implements [hraft.FSM]. It pins a bbolt read transaction — a
