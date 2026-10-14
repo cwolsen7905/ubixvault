@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -339,13 +340,13 @@ func TestJepsenLite(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			jepClient(ctx, c, h, i, keys, rand.New(rand.NewSource(seed+int64(i)+1)))
+			jepClient(ctx, c, h, i, keys, rand.New(rand.NewSource(seed+int64(i)+1))) //nolint:gosec // G404: a seeded, replayable test schedule, not a secret
 		}(i)
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		jepNemesis(ctx, c, rand.New(rand.NewSource(seed)), t.Logf)
+		jepNemesis(ctx, c, rand.New(rand.NewSource(seed)), t.Logf) //nolint:gosec // G404: seeded test schedule
 	}()
 	wg.Wait()
 
@@ -480,9 +481,7 @@ func linearizable(ops []jepOp, budget int) jepResult {
 		}
 		kb := make([]byte, 0, words*8+len(state))
 		for _, w := range done {
-			for s := 0; s < 64; s += 8 {
-				kb = append(kb, byte(w>>s))
-			}
+			kb = binary.LittleEndian.AppendUint64(kb, w)
 		}
 		key := string(kb) + state
 		if _, seen := memo[key]; seen {
