@@ -279,7 +279,7 @@ func recoverRaft(r *raftOpts, dataDir, peersPath string) error {
 	if err != nil {
 		return err
 	}
-	nodeID, _, err := r.resolve("host:0") // only the node ID matters here
+	nodeID, _, err := r.resolve("https://host:0") // only the node ID matters here
 	if err != nil {
 		return err
 	}
