@@ -6,6 +6,13 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Chart 0.1.22: image and metadata now point at `ubixsys`.** `image.repository`
+  defaults to `ghcr.io/ubixsys/ubixvault`; Chart `home`/`sources`/maintainer, the
+  Makefile `IMAGE` and the cosign example in `DEPLOYMENT.md` follow the canonical
+  `github.com/ubixsys/ubixvault` repo.
+
 ## [1.6.0] — 2026-10-14
 
 > Integrated storage (Raft) ships as **experimental** in this release: selectable,

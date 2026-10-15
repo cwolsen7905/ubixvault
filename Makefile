@@ -6,7 +6,7 @@ PKG         := ./...
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -X main.version=$(VERSION)
 GOBIN       := $(shell go env GOPATH)/bin
-IMAGE       ?= ghcr.io/cwolsen7905/ubixvault
+IMAGE       ?= ghcr.io/ubixsys/ubixvault
 CHART       := deploy/charts/ubixvault
 # DSN for the local MariaDB from `docker compose up -d mariadb` (compose.yaml).
 MARIADB_DSN ?= root:root@tcp(127.0.0.1:3306)/ubixvault
