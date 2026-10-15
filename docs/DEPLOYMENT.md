@@ -573,8 +573,8 @@ and carry an **SPDX SBOM attestation**, both produced in CI via GitHub OIDC and
 bound to the image digest. Verify a release before deploying:
 
 ```sh
-IMAGE=ghcr.io/cwolsen7905/ubixvault:0.2.0-beta.10
-IDENTITY='https://github.com/cwolsen7905/ubixvault/.github/workflows/image.yml@refs/tags/v0.2.0-beta.10'
+IMAGE=ghcr.io/ubixsys/ubixvault:1.6.0
+IDENTITY='https://github.com/ubixsys/ubixvault/.github/workflows/image.yml@refs/tags/v1.6.0'
 
 # Verify the signature came from this repo's release workflow.
 cosign verify "$IMAGE" \
@@ -588,7 +588,7 @@ cosign verify-attestation "$IMAGE" --type spdxjson \
   | jq -r '.payload | @base64d | fromjson | .predicate' > sbom.spdx.json
 ```
 
-Use `--certificate-identity-regexp 'https://github.com/cwolsen7905/ubixvault/.*'`
+Use `--certificate-identity-regexp 'https://github.com/ubixsys/ubixvault/.*'`
 instead of the exact identity to accept any tag. A failed verification means the
 image is not a genuine, unmodified release — do not deploy it.
 

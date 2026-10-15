@@ -224,7 +224,7 @@ Things to know:
 | `ha.podDisruptionBudget.enabled` / `.maxUnavailable` | `true` / `1` | PDB when HA is on. |
 | `ha.antiAffinity` | `soft` | `soft`, `hard` or `none`; ignored if `affinity` is set. |
 | `terminationGracePeriodSeconds` | `30` | Time to step down and drain on shutdown. |
-| `image.repository` | `ghcr.io/cwolsen7905/ubixvault` | Build/push your own; no official image yet. |
+| `image.repository` | `ghcr.io/ubixsys/ubixvault` | Official image published by the ubixsys org. |
 | `image.tag` | `""` | Defaults to the chart `appVersion`. |
 | `persistence.enabled` / `.size` | `true` / `1Gi` | Encrypted data volume. |
 | `autoUnseal.enabled` | `true` | Wrap the master key with a KEK for self-unseal. |
