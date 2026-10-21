@@ -9,6 +9,18 @@
 #
 # Stays on GitHub only: ha-e2e.yml (a three-replica kind cluster) and image.yml.
 
+# Kelpie's advisory AI review on merge requests (job `kelpie-review`, stage `test`). Pinned
+# to a ubixkelpie commit, not a branch, so its job cannot change this CI unreviewed; move it
+# to a release tag once one carries ci/kelpie.yml (the only tag predates it). Needs group
+# variables KELPIE_REGISTRY_USER / KELPIE_REGISTRY_TOKEN (read_registry, to pull Kelpie's
+# image), plus OPENROUTER_API_KEY and AI_REVIEW_GITLAB_TOKEN; until they exist the job exits
+# 75, is allowed to fail and the pipeline stays green. It runs only on merge request
+# pipelines into AI_REVIEW_BASE_BRANCH.
+include:
+  - project: ubixsys/ubixkelpie
+    ref: 788c9416214a6bdf4ceaffd851eaf34ac7850a38
+    file: ci/kelpie.yml
+
 stages: [test]
 
 # Merge request pipelines (what "Pipelines must succeed" judges) and pushes to the default
@@ -23,6 +35,7 @@ default:
   interruptible: true
 
 variables:
+  AI_REVIEW_BASE_BRANCH: main
   GO_IMAGE: golang:1.26                         # go.mod needs >= 1.25.0; GitHub CI tests on 1.26
   LINT_IMAGE: golangci/golangci-lint:v2.12.2    # same version as GitHub
   MARIADB_IMAGE: mariadb:11
