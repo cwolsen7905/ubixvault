@@ -49,6 +49,14 @@ func TestParametersAllows(t *testing.T) {
 		{"glob suffix", `{"a":["neptune-*"]}`, ``, `{"a":"neptune-prod-read"}`, true},
 		{"glob prefix", `{"a":["*-read"]}`, ``, `{"a":"x-write"}`, false},
 		{"lone star value is literal", `{"a":["*"]}`, ``, `{"a":"root"}`, false},
+		// A comma string may be split by the handler: globs never pass it.
+		{"glob vs comma string", `{"a":["neptune-*"]}`, ``, `{"a":"neptune-x,root"}`, false},
+		{"glob vs comma string in list", `{"a":["neptune-*"]}`, ``, `{"a":["neptune-x,root"]}`, false},
+		{"elements allowed but not whole", `{"a":["x","y"]}`, ``, `{"a":"x,y"}`, false},
+		{"glob still matches plain string", `{"a":["neptune-*"]}`, ``, `{"a":"neptune-x"}`, true},
+		// Names fold as encoding/json folds them (long s, Kelvin sign).
+		{"long s name", `{"policies":["ok"],"*":[]}`, ``, `{"policie\u017f":"root"}`, false},
+		{"kelvin name", `{"kind":["ok"],"*":[]}`, ``, `{"\u212aind":"root"}`, false},
 
 		{"denied value", ``, `{"a":["root"]}`, `{"a":"root"}`, false},
 		{"denied other value ok", ``, `{"a":["root"]}`, `{"a":"x"}`, true},
@@ -57,6 +65,9 @@ func TestParametersAllows(t *testing.T) {
 		{"denied star: any parameter", ``, `{"*":[]}`, `{"z":1}`, false},
 		{"denied wins over allowed", `{"a":["root"]}`, `{"a":["root"]}`, `{"a":"root"}`, false},
 		{"denied name case-insensitive", ``, `{"a":["root"]}`, `{"A":"root"}`, false},
+		{"denied comma element", ``, `{"a":["root"]}`, `{"a":"x, root"}`, false},
+		{"denied glob comma element", ``, `{"a":["ro*"]}`, `{"a":["x,root"]}`, false},
+		{"denied long s name", ``, `{"policies":["root"]}`, `{"policie\u017f":["root"]}`, false},
 	}
 	for _, c := range cases {
 		entry := `"capabilities":["update"]`

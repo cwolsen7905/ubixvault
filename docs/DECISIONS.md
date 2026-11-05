@@ -686,9 +686,16 @@ the value rules:
    glob beats shorter), merged across policies for that same path as Vault
    merges them. So a broader unrestricted grant can't lift a narrower path's
    limits, and policies without the new fields behave exactly as before.
-2. **List values.** Every element of a list value must be allowed, and any
-   denied element refuses the request. A comma-separated string is one value,
-   compared whole, so `"read,root"` can't pass as `"read"`.
+2. **List values and comma strings.** Every element of a list value must be
+   allowed, and any denied element refuses the request. Handlers may split a
+   comma-separated string into a list (role `policies` are), so such a string is
+   allowed only if it equals a listed value exactly — globs never apply to it,
+   or `"neptune-*"` would pass `"neptune-x,root"` — and is denied if the whole
+   string or any element is denied.
+3. **Parameter names** are matched the way `encoding/json` matches a body key to
+   a struct field (Unicode simple folding, as `bytes.EqualFold`), not just
+   lower-cased, so a key such as `policieſ` (long s), which the handler decodes as
+   `policies`, is limited as `policies`.
 
 **Why:** Neptune's superusers need to create the Kubernetes/JWT login roles
 their apps use without being able to give a role more than read access. Without

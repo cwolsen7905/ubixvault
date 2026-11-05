@@ -49,6 +49,9 @@ func TestAllowedParametersLimitRolePolicies(t *testing.T) {
 		// Names match case-insensitively, so case can't dodge the limit.
 		{`{"POLICIES":["root"]}`, http.StatusForbidden},
 		{`{"policies":["neptune-prod-read"],"Token_Policies":["root"]}`, http.StatusForbidden},
+		// Unicode folding the JSON decoder applies (long s) can't dodge it.
+		{`{"policie\u017f":["root"]}`, http.StatusForbidden},
+		{"{\"token_policie\u017f\":[\"root\"]}", http.StatusForbidden},
 		// A body the check cannot read is refused, not waved through.
 		{`["policies","root"]`, http.StatusForbidden},
 		{`{"policies":["root"]`, http.StatusForbidden},
@@ -163,4 +166,23 @@ func TestParameterPolicyRoundTrips(t *testing.T) {
 func quoteJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// A glob value must not pass a comma string the handler splits into several
+// policies (Kelpie review of !62).
+func TestGlobDoesNotPassCommaString(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "globby", `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],
+	  "allowed_parameters":{"policies":["neptune-*"],"*":[]}}}}`)
+	setPolicy(t, h, root, "neptune-x", `{"path":{"secret/*":{"capabilities":["read"]}}}`)
+	tok := tokenWith(t, h, root, `{"policies":["globby"],"ttl":"1h"}`)
+	for body, want := range map[string]int{
+		`{"policies":"neptune-x,admin"}`:   http.StatusForbidden,
+		`{"policies":["neptune-x,admin"]}`: http.StatusForbidden,
+		`{"policies":"neptune-x"}`:         http.StatusNoContent,
+	} {
+		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
+			t.Errorf("%s = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
+		}
+	}
 }

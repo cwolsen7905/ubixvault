@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // validateParameters checks an allowed_parameters or denied_parameters map
@@ -27,7 +28,8 @@ func validateParameters(field string, params map[string][]any) error {
 
 // Parameters are the parameter limits that govern one write request: those of
 // the most specific rule granting the capability, merged across policies that
-// share that path. Keys are lower-cased. A nil *Parameters limits nothing.
+// share that path. Keys are folded with [foldName]. A nil *Parameters limits
+// nothing.
 type Parameters struct {
 	allowed map[string][]any
 	denied  map[string][]any
@@ -91,8 +93,8 @@ func moreSpecific(a, b string) bool {
 	return len(a) > len(b)
 }
 
-// mergeParameters folds src into dst (lower-casing keys) the way Vault merges
-// one path's limits across policies.
+// mergeParameters folds src into dst (folding keys with [foldName]) the way
+// Vault merges one path's limits across policies.
 func mergeParameters(dst, src map[string][]any) map[string][]any {
 	if len(src) == 0 {
 		return dst
@@ -101,7 +103,7 @@ func mergeParameters(dst, src map[string][]any) map[string][]any {
 		dst = make(map[string][]any, len(src))
 	}
 	for key, values := range src {
-		key = strings.ToLower(key)
+		key = foldName(key)
 		existing, ok := dst[key]
 		if len(values) == 0 || (ok && len(existing) == 0) {
 			dst[key] = []any{}
@@ -124,9 +126,16 @@ func mergeParameters(dst, src map[string][]any) map[string][]any {
 //     any value when its list is empty, even when "*" is present.
 //
 // A list value is allowed only if every element is, and denied if any element
-// is. A comma-separated string is a single value: it is compared whole. String
-// values in the policy may glob with a leading or trailing "*", as in Vault.
-// Parameter names match case-insensitively.
+// is. String values in the policy may glob with a leading or trailing "*", as
+// in Vault.
+//
+// A string containing a comma may be split into a list by the handler (role
+// policies are), so the check must not judge it differently: it is allowed
+// only if it equals a listed value exactly — globs never apply to it — and is
+// denied if the whole string or any comma-separated element is denied.
+//
+// Parameter names match the way the handler's JSON decoder matches them (see
+// [foldName]), so a name the decoder treats as "policies" is limited as one.
 func (p *Parameters) Allows(data map[string]any) bool {
 	if p == nil || len(data) == 0 {
 		return true
@@ -136,7 +145,7 @@ func (p *Parameters) Allows(data map[string]any) bool {
 			return false
 		}
 		for name, value := range data {
-			if list, ok := p.denied[strings.ToLower(name)]; ok && anyListed(value, list) {
+			if list, ok := p.denied[foldName(name)]; ok && anyListed(value, list) {
 				return false
 			}
 		}
@@ -146,7 +155,7 @@ func (p *Parameters) Allows(data map[string]any) bool {
 	}
 	_, allowAll := p.allowed["*"]
 	for name, value := range data {
-		list, ok := p.allowed[strings.ToLower(name)]
+		list, ok := p.allowed[foldName(name)]
 		if !ok {
 			if !allowAll {
 				return false
@@ -168,13 +177,63 @@ func allListed(value any, list []any) bool {
 	}
 	if elems, ok := value.([]any); ok {
 		for _, e := range elems {
-			if !inList(e, list) {
+			if !allowedScalar(e, list) {
 				return false
 			}
 		}
 		return true
 	}
+	return allowedScalar(value, list)
+}
+
+// allowedScalar reports whether one scalar is listed. A string with a comma
+// must equal a listed string exactly (see [Parameters.Allows]).
+func allowedScalar(value any, list []any) bool {
+	if s, ok := value.(string); ok && strings.Contains(s, ",") {
+		for _, item := range list {
+			if is, ok := item.(string); ok && is == s {
+				return true
+			}
+		}
+		return false
+	}
 	return inList(value, list)
+}
+
+// deniedScalar reports whether one scalar is denied: the value itself, or for
+// a string with commas, any of its comma-separated elements.
+func deniedScalar(value any, list []any) bool {
+	if inList(value, list) {
+		return true
+	}
+	if s, ok := value.(string); ok && strings.Contains(s, ",") {
+		for _, part := range strings.Split(s, ",") {
+			if inList(strings.TrimSpace(part), list) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// foldName canonicalizes a parameter name so that two names are equal exactly
+// when bytes.EqualFold reports them equal, which is how encoding/json matches
+// a body key to a struct field: each rune is replaced by the smallest rune in
+// its Unicode simple-folding orbit. So "POLICIES", "policies" and "policieſ"
+// (long s) all fold to the same key.
+func foldName(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		low := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < low {
+				low = f
+			}
+		}
+		b.WriteRune(low)
+	}
+	return b.String()
 }
 
 // anyListed reports whether value is denied by list: always for an empty list;
@@ -185,13 +244,13 @@ func anyListed(value any, list []any) bool {
 	}
 	if elems, ok := value.([]any); ok {
 		for _, e := range elems {
-			if inList(e, list) {
+			if deniedScalar(e, list) {
 				return true
 			}
 		}
 		return false
 	}
-	return inList(value, list)
+	return deniedScalar(value, list)
 }
 
 // inList reports whether a scalar value equals an entry of list. Strings
