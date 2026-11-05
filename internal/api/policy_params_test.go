@@ -104,6 +104,9 @@ func TestDeniedParametersWin(t *testing.T) {
 		`{"policies":["legacy"]}`:                             http.StatusForbidden,
 		`{"policies":["neptune-prod-read","legacy"]}`:         http.StatusForbidden,
 		`{"policies":["neptune-prod-read"],"token_ttl":"1h"}`: http.StatusForbidden,
+		// The handler trims names, so padding can't carry a denied one through.
+		`{"policies":[" legacy"]}`:                  http.StatusForbidden,
+		`{"policies":"neptune-prod-read, legacy "}`: http.StatusForbidden,
 	} {
 		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
 			t.Errorf("%s = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
@@ -180,6 +183,25 @@ func TestGlobDoesNotPassCommaString(t *testing.T) {
 		`{"policies":"neptune-x,admin"}`:   http.StatusForbidden,
 		`{"policies":["neptune-x,admin"]}`: http.StatusForbidden,
 		`{"policies":"neptune-x"}`:         http.StatusNoContent,
+	} {
+		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
+			t.Errorf("%s = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
+		}
+	}
+}
+
+// With denied_parameters alone, padding a denied value must not get it past
+// the check: the handler trims it back (Kelpie review of !62, round 2).
+func TestDeniedValueWithWhitespace(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "p", `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],
+	  "denied_parameters":{"policies":["legacy"]}}}}`)
+	tok := tokenWith(t, h, root, `{"policies":["p"],"ttl":"1h"}`)
+	for body, want := range map[string]int{
+		`{"policies":["app"]}`:       http.StatusNoContent,
+		`{"policies":[" legacy"]}`:   http.StatusForbidden,
+		`{"policies":"legacy "}`:     http.StatusForbidden,
+		`{"policies":"app, legacy"}`: http.StatusForbidden,
 	} {
 		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
 			t.Errorf("%s = %d %s, want %d", body, rec.Code, rec.Body.String(), want)

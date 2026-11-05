@@ -200,17 +200,25 @@ func allowedScalar(value any, list []any) bool {
 	return inList(value, list)
 }
 
-// deniedScalar reports whether one scalar is denied: the value itself, or for
-// a string with commas, any of its comma-separated elements.
+// deniedScalar reports whether one scalar is denied. A string is judged both
+// as sent and as a handler may normalize it — trimmed, and split at commas
+// into trimmed elements — so whitespace or commas cannot carry a denied value
+// past the check. (On the allowed side, those forms are simply not listed, so
+// they are refused: no normalization is needed there.)
 func deniedScalar(value any, list []any) bool {
 	if inList(value, list) {
 		return true
 	}
-	if s, ok := value.(string); ok && strings.Contains(s, ",") {
-		for _, part := range strings.Split(s, ",") {
-			if inList(strings.TrimSpace(part), list) {
-				return true
-			}
+	s, ok := value.(string)
+	if !ok {
+		return false
+	}
+	if inList(strings.TrimSpace(s), list) {
+		return true
+	}
+	for _, part := range strings.Split(s, ",") {
+		if inList(strings.TrimSpace(part), list) {
+			return true
 		}
 	}
 	return false

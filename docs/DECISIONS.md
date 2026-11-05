@@ -691,7 +691,8 @@ the value rules:
    comma-separated string into a list (role `policies` are), so such a string is
    allowed only if it equals a listed value exactly — globs never apply to it,
    or `"neptune-*"` would pass `"neptune-x,root"` — and is denied if the whole
-   string or any element is denied.
+   string or any element is denied. Denied values are also checked with
+   surrounding whitespace trimmed, as handlers trim them.
 3. **Parameter names** are matched the way `encoding/json` matches a body key to
    a struct field (Unicode simple folding, as `bytes.EqualFold`), not just
    lower-cased, so a key such as `policieſ` (long s), which the handler decodes as
@@ -711,7 +712,10 @@ paths at once.
 
 **Trade-off / follow-up:** `required_parameters` and limits on `GET` query
 parameters aren't implemented (the former is still refused at policy write).
-HCL parameter values are strings and booleans; numbers need the JSON form. A
+HCL parameter values are strings and booleans; numbers need the JSON form. Denied
+values are compared as sent, trimmed, and split at commas; other equivalent
+spellings are not normalized (a TTL denied as `"1h"` can be sent as `3600`), so
+for such fields use `allowed_parameters` instead. A
 value glob such as `"neptune-*"` also matches `"neptune-vault-prod-superusers"`;
 write exact values when a prefix could cover a privileged name. Only JWT role
 writes merge partial updates so far; the other auth methods still replace the

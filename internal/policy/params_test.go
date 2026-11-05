@@ -66,6 +66,9 @@ func TestParametersAllows(t *testing.T) {
 		{"denied wins over allowed", `{"a":["root"]}`, `{"a":["root"]}`, `{"a":"root"}`, false},
 		{"denied name case-insensitive", ``, `{"a":["root"]}`, `{"A":"root"}`, false},
 		{"denied comma element", ``, `{"a":["root"]}`, `{"a":"x, root"}`, false},
+		{"denied with spaces", ``, `{"a":["legacy"]}`, `{"a":" legacy "}`, false},
+		{"denied with spaces in list", ``, `{"a":["legacy"]}`, `{"a":[" legacy"]}`, false},
+		{"allowed with spaces is refused", `{"a":["x"]}`, ``, `{"a":[" x"]}`, false},
 		{"denied glob comma element", ``, `{"a":["ro*"]}`, `{"a":["x,root"]}`, false},
 		{"denied long s name", ``, `{"policies":["root"]}`, `{"policie\u017f":["root"]}`, false},
 	}
