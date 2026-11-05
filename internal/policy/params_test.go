@@ -192,3 +192,27 @@ path "auth/jwt/role/*" {
 		}
 	}
 }
+
+// Capabilities must agree with Allows on every path: it reports what the
+// permission check actually grants.
+func TestCapabilitiesMatchesAllows(t *testing.T) {
+	acl := NewACL(
+		mustParse(t, `{"path":{"a/*":{"capabilities":["read","list"]},"a/b":{"capabilities":["update"]},"a/x/*":{"capabilities":["deny"]},"c":{"capabilities":["sudo","create"]}}}`),
+		mustParse(t, `{"path":{"a/b":{"capabilities":["delete"]},"c*":{"capabilities":["read"]}}}`),
+	)
+	all := []Capability{Create, Read, Update, Delete, List, Sudo}
+	for _, path := range []string{"a/b", "a/c", "a/x/y", "a", "c", "cc", "zzz", "a/"} {
+		got := map[string]bool{}
+		for _, c := range acl.Capabilities(path) {
+			got[c] = true
+		}
+		for _, c := range all {
+			if acl.Allows(path, c) != got[string(c)] {
+				t.Errorf("%s: Allows(%s)=%v but Capabilities=%v", path, c, acl.Allows(path, c), acl.Capabilities(path))
+			}
+		}
+		if anyAllowed := len(got) > 0 && !got["deny"]; !anyAllowed && !got["deny"] {
+			t.Errorf("%s: empty result, want [deny]", path)
+		}
+	}
+}

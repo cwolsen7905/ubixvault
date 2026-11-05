@@ -8,6 +8,16 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ### Added
 
+- **`sys/capabilities-self` and `sys/capabilities`**, as in Vault: what a
+  token may do on given paths (`{"paths": [...]}`, or the older `path`). Every
+  token may ask about itself; asking about another token (`"token"`) needs a
+  grant on `sys/capabilities`. Answers match the permission check exactly:
+  capabilities merged across the token's policies (identity and templated ones
+  included), `["deny"]` when a rule denies or nothing is granted, `["root"]`
+  for root, and the built-in grants for the token's own cubbyhole and
+  `auth/token/*-self`. Parameter limits are not shown, as in Vault. Works with
+  `vault token capabilities` and Vault's client libraries.
+
 - **`allowed_parameters` and `denied_parameters` in ACL policies**, in JSON and
   HCL, with Vault's semantics (ADR D-024). They limit the body parameters of a
   write (`POST`/`PUT`): an empty list allows any value; when `allowed_parameters`

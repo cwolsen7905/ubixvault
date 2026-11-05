@@ -223,6 +223,9 @@ func NewHandler(c *core.Core, opts ...Option) *Handler {
 
 	// ACL policies (governed by the same ACL check; root or an explicit grant).
 	handleWrite(mux, "/v1/sys/policies/acl/{name}", h.authenticate(h.policyWrite))
+	// What a token may do on given paths (Vault's sys/capabilities*).
+	handleWrite(mux, "/v1/sys/capabilities-self", h.authenticate(h.capabilitiesSelf))
+	handleWrite(mux, "/v1/sys/capabilities", h.authenticate(h.capabilities))
 	mux.HandleFunc("GET /v1/sys/policies/acl/{name}", h.authenticate(h.policyRead))
 	mux.HandleFunc("DELETE /v1/sys/policies/acl/{name}", h.authenticate(h.policyDelete))
 	mux.HandleFunc("LIST /v1/sys/policies/acl", h.authenticate(h.policyList))

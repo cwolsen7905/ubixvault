@@ -252,6 +252,33 @@ func (a *ACL) Allows(path string, capability Capability) bool {
 	return allowed
 }
 
+// Capabilities lists what the ACL grants on path, sorted, the way Vault's
+// sys/capabilities-self reports it: ["deny"] when a matching rule denies or
+// nothing is granted. Parameter limits are not reflected (as in Vault).
+func (a *ACL) Capabilities(path string) []string {
+	granted := map[Capability]bool{}
+	for _, r := range a.rules {
+		if !matchPath(r.Path, path) {
+			continue
+		}
+		if hasCapability(r.Capabilities, Deny) {
+			return []string{string(Deny)}
+		}
+		for _, c := range r.Capabilities {
+			granted[c] = true
+		}
+	}
+	if len(granted) == 0 {
+		return []string{string(Deny)}
+	}
+	out := make([]string, 0, len(granted))
+	for c := range granted {
+		out = append(out, string(c))
+	}
+	sort.Strings(out)
+	return out
+}
+
 func matchPath(pattern, path string) bool {
 	if strings.HasSuffix(pattern, "*") {
 		return strings.HasPrefix(path, strings.TrimSuffix(pattern, "*"))
