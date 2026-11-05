@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
@@ -52,53 +53,60 @@ func (h *Handler) jwtConfigure(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// errTTLOverMax refuses a role whose token_ttl would exceed its token_max_ttl.
+var errTTLOverMax = errors.New("token_ttl must not exceed token_max_ttl")
+
 func (h *Handler) jwtWriteRole(w http.ResponseWriter, r *http.Request) {
 	var req jwtRoleRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	name := r.PathValue("name")
-	role := jwtauth.Role{}
-	switch existing, err := h.jwtauth.ReadRole(r.Context(), name); {
-	case err == nil:
-		role = *existing
-	case !errors.Is(err, jwtauth.ErrRoleNotFound):
-		writeJWTError(w, err)
-		return
-	}
-
-	if req.BoundAudiences != nil {
-		role.BoundAudiences = *req.BoundAudiences
-	}
-	if req.BoundClaims != nil {
-		role.BoundClaims = *req.BoundClaims
-	}
-	switch {
-	case req.TokenPolicies != nil:
-		role.Policies = *req.TokenPolicies
-	case req.Policies != nil:
-		role.Policies = *req.Policies
-	}
+	// Parse the durations before taking the role lock.
+	var ttl, maxTTL *time.Duration
 	if req.TokenTTL != nil {
-		ttl, ok := parseOptionalDuration(w, string(*req.TokenTTL), "token_ttl")
+		d, ok := parseOptionalDuration(w, string(*req.TokenTTL), "token_ttl")
 		if !ok {
 			return
 		}
-		role.TokenTTL = ttl
+		ttl = &d
 	}
 	if req.TokenMaxTTL != nil {
-		maxTTL, ok := parseOptionalDuration(w, string(*req.TokenMaxTTL), "token_max_ttl")
+		d, ok := parseOptionalDuration(w, string(*req.TokenMaxTTL), "token_max_ttl")
 		if !ok {
 			return
 		}
-		role.TokenMaxTTL = maxTTL
-	}
-	if role.TokenMaxTTL > 0 && role.TokenTTL > role.TokenMaxTTL {
-		writeError(w, http.StatusBadRequest, "token_ttl must not exceed token_max_ttl")
-		return
+		maxTTL = &d
 	}
 
-	if err := h.jwtauth.WriteRole(r.Context(), name, role); err != nil {
+	err := h.jwtauth.UpdateRole(r.Context(), r.PathValue("name"), func(role *jwtauth.Role) error {
+		if req.BoundAudiences != nil {
+			role.BoundAudiences = *req.BoundAudiences
+		}
+		if req.BoundClaims != nil {
+			role.BoundClaims = *req.BoundClaims
+		}
+		switch {
+		case req.TokenPolicies != nil:
+			role.Policies = *req.TokenPolicies
+		case req.Policies != nil:
+			role.Policies = *req.Policies
+		}
+		if ttl != nil {
+			role.TokenTTL = *ttl
+		}
+		if maxTTL != nil {
+			role.TokenMaxTTL = *maxTTL
+		}
+		if role.TokenMaxTTL > 0 && role.TokenTTL > role.TokenMaxTTL {
+			return errTTLOverMax
+		}
+		return nil
+	})
+	if errors.Is(err, errTTLOverMax) {
+		writeError(w, http.StatusBadRequest, errTTLOverMax.Error())
+		return
+	}
+	if err != nil {
 		writeJWTError(w, err)
 		return
 	}
