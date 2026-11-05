@@ -198,13 +198,15 @@ func TestRequiredParameters(t *testing.T) {
 	p := mustParse(t, `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],"required_parameters":["bound_claims"]}}}`)
 	params := NewACL(p).Parameters("auth/jwt/role/a", Create, Update)
 	for data, want := range map[string]bool{
-		`{}`:                              false,
-		`{"policies":["x"]}`:              false,
-		`{"bound_claims":{"sub":"x"}}`:    true,
-		`{"BOUND_CLAIMS":{}}`:             true,
-		`{"bound_claim\u017f":{}}`:        true,  // decodes as bound_claims, so it is present
-		`{"bound_claims":null,"other":1}`: false, // null reads as "not sent"
-		`{"bound_claims":{}}`:             true,  // presence only, as in Vault
+		`{}`:                                      false,
+		`{"policies":["x"]}`:                      false,
+		`{"bound_claims":{"sub":"x"}}`:            true,
+		`{"BOUND_CLAIMS":{}}`:                     true,
+		`{"bound_claim\u017f":{}}`:                true,  // decodes as bound_claims, so it is present
+		`{"bound_claims":null,"other":1}`:         false, // null reads as "not sent"
+		`{"bound_claims":{}}`:                     true,  // presence only, as in Vault
+		`{"bound_claims":{},"BOUND_CLAIMS":null}`: false, // decoder: the later null wins
+		`{"BOUND_CLAIMS":null,"bound_claims":{}}`: false, // refused either way round
 	} {
 		if got := params.Allows(body(t, data)); got != want {
 			t.Errorf("Allows(%s) = %v, want %v", data, got, want)

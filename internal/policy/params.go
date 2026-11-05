@@ -165,12 +165,21 @@ func (p *Parameters) Allows(data map[string]any) bool {
 		return true
 	}
 	if len(p.required) > 0 {
+		// Handlers read null as "not sent", and the JSON decoder applies keys
+		// that fold to the same field in order, so {"a":{},"A":null} ends up
+		// unset. A name counts as sent only if no key folding to it is null.
 		present := make(map[string]bool, len(data))
+		nulled := make(map[string]bool)
 		for name, value := range data {
+			key := foldName(name)
 			if value == nil {
-				continue // handlers read null as "not sent", so it does not count
+				nulled[key] = true
+				continue
 			}
-			present[foldName(name)] = true
+			present[key] = true
+		}
+		for key := range nulled {
+			delete(present, key)
 		}
 		for name := range p.required {
 			if !present[name] {

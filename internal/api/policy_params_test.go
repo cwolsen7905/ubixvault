@@ -223,6 +223,7 @@ func TestRequiredParameters(t *testing.T) {
 		`{"policies":["app"],"bound_claims":{"sub":"a"}}`:     http.StatusNoContent,
 		`{"bound_claims":{"sub":"b"},"token_policies":"app"}`: http.StatusNoContent,
 		`{"policies":["app"],"bound_claims":null}`:            http.StatusForbidden,
+		`{"bound_claims":{"sub":"c"},"BOUND_CLAIMS":null}`:    http.StatusForbidden,
 	} {
 		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
 			t.Errorf("%q = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
