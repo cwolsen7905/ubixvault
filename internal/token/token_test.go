@@ -493,3 +493,17 @@ func TestCreateForLoginRoleMaxTTL(t *testing.T) {
 		t.Fatalf("default ttl under a 30m max: ExpiresAt=%v, want %v", def.ExpiresAt, want)
 	}
 }
+
+// A login never yields a root token, even from a role stored before role
+// writes refused the root policy.
+func TestCreateForLoginRefusesRoot(t *testing.T) {
+	st, _ := newStore()
+	for _, pols := range [][]string{{"root"}, {"app", "root"}, {"Root"}, {" root "}} {
+		if _, err := st.CreateForLogin(context.Background(), pols, 0, 0, "jwt", "sa", nil); !errors.Is(err, ErrRootPolicy) {
+			t.Fatalf("CreateForLogin(%q) err = %v, want ErrRootPolicy", pols, err)
+		}
+	}
+	if _, err := st.CreateForLogin(context.Background(), []string{"app"}, 0, 0, "jwt", "sa", nil); err != nil {
+		t.Fatalf("CreateForLogin(app) = %v", err)
+	}
+}

@@ -6,6 +6,18 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- **Root tokens now come only from initialization, generate-root, or another
+  root token.** An auth method role could list the `root` policy, and a login
+  through it got a root token, so anyone allowed to write roles was effectively
+  root. Every auth method (JWT, Kubernetes, AppRole, userpass, cert, LDAP groups)
+  now refuses `root` when a role is written (`400`) and again at login, which
+  also covers roles stored before this change. `auth/token/create` with `root`
+  needs a root parent; `sudo` is no longer enough. Writing an ACL policy named
+  `root` is refused. All as in Vault. **If a role already lists `root`, logins
+  through it now fail: remove `root` from it.**
+
 ### Changed
 
 - **Chart 0.1.22: image and metadata now point at `ubixsys`.** `image.repository`

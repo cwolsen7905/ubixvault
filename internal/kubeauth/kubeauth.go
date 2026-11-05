@@ -156,6 +156,9 @@ func (m *Method) WriteRole(ctx context.Context, name string, role Role) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	if token.HasRootPolicy(role.Policies) {
+		return token.ErrRootPolicy
+	}
 	blob, err := json.Marshal(role)
 	if err != nil {
 		return fmt.Errorf("kubeauth: marshal role: %w", err)

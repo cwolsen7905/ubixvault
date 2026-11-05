@@ -6,6 +6,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/jwtauth"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 type jwtConfigRequest struct {
@@ -131,6 +132,8 @@ func writeJWTError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, jwtauth.ErrRoleNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, token.ErrRootPolicy):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, jwtauth.ErrInvalidName), errors.Is(err, jwtauth.ErrInvalidConfig):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:

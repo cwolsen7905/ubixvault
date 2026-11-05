@@ -144,6 +144,9 @@ func (m *Method) WriteGroup(ctx context.Context, name string, policies []string)
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	if token.HasRootPolicy(policies) {
+		return token.ErrRootPolicy
+	}
 	blob, err := json.Marshal(policies)
 	if err != nil {
 		return fmt.Errorf("ldapauth: marshal group: %w", err)

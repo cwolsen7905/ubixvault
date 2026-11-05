@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -24,6 +25,18 @@ import (
 
 // RootPolicy is the policy name that grants unrestricted access.
 const RootPolicy = "root"
+
+// HasRootPolicy reports whether policies name the root policy. The comparison
+// ignores case and surrounding space, so a near-miss such as "Root" is refused
+// with it rather than stored as a confusing look-alike.
+func HasRootPolicy(policies []string) bool {
+	for _, p := range policies {
+		if strings.EqualFold(strings.TrimSpace(p), RootPolicy) {
+			return true
+		}
+	}
+	return false
+}
 
 // displayPrefix makes tokens recognizable; it is part of the token value.
 const displayPrefix = "uv."
@@ -43,6 +56,11 @@ const idBytes = 24
 var (
 	ErrTokenNotFound = errors.New("token: not found")
 	ErrTokenExpired  = errors.New("token: expired")
+	// ErrRootPolicy is returned when an auth method would grant the root
+	// policy. Root tokens come only from initialization and generate-root (a
+	// quorum of unseal shares), or from another root token — as in Vault, whose
+	// auth methods "cannot create root tokens".
+	ErrRootPolicy = errors.New("auth methods cannot grant the root policy")
 )
 
 // DefaultTTL is applied to tokens created without an explicit TTL. Root tokens
@@ -228,6 +246,10 @@ func (st *Store) CreateWithTTLAndAlias(ctx context.Context, policies []string, t
 // its expiry and any renewal stop there. It never raises the ceiling — the
 // system maximum still applies (see [Store.MaxExpiry]).
 func (st *Store) CreateForLogin(ctx context.Context, policies []string, ttl, maxTTL time.Duration, mountType, name string, groups []string) (*Token, error) {
+	// Role writes refuse root too; this catches roles stored before they did.
+	if HasRootPolicy(policies) {
+		return nil, ErrRootPolicy
+	}
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}

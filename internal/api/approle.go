@@ -7,6 +7,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/approle"
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 type approleRoleRequest struct {
@@ -131,6 +132,8 @@ func writeAppRoleError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, approle.ErrRoleNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, token.ErrRootPolicy):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, approle.ErrInvalidName), errors.Is(err, approle.ErrInvalidConfig):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:

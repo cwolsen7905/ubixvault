@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 	"github.com/cwolsen7905/ubixvault/internal/userpass"
 )
 
@@ -87,6 +88,8 @@ func writeUserpassError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, userpass.ErrUserNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, token.ErrRootPolicy):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, userpass.ErrInvalidName), errors.Is(err, userpass.ErrInvalidConfig):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
