@@ -26,11 +26,12 @@ func validateParameters(field string, params map[string][]any) error {
 	return nil
 }
 
-// validateRequired checks a required_parameters list: non-empty names, and no
-// "*" (Vault gives it no meaning there, so it is more likely a mistake).
+// validateRequired checks a required_parameters list: non-empty names without
+// surrounding space (a padded name can never match a body key, so it would
+// lock the path), and no "*" (Vault gives it no meaning there).
 func validateRequired(names []string) error {
 	for _, n := range names {
-		if strings.TrimSpace(n) == "" || n == "*" {
+		if n == "" || n == "*" || strings.TrimSpace(n) != n {
 			return fmt.Errorf("%w: required_parameters: %q is not a parameter name", ErrMalformedPolicy, n)
 		}
 	}
