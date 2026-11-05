@@ -145,6 +145,13 @@ func (h *Handler) tokenCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only a root token may create a root token, as in Vault. Without this a
+	// sudo grant on auth/token/create would be a path to root.
+	if token.HasRootPolicy(req.Policies) && !parent.IsRoot() {
+		writeError(w, http.StatusBadRequest, "root tokens may not be created without parent token being root")
+		return
+	}
+
 	var tok *token.Token
 	switch {
 	case !sudo:
@@ -298,7 +305,7 @@ func writePolicyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, policy.ErrPolicyNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, policy.ErrInvalidName):
+	case errors.Is(err, policy.ErrInvalidName), errors.Is(err, policy.ErrReservedName):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)

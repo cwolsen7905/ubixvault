@@ -7,6 +7,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 type k8sConfigRequest struct {
@@ -140,7 +141,8 @@ func writeKubeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, kubeauth.ErrRoleNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, kubeauth.ErrNotConfigured), errors.Is(err, kubeauth.ErrInvalidName):
+	case errors.Is(err, kubeauth.ErrNotConfigured), errors.Is(err, kubeauth.ErrInvalidName),
+		errors.Is(err, token.ErrRootPolicy):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeInternal(w, err)

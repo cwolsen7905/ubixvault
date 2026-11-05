@@ -6,6 +6,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/certauth"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 type certRoleRequest struct {
@@ -97,6 +98,8 @@ func writeCertError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, certauth.ErrCertNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, token.ErrRootPolicy):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, certauth.ErrInvalidName), errors.Is(err, certauth.ErrInvalidConfig):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:

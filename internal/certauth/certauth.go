@@ -73,6 +73,9 @@ func (m *Method) WriteCert(ctx context.Context, name string, role CertRole) erro
 	if len(role.Policies) == 0 {
 		return ErrInvalidConfig
 	}
+	if token.HasRootPolicy(role.Policies) {
+		return token.ErrRootPolicy
+	}
 	if _, err := parsePEMCert(role.Certificate); err != nil {
 		return ErrInvalidConfig
 	}

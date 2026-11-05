@@ -92,6 +92,9 @@ func (m *Method) WriteUser(ctx context.Context, username, password string, polic
 	if password == "" || len(policies) == 0 {
 		return ErrInvalidConfig
 	}
+	if token.HasRootPolicy(policies) {
+		return token.ErrRootPolicy
+	}
 	salt := make([]byte, saltSize)
 	if _, err := rand.Read(salt); err != nil {
 		return fmt.Errorf("userpass: salt: %w", err)

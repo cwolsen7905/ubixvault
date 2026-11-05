@@ -49,8 +49,12 @@ const storePrefix = "sys/policy/"
 
 // Errors.
 var (
-	ErrPolicyNotFound    = errors.New("policy: not found")
-	ErrInvalidName       = errors.New("policy: invalid name")
+	ErrPolicyNotFound = errors.New("policy: not found")
+	ErrInvalidName    = errors.New("policy: invalid name")
+	// ErrReservedName is returned when writing a policy named "root". That name
+	// means unrestricted access on a token; an ACL policy using it would only
+	// mislead. Vault refuses it too.
+	ErrReservedName      = errors.New("policy: the name \"root\" is reserved")
 	ErrUnknownCapability = errors.New("policy: unknown capability")
 	ErrMalformedPolicy   = errors.New("policy: malformed document")
 )
@@ -261,6 +265,9 @@ func NewStore(s Storage) *Store { return &Store{store: s} }
 func (s *Store) Set(ctx context.Context, p *Policy) error {
 	if !validName(p.Name) {
 		return ErrInvalidName
+	}
+	if strings.EqualFold(strings.TrimSpace(p.Name), "root") {
+		return ErrReservedName
 	}
 	doc, err := p.Document()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/ldapauth"
+	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
 type ldapConfigRequest struct {
@@ -151,6 +152,8 @@ func writeLDAPError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ldapauth.ErrDenied):
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, ldapauth.ErrNotConfigured):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, token.ErrRootPolicy):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ldapauth.ErrInvalidName), errors.Is(err, ldapauth.ErrInvalidConfig),
 		errors.Is(err, ldapauth.ErrInvalidCertificate), errors.Is(err, ldapauth.ErrCertificateWithInsecureTLS):
