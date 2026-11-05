@@ -185,6 +185,7 @@ path "auth/jwt/role/*" {
 		`path "x" { capabilities = ["update"] min_wrapping_ttl = "1h" }`,
 		`path "x" { capabilities = ["update"] required_parameters = [1] }`,
 		`path "x" { capabilities = ["update"] required_parameters = [" bound_claims"] }`,
+		`path "x" { capabilities = ["update"] required_parameters = ["*"] }`,
 		`path "x" { capabilities = ["update"] required_parameters = ["a",,"b"] }`,
 		`path "x" { capabilities = ["update"] allowed_parameters = { "a" = ["x",,"y"] } }`,
 		`{"path":{"x":{"capabilities":["update"],"required_parameters":["bound_claims "]}}}`,

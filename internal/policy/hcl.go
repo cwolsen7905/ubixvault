@@ -280,6 +280,9 @@ func (p *tokenParser) pathBody(pattern string) (Rule, error) {
 			if rule.RequiredParameters, err = p.stringList(); err != nil {
 				return Rule{}, err
 			}
+			if err := validateRequired(rule.RequiredParameters); err != nil {
+				return Rule{}, err
+			}
 		default:
 			return Rule{}, wrapMalformed(fmt.Errorf("unsupported attribute %q", key))
 		}
