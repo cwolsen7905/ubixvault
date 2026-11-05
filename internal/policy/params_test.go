@@ -202,8 +202,9 @@ func TestRequiredParameters(t *testing.T) {
 		`{"policies":["x"]}`:              false,
 		`{"bound_claims":{"sub":"x"}}`:    true,
 		`{"BOUND_CLAIMS":{}}`:             true,
-		`{"bound_claim\u017f":{}}`:        true, // decodes as bound_claims, so it is present
-		`{"bound_claims":null,"other":1}`: true,
+		`{"bound_claim\u017f":{}}`:        true,  // decodes as bound_claims, so it is present
+		`{"bound_claims":null,"other":1}`: false, // null reads as "not sent"
+		`{"bound_claims":{}}`:             true,  // presence only, as in Vault
 	} {
 		if got := params.Allows(body(t, data)); got != want {
 			t.Errorf("Allows(%s) = %v, want %v", data, got, want)

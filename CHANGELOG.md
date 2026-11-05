@@ -16,8 +16,9 @@ All notable changes to uBixVault are documented here. The format is based on
   allowed value exactly (globs don't apply to it) and is refused if any element
   is denied; denial wins; names match case-insensitively, folded as the JSON
   decoder folds them; string values may glob with a leading or trailing `*`;
-  `required_parameters` names parameters a write must send (merged across
-  policies as a union). A refused request gets `403 permission denied`. The limits come from the most specific matching path, so a broader
+  `required_parameters` names parameters a write must send with a non-null
+  value (merged across policies as a union; presence only, as in Vault, so an
+  empty value such as `{}` passes). A refused request gets `403 permission denied`. The limits come from the most specific matching path, so a broader
   grant such as `auth/*` doesn't lift limits set on `auth/jwt/role/*`.
   Policies without these fields behave as before. Not supported: limits on
   `GET` query parameters.

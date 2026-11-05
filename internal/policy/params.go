@@ -136,9 +136,11 @@ func mergeParameters(dst, src map[string][]any) map[string][]any {
 // Allows reports whether a request with the given body parameters satisfies
 // the limits, following Vault:
 //
-//   - required_parameters: each listed name must be present (any value),
-//     merged across policies as a union. This is checked first, so it also
-//     refuses a request without parameters.
+//   - required_parameters: each listed name must be sent with a non-null
+//     value, merged across policies as a union. This is checked first, so it
+//     also refuses a request without parameters. It guarantees presence only:
+//     an empty value such as {} or "" satisfies it, as in Vault. (null does
+//     not, because handlers treat null as "not sent".)
 //   - Otherwise a request without parameters is allowed.
 //   - denied_parameters: a "*" key refuses any request with parameters; a
 //     named parameter is refused if its value is listed, or always when its
@@ -164,7 +166,10 @@ func (p *Parameters) Allows(data map[string]any) bool {
 	}
 	if len(p.required) > 0 {
 		present := make(map[string]bool, len(data))
-		for name := range data {
+		for name, value := range data {
+			if value == nil {
+				continue // handlers read null as "not sent", so it does not count
+			}
 			present[foldName(name)] = true
 		}
 		for name := range p.required {

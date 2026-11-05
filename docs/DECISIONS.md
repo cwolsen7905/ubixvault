@@ -712,8 +712,11 @@ paths at once.
 
 **Trade-off / follow-up:** limits on `GET` query parameters aren't
 implemented. `required_parameters` was added after the first cut, with Vault's
-semantics: each name must be present (any value), checked before the
-"no parameters" shortcut, and merged across policies as a union.
+semantics: each name must be present, checked before the "no parameters"
+shortcut, and merged across policies as a union. A JSON `null` does not count
+as present, because handlers read it as "not sent". It checks presence only: an
+empty value (`{}`, `""`) passes, so it cannot by itself guarantee, say, that a
+JWT role binds any claims.
 HCL parameter values are strings and booleans; numbers need the JSON form. Denied
 values are compared as sent, trimmed, and split at commas; other equivalent
 spellings are not normalized (a TTL denied as `"1h"` can be sent as `3600`), so

@@ -209,8 +209,9 @@ func TestDeniedValueWithWhitespace(t *testing.T) {
 	}
 }
 
-// required_parameters: e.g. every role write must send bound_claims, so no
-// role can be created that any service account could log in through.
+// required_parameters makes a write send the named parameters. It checks
+// presence only (as in Vault): {} passes, null does not, since the handler
+// reads null as "not sent" and would keep or omit the field.
 func TestRequiredParameters(t *testing.T) {
 	h, root := unsealedHandler(t)
 	setPolicy(t, h, root, "p", `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],
@@ -221,6 +222,7 @@ func TestRequiredParameters(t *testing.T) {
 		``:                     http.StatusForbidden,
 		`{"policies":["app"],"bound_claims":{"sub":"a"}}`:     http.StatusNoContent,
 		`{"bound_claims":{"sub":"b"},"token_policies":"app"}`: http.StatusNoContent,
+		`{"policies":["app"],"bound_claims":null}`:            http.StatusForbidden,
 	} {
 		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
 			t.Errorf("%q = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
