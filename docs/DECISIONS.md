@@ -667,3 +667,56 @@ machine failure (`storage.ErrFailed`, which `raft.ErrFailed` wraps) the lock's
 `Core.HAFailed` reports it, rather than retrying — the replica must be replaced
 or restored.
 
+
+## D-024 — ACL parameter limits (`allowed_parameters` / `denied_parameters`)
+
+**Status:** Accepted · 2026-11-05
+
+**Decision:** implement Vault's `allowed_parameters` and `denied_parameters`
+on policy paths, in JSON and HCL, with Vault's value semantics (empty list = any
+value, `"*"` key, glob values, denial wins, case-insensitive names). They limit
+the JSON body of `POST`/`PUT` requests. `authorize` reads the body only when the
+governing rule has limits, and puts it back for the handler; a body it cannot
+judge (over the 1 MiB cap, not a JSON object) is refused. Two choices go beyond
+the value rules:
+
+1. **Which rule's limits apply.** Capability checks are unchanged: any matching
+   rule may grant, and a matching `deny` wins. Limits come from the **most
+   specific** matching rule that grants the capability (exact beats glob, longer
+   glob beats shorter), merged across policies for that same path as Vault
+   merges them. So a broader unrestricted grant can't lift a narrower path's
+   limits, and policies without the new fields behave exactly as before.
+2. **List values and comma strings.** Every element of a list value must be
+   allowed, and any denied element refuses the request. Handlers may split a
+   comma-separated string into a list (role `policies` are), so such a string is
+   allowed only if it equals a listed value exactly — globs never apply to it,
+   or `"neptune-*"` would pass `"neptune-x,root"` — and is denied if the whole
+   string or any element is denied. Denied values are also checked with
+   surrounding whitespace trimmed, as handlers trim them.
+3. **Parameter names** are matched the way `encoding/json` matches a body key to
+   a struct field (Unicode simple folding, as `bytes.EqualFold`), not just
+   lower-cased, so a key such as `policieſ` (long s), which the handler decodes as
+   `policies`, is limited as `policies`.
+
+**Why:** Neptune's superusers need to create the Kubernetes/JWT login roles
+their apps use without being able to give a role more than read access. Without
+limits, `update` on `auth/jwt/role/*` is admin. Until now uBixVault refused these
+fields so they couldn't be silently dropped (1.4.0).
+
+**Options rejected:** *Switch the whole ACL to Vault's most-specific-path
+model.* Correct, but it changes what existing policies grant (a more specific
+rule would start hiding a broader one's capabilities), which is a migration of
+its own. *Check parameters in each handler.* Every write endpoint would need it,
+and one forgotten handler would be a bypass; checking in `authorize` covers all
+paths at once.
+
+**Trade-off / follow-up:** `required_parameters` and limits on `GET` query
+parameters aren't implemented (the former is still refused at policy write).
+HCL parameter values are strings and booleans; numbers need the JSON form. Denied
+values are compared as sent, trimmed, and split at commas; other equivalent
+spellings are not normalized (a TTL denied as `"1h"` can be sent as `3600`), so
+for such fields use `allowed_parameters` instead. A
+value glob such as `"neptune-*"` also matches `"neptune-vault-prod-superusers"`;
+write exact values when a prefix could cover a privileged name. Only JWT role
+writes merge partial updates so far; the other auth methods still replace the
+whole role.

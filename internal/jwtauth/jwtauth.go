@@ -68,6 +68,8 @@ type Method struct {
 	prefix string
 	fetch  func(ctx context.Context, url string) ([]byte, error) // JWKS fetch (injectable)
 
+	roleMu sync.Mutex // serializes role writes, so UpdateRole's read-modify-write is atomic
+
 	mu              sync.Mutex
 	jwksURL         string
 	jwksCache       []crypto.PublicKey
@@ -136,6 +138,35 @@ func (m *Method) config(ctx context.Context) (*Config, error) {
 
 // WriteRole creates or replaces a role.
 func (m *Method) WriteRole(ctx context.Context, name string, role Role) error {
+	m.roleMu.Lock()
+	defer m.roleMu.Unlock()
+	return m.writeRole(ctx, name, role)
+}
+
+// UpdateRole applies change to the stored role (a zero Role if there is none)
+// and writes the result, with no other role write in between, so concurrent
+// partial updates cannot drop each other's fields. Only the active node
+// writes (standbys forward), so an in-process lock is enough.
+func (m *Method) UpdateRole(ctx context.Context, name string, change func(*Role) error) error {
+	if !validName(name) {
+		return ErrInvalidName
+	}
+	m.roleMu.Lock()
+	defer m.roleMu.Unlock()
+	role := Role{}
+	switch existing, err := m.ReadRole(ctx, name); {
+	case err == nil:
+		role = *existing
+	case !errors.Is(err, ErrRoleNotFound):
+		return err
+	}
+	if err := change(&role); err != nil {
+		return err
+	}
+	return m.writeRole(ctx, name, role)
+}
+
+func (m *Method) writeRole(ctx context.Context, name string, role Role) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
@@ -185,6 +216,8 @@ func (m *Method) DeleteRole(ctx context.Context, name string) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	m.roleMu.Lock()
+	defer m.roleMu.Unlock()
 	if err := m.store.Delete(ctx, m.roleKey(name)); err != nil {
 		return fmt.Errorf("jwtauth: delete role: %w", err)
 	}

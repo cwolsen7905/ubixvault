@@ -13,7 +13,15 @@ import (
 //	# or // or /* */ comments
 //	path "<pattern>" {
 //	  capabilities = ["read", "list"]
+//	  allowed_parameters = {          # optional; "= " may be omitted
+//	    "policies" = ["app-read"]
+//	    "*"        = []
+//	  }
+//	  denied_parameters = { "ttl" = [] }  # optional
 //	}
+//
+// Parameter values are strings or the booleans true/false; numbers are not
+// supported in HCL (use the JSON form).
 //
 // Full HCL (heredocs, interpolation, etc.) is out of scope; docs/DECISIONS.md
 // (D-011) records the choice and notes hashicorp/hcl as a future option.
@@ -36,20 +44,11 @@ func ParseHCL(name string, data []byte) (*Policy, error) {
 		if _, err := tp.expect(tokLBrace); err != nil {
 			return nil, wrapMalformed(err)
 		}
-		if err := tp.expectKeyword("capabilities"); err != nil {
-			return nil, wrapMalformed(err)
-		}
-		if _, err := tp.expect(tokEquals); err != nil {
-			return nil, wrapMalformed(err)
-		}
-		caps, err := tp.capabilityList()
+		rule, err := tp.pathBody(pattern)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := tp.expect(tokRBrace); err != nil {
-			return nil, wrapMalformed(err)
-		}
-		p.Rules = append(p.Rules, Rule{Path: pattern, Capabilities: caps})
+		p.Rules = append(p.Rules, rule)
 	}
 
 	sort.Slice(p.Rules, func(i, j int) bool { return p.Rules[i].Path < p.Rules[j].Path })
@@ -235,6 +234,113 @@ func (p *tokenParser) capabilityList() ([]Capability, error) {
 		}
 		caps = append(caps, c)
 		// Optional comma between elements.
+		if p.toks[p.pos].kind == tokComma {
+			p.pos++
+		}
+	}
+}
+
+// pathBody parses the attributes of a path block up to and including its
+// closing brace. capabilities is required; each attribute may appear once.
+func (p *tokenParser) pathBody(pattern string) (Rule, error) {
+	rule := Rule{Path: pattern}
+	seen := map[string]bool{}
+	for p.toks[p.pos].kind != tokRBrace {
+		key, err := p.expect(tokIdent)
+		if err != nil {
+			return Rule{}, wrapMalformed(err)
+		}
+		if seen[key] {
+			return Rule{}, wrapMalformed(fmt.Errorf("duplicate %q", key))
+		}
+		seen[key] = true
+		switch key {
+		case "capabilities":
+			if _, err := p.expect(tokEquals); err != nil {
+				return Rule{}, wrapMalformed(err)
+			}
+			if rule.Capabilities, err = p.capabilityList(); err != nil {
+				return Rule{}, err
+			}
+		case "allowed_parameters", "denied_parameters":
+			params, err := p.parameterMap()
+			if err != nil {
+				return Rule{}, err
+			}
+			if key == "allowed_parameters" {
+				rule.AllowedParameters = params
+			} else {
+				rule.DeniedParameters = params
+			}
+		default:
+			return Rule{}, wrapMalformed(fmt.Errorf("unsupported attribute %q", key))
+		}
+	}
+	p.pos++ // consume "}"
+	if !seen["capabilities"] {
+		return Rule{}, wrapMalformed(fmt.Errorf("path %q: missing capabilities", pattern))
+	}
+	return rule, nil
+}
+
+// parameterMap parses `[=] { "name" = [values...] ... }`. Entries may be
+// separated by commas or just whitespace. A name is a string or identifier.
+func (p *tokenParser) parameterMap() (map[string][]any, error) {
+	if p.toks[p.pos].kind == tokEquals {
+		p.pos++
+	}
+	if _, err := p.expect(tokLBrace); err != nil {
+		return nil, wrapMalformed(err)
+	}
+	params := map[string][]any{}
+	for {
+		t := p.toks[p.pos]
+		if t.kind == tokRBrace {
+			p.pos++
+			return params, nil
+		}
+		if t.kind != tokString && t.kind != tokIdent {
+			return nil, wrapMalformed(fmt.Errorf("unexpected token %q", t.val))
+		}
+		p.pos++
+		if _, dup := params[t.val]; dup {
+			return nil, wrapMalformed(fmt.Errorf("duplicate parameter %q", t.val))
+		}
+		if _, err := p.expect(tokEquals); err != nil {
+			return nil, wrapMalformed(err)
+		}
+		values, err := p.valueList()
+		if err != nil {
+			return nil, err
+		}
+		params[t.val] = values
+		if p.toks[p.pos].kind == tokComma {
+			p.pos++
+		}
+	}
+}
+
+// valueList parses `[ v, ... ]` where each v is a string or true/false. The
+// result is never nil, so an empty list means "any value".
+func (p *tokenParser) valueList() ([]any, error) {
+	if _, err := p.expect(tokLBracket); err != nil {
+		return nil, wrapMalformed(err)
+	}
+	values := []any{}
+	for {
+		t := p.toks[p.pos]
+		switch {
+		case t.kind == tokRBracket:
+			p.pos++
+			return values, nil
+		case t.kind == tokString:
+			values = append(values, t.val)
+		case t.kind == tokIdent && (t.val == "true" || t.val == "false"):
+			values = append(values, t.val == "true")
+		default:
+			return nil, wrapMalformed(fmt.Errorf("unexpected value %q", t.val))
+		}
+		p.pos++
 		if p.toks[p.pos].kind == tokComma {
 			p.pos++
 		}

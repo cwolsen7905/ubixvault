@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,5 +226,42 @@ func TestExtractGroups(t *testing.T) {
 				t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
 			}
 		}
+	}
+}
+
+// Concurrent partial updates must not drop each other's changes.
+func TestUpdateRoleIsAtomic(t *testing.T) {
+	m := newMethod(t)
+	ctx := context.Background()
+	if err := m.WriteRole(ctx, "app", Role{Policies: []string{"p"}}); err != nil {
+		t.Fatal(err)
+	}
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err := m.UpdateRole(ctx, "app", func(r *Role) error {
+				claims := map[string]string{}
+				for k, v := range r.BoundClaims {
+					claims[k] = v
+				}
+				claims[fmt.Sprintf("k%d", i)] = "v"
+				r.BoundClaims = claims
+				return nil
+			})
+			if err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	role, err := m.ReadRole(ctx, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(role.BoundClaims) != n {
+		t.Fatalf("got %d claims, want %d: updates were lost", len(role.BoundClaims), n)
 	}
 }

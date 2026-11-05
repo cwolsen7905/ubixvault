@@ -81,7 +81,11 @@ and multi-writer/multi-tenant concerns. The central trust boundary is the
    [External seal](#external-seal--process-model) for the process model). Any
    **fail-open** path is Critical.
 4a. **`internal/policy` + `internal/token`** — ACL **default-deny** correctness,
-   path/**glob** semantics, token hierarchy/scoping. The policy parser is an
+   path/**glob** semantics, token hierarchy/scoping, and **parameter limits**
+   (`allowed_parameters` / `denied_parameters`, ADR D-024): `authorize` reads
+   and re-supplies the JSON body of a limited write, so check that the body it
+   judges is the body the handler acts on (case-insensitive field names,
+   duplicate keys, comma strings). The policy parser is an
    **in-house HCL parser (not `hashicorp/hcl`)** — it needs a parser
    differential / injection review. Default-deny has deliberate built-in
    exceptions in `internal/api/auth.go` `authorize`: every token may use its own

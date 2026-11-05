@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -52,7 +55,7 @@ func (h *Handler) authenticate(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		allowed, err := h.authorize(r.Context(), tok, r.Method, apiPath(r))
+		allowed, err := h.authorize(r, tok)
 		if err != nil {
 			writeInternal(w, err)
 			return
@@ -80,11 +83,13 @@ func apiPath(r *http.Request) string {
 	return strings.TrimPrefix(r.URL.Path, "/v1/")
 }
 
-// authorize reports whether tok may perform method on path. Root tokens are
-// always permitted; others are evaluated against the ACL formed by their
-// policies. HTTP methods map to capabilities: GET→read, LIST→list,
-// DELETE→delete, POST/PUT→create or update.
-func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path string) (bool, error) {
+// authorize reports whether tok may make request r. Root tokens are always
+// permitted; others are evaluated against the ACL formed by their policies.
+// HTTP methods map to capabilities: GET→read, LIST→list, DELETE→delete,
+// POST/PUT→create or update. A write must also satisfy the
+// allowed_parameters / denied_parameters of the rule that governs it.
+func (h *Handler) authorize(r *http.Request, tok *token.Token) (bool, error) {
+	ctx, method, path := r.Context(), r.Method, apiPath(r)
 	if tok.IsRoot() {
 		return true, nil
 	}
@@ -117,10 +122,36 @@ func (h *Handler) authorize(ctx context.Context, tok *token.Token, method, path 
 	case http.MethodDelete:
 		return acl.Allows(path, policy.Delete), nil
 	case http.MethodPost, http.MethodPut:
-		return acl.Allows(path, policy.Create) || acl.Allows(path, policy.Update), nil
+		if !acl.Allows(path, policy.Create) && !acl.Allows(path, policy.Update) {
+			return false, nil
+		}
+		return requestParametersAllowed(r, acl.Parameters(path, policy.Create, policy.Update)), nil
 	default:
 		return false, nil
 	}
+}
+
+// requestParametersAllowed checks a write's JSON body against params. The
+// body is read only when there are limits, and is put back for the handler.
+// A body that cannot be checked — too large, not a JSON object — is refused:
+// limits that cannot be applied must not be skipped.
+func requestParametersAllowed(r *http.Request, params *policy.Parameters) bool {
+	if params == nil {
+		return true
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if err != nil || len(body) > maxBodyBytes {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(bytes.TrimSpace(body)) == 0 {
+		return params.Allows(nil)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil || data == nil {
+		return false
+	}
+	return params.Allows(data)
 }
 
 // hasSudo reports whether tok holds the sudo capability on path. Root tokens
