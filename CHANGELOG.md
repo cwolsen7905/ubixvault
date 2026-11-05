@@ -6,6 +6,30 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`allowed_parameters` and `denied_parameters` in ACL policies**, in JSON and
+  HCL, with Vault's semantics (ADR D-024). They limit the body parameters of a
+  write (`POST`/`PUT`): an empty list allows any value; when `allowed_parameters`
+  is set, a parameter it doesn't name is refused unless `"*"` is a key; a list
+  value must have every element allowed; a comma-separated string is compared
+  whole; denial wins; names match case-insensitively; string values may glob
+  with a leading or trailing `*`. A refused request gets `403 permission
+  denied`. The limits come from the most specific matching path, so a broader
+  grant such as `auth/*` doesn't lift limits set on `auth/jwt/role/*`.
+  Policies without these fields behave as before. Not supported: Vault's
+  `required_parameters` (still refused), and limits on `GET` query parameters.
+- **JWT roles accept `token_policies`** (Vault's current name; it wins over
+  `policies`), and `policies`, `token_policies` and `bound_audiences` accept a
+  comma-separated string as well as a list. Role reads return `token_policies`.
+
+### Changed
+
+- **A JWT role write to an existing role changes only the fields it sends**, as
+  in Vault. It used to replace the whole role, so an update without `policies`
+  was refused and one without `bound_claims` cleared them. To clear a field, send
+  it empty (`"bound_claims": {}`).
+
 ### Security
 
 - **Root tokens now come only from initialization, generate-root, or another

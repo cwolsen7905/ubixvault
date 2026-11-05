@@ -17,12 +17,15 @@ type jwtConfigRequest struct {
 	GroupsClaim       string   `json:"groups_claim"`
 }
 
+// jwtRoleRequest is a role write. Every field is optional: as in Vault, a
+// write to an existing role changes only the fields it sends.
 type jwtRoleRequest struct {
-	BoundAudiences []string          `json:"bound_audiences"`
-	BoundClaims    map[string]string `json:"bound_claims"`
-	Policies       []string          `json:"policies"`
-	TokenTTL       vaultDuration     `json:"token_ttl"`
-	TokenMaxTTL    vaultDuration     `json:"token_max_ttl"`
+	BoundAudiences *stringList        `json:"bound_audiences"`
+	BoundClaims    *map[string]string `json:"bound_claims"`
+	Policies       *stringList        `json:"policies"`
+	TokenPolicies  *stringList        `json:"token_policies"` // Vault's current name; wins over policies
+	TokenTTL       *vaultDuration     `json:"token_ttl"`
+	TokenMaxTTL    *vaultDuration     `json:"token_max_ttl"`
 }
 
 type jwtLoginRequest struct {
@@ -54,22 +57,48 @@ func (h *Handler) jwtWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
-	if !ok {
+	name := r.PathValue("name")
+	role := jwtauth.Role{}
+	switch existing, err := h.jwtauth.ReadRole(r.Context(), name); {
+	case err == nil:
+		role = *existing
+	case !errors.Is(err, jwtauth.ErrRoleNotFound):
+		writeJWTError(w, err)
 		return
 	}
-	maxTTL, ok := parseMaxTTL(w, req.TokenMaxTTL, ttl)
-	if !ok {
+
+	if req.BoundAudiences != nil {
+		role.BoundAudiences = *req.BoundAudiences
+	}
+	if req.BoundClaims != nil {
+		role.BoundClaims = *req.BoundClaims
+	}
+	switch {
+	case req.TokenPolicies != nil:
+		role.Policies = *req.TokenPolicies
+	case req.Policies != nil:
+		role.Policies = *req.Policies
+	}
+	if req.TokenTTL != nil {
+		ttl, ok := parseOptionalDuration(w, string(*req.TokenTTL), "token_ttl")
+		if !ok {
+			return
+		}
+		role.TokenTTL = ttl
+	}
+	if req.TokenMaxTTL != nil {
+		maxTTL, ok := parseOptionalDuration(w, string(*req.TokenMaxTTL), "token_max_ttl")
+		if !ok {
+			return
+		}
+		role.TokenMaxTTL = maxTTL
+	}
+	if role.TokenMaxTTL > 0 && role.TokenTTL > role.TokenMaxTTL {
+		writeError(w, http.StatusBadRequest, "token_ttl must not exceed token_max_ttl")
 		return
 	}
-	err := h.jwtauth.WriteRole(r.Context(), r.PathValue("name"), jwtauth.Role{
-		BoundAudiences: req.BoundAudiences,
-		BoundClaims:    req.BoundClaims,
-		Policies:       req.Policies,
-		TokenTTL:       ttl,
-		TokenMaxTTL:    maxTTL,
-	})
-	if err != nil {
+
+	if err := h.jwtauth.WriteRole(r.Context(), name, role); err != nil {
 		writeJWTError(w, err)
 		return
 	}
@@ -86,6 +115,7 @@ func (h *Handler) jwtReadRole(w http.ResponseWriter, r *http.Request) {
 		"bound_audiences": role.BoundAudiences,
 		"bound_claims":    role.BoundClaims,
 		"policies":        role.Policies,
+		"token_policies":  role.Policies,
 		"token_ttl":       role.TokenTTL.String(),
 		"token_max_ttl":   role.TokenMaxTTL.String(),
 	})

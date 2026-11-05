@@ -18,6 +18,9 @@ func FuzzParseDocument(f *testing.F) {
 		`path "" {}`,
 		`path "x" { capabilities = [ }`,
 		"path \"x\" { capabilities = [\"read\"] }\n# comment\npath \"y\" { capabilities = [\"list\"] }",
+		`{"path":{"a/*":{"capabilities":["update"],"allowed_parameters":{"p":["x"],"*":[]},"denied_parameters":{"q":[true,1]}}}}`,
+		`path "a" { capabilities = ["update"] allowed_parameters = { "p" = ["x"] "*" = [] } denied_parameters { q = [true] } }`,
+		`path "a" { capabilities = ["update"] allowed_parameters = { "p" = [`,
 	}
 	for _, s := range seeds {
 		f.Add(s)
