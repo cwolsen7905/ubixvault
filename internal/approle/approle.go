@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -55,6 +56,8 @@ type Method struct {
 	store  Storage
 	tokens *token.Store
 	prefix string
+
+	writeMu sync.Mutex // serializes writes, so updates are atomic
 }
 
 // New returns a method storing under prefix (e.g. "auth/approle") that mints
@@ -90,6 +93,35 @@ func hashSecretID(secretID string) string {
 
 // WriteRole creates or replaces a role, assigning a stable role_id the first time.
 func (m *Method) WriteRole(ctx context.Context, name string, role Role) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	return m.writeRole(ctx, name, role)
+}
+
+// UpdateRole applies change to the stored role (a zero Role if there is none)
+// and writes the result, with no other write in between, so concurrent
+// partial updates cannot drop each other's fields. Only the active node
+// writes (standbys forward), so an in-process lock is enough.
+func (m *Method) UpdateRole(ctx context.Context, name string, change func(*Role) error) error {
+	if !validName(name) {
+		return ErrInvalidName
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	v := Role{}
+	switch existing, err := m.ReadRole(ctx, name); {
+	case err == nil:
+		v = *existing
+	case !errors.Is(err, ErrRoleNotFound):
+		return err
+	}
+	if err := change(&v); err != nil {
+		return err
+	}
+	return m.writeRole(ctx, name, v)
+}
+
+func (m *Method) writeRole(ctx context.Context, name string, role Role) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
@@ -154,6 +186,8 @@ func (m *Method) DeleteRole(ctx context.Context, name string) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	if roleID, err := m.RoleID(ctx, name); err == nil {
 		_ = m.store.Delete(ctx, m.ridxKey(roleID))
 	}

@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
 	"github.com/cwolsen7905/ubixvault/internal/kubeauth"
@@ -16,12 +15,17 @@ type k8sConfigRequest struct {
 	ReviewerJWT string `json:"token_reviewer_jwt"`
 }
 
+// k8sRoleRequest is a role write; every field is optional (see partial.go).
+// token_policies and token_ttl are Vault's current names and win over the
+// older policies and ttl.
 type k8sRoleRequest struct {
-	BoundServiceAccountNames      []string      `json:"bound_service_account_names"`
-	BoundServiceAccountNamespaces []string      `json:"bound_service_account_namespaces"`
-	Policies                      []string      `json:"policies"`
-	TTL                           vaultDuration `json:"ttl"`
-	TokenMaxTTL                   vaultDuration `json:"token_max_ttl"`
+	BoundServiceAccountNames      *stringList    `json:"bound_service_account_names"`
+	BoundServiceAccountNamespaces *stringList    `json:"bound_service_account_namespaces"`
+	Policies                      *stringList    `json:"policies"`
+	TokenPolicies                 *stringList    `json:"token_policies"`
+	TTL                           *vaultDuration `json:"ttl"`
+	TokenTTL                      *vaultDuration `json:"token_ttl"`
+	TokenMaxTTL                   *vaultDuration `json:"token_max_ttl"`
 }
 
 type k8sLoginRequest struct {
@@ -51,28 +55,24 @@ func (h *Handler) k8sWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	var ttl time.Duration
-	if req.TTL != "" {
-		d, err := time.ParseDuration(string(req.TTL))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "ttl must be a duration (e.g. \"1h\")")
-			return
-		}
-		ttl = d
-	}
-	maxTTL, ok := parseMaxTTL(w, req.TokenMaxTTL, ttl)
+	ttl, ok := optionalDuration(w, firstSet(req.TokenTTL, req.TTL), "token_ttl")
 	if !ok {
 		return
 	}
-	role := kubeauth.Role{
-		BoundServiceAccountNames:      req.BoundServiceAccountNames,
-		BoundServiceAccountNamespaces: req.BoundServiceAccountNamespaces,
-		Policies:                      req.Policies,
-		TTL:                           ttl,
-		TokenMaxTTL:                   maxTTL,
+	maxTTL, ok := optionalDuration(w, req.TokenMaxTTL, "token_max_ttl")
+	if !ok {
+		return
 	}
-	if err := h.kubernetes.WriteRole(r.Context(), r.PathValue("name"), role); err != nil {
-		writeKubeError(w, err)
+	err := h.kubernetes.UpdateRole(r.Context(), r.PathValue("name"), func(role *kubeauth.Role) error {
+		applyList(&role.BoundServiceAccountNames, req.BoundServiceAccountNames)
+		applyList(&role.BoundServiceAccountNamespaces, req.BoundServiceAccountNamespaces)
+		applyList(&role.Policies, firstSet(req.TokenPolicies, req.Policies))
+		apply(&role.TTL, ttl)
+		apply(&role.TokenMaxTTL, maxTTL)
+		return checkTTL(role.TTL, role.TokenMaxTTL)
+	})
+	if err != nil {
+		writeRoleUpdateError(w, err, writeKubeError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -88,7 +88,9 @@ func (h *Handler) k8sReadRole(w http.ResponseWriter, r *http.Request) {
 		"bound_service_account_names":      role.BoundServiceAccountNames,
 		"bound_service_account_namespaces": role.BoundServiceAccountNamespaces,
 		"policies":                         role.Policies,
+		"token_policies":                   role.Policies,
 		"ttl":                              role.TTL.String(),
+		"token_ttl":                        role.TTL.String(),
 		"token_max_ttl":                    role.TokenMaxTTL.String(),
 	})
 }

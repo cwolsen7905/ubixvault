@@ -9,12 +9,15 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
+// certRoleRequest is a cert role write; every field is optional (see
+// partial.go).
 type certRoleRequest struct {
-	Certificate        string        `json:"certificate"`
-	Policies           []string      `json:"policies"`
-	AllowedCommonNames []string      `json:"allowed_common_names"`
-	TokenTTL           vaultDuration `json:"token_ttl"`
-	TokenMaxTTL        vaultDuration `json:"token_max_ttl"`
+	Certificate        *string        `json:"certificate"`
+	Policies           *stringList    `json:"policies"`
+	TokenPolicies      *stringList    `json:"token_policies"` // Vault's current name; wins over policies
+	AllowedCommonNames *stringList    `json:"allowed_common_names"`
+	TokenTTL           *vaultDuration `json:"token_ttl"`
+	TokenMaxTTL        *vaultDuration `json:"token_max_ttl"`
 }
 
 func (h *Handler) certWriteCert(w http.ResponseWriter, r *http.Request) {
@@ -22,23 +25,24 @@ func (h *Handler) certWriteCert(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
+	ttl, ok := optionalDuration(w, req.TokenTTL, "token_ttl")
 	if !ok {
 		return
 	}
-	maxTTL, ok := parseMaxTTL(w, req.TokenMaxTTL, ttl)
+	maxTTL, ok := optionalDuration(w, req.TokenMaxTTL, "token_max_ttl")
 	if !ok {
 		return
 	}
-	err := h.certauth.WriteCert(r.Context(), r.PathValue("name"), certauth.CertRole{
-		Certificate:        req.Certificate,
-		Policies:           req.Policies,
-		AllowedCommonNames: req.AllowedCommonNames,
-		TokenTTL:           ttl,
-		TokenMaxTTL:        maxTTL,
+	err := h.certauth.UpdateCert(r.Context(), r.PathValue("name"), func(role *certauth.CertRole) error {
+		apply(&role.Certificate, req.Certificate)
+		applyList(&role.Policies, firstSet(req.TokenPolicies, req.Policies))
+		applyList(&role.AllowedCommonNames, req.AllowedCommonNames)
+		apply(&role.TokenTTL, ttl)
+		apply(&role.TokenMaxTTL, maxTTL)
+		return checkTTL(role.TokenTTL, role.TokenMaxTTL)
 	})
 	if err != nil {
-		writeCertError(w, err)
+		writeRoleUpdateError(w, err, writeCertError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -53,6 +57,7 @@ func (h *Handler) certReadCert(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{
 		"certificate":          role.Certificate,
 		"policies":             role.Policies,
+		"token_policies":       role.Policies,
 		"allowed_common_names": role.AllowedCommonNames,
 		"token_ttl":            role.TokenTTL.String(),
 		"token_max_ttl":        role.TokenMaxTTL.String(),
