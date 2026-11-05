@@ -710,8 +710,10 @@ its own. *Check parameters in each handler.* Every write endpoint would need it,
 and one forgotten handler would be a bypass; checking in `authorize` covers all
 paths at once.
 
-**Trade-off / follow-up:** `required_parameters` and limits on `GET` query
-parameters aren't implemented (the former is still refused at policy write).
+**Trade-off / follow-up:** limits on `GET` query parameters aren't
+implemented. `required_parameters` was added after the first cut, with Vault's
+semantics: each name must be present (any value), checked before the
+"no parameters" shortcut, and merged across policies as a union.
 HCL parameter values are strings and booleans; numbers need the JSON form. Denied
 values are compared as sent, trimmed, and split at commas; other equivalent
 spellings are not normalized (a TTL denied as `"1h"` can be sent as `3600`), so

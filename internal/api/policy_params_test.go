@@ -208,3 +208,22 @@ func TestDeniedValueWithWhitespace(t *testing.T) {
 		}
 	}
 }
+
+// required_parameters: e.g. every role write must send bound_claims, so no
+// role can be created that any service account could log in through.
+func TestRequiredParameters(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "p", `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],
+	  "required_parameters":["bound_claims"]}}}`)
+	tok := tokenWith(t, h, root, `{"policies":["p"],"ttl":"1h"}`)
+	for body, want := range map[string]int{
+		`{"policies":["app"]}`: http.StatusForbidden,
+		``:                     http.StatusForbidden,
+		`{"policies":["app"],"bound_claims":{"sub":"a"}}`:     http.StatusNoContent,
+		`{"bound_claims":{"sub":"b"},"token_policies":"app"}`: http.StatusNoContent,
+	} {
+		if rec := doAuth(t, h, "POST", "/v1/auth/jwt/role/app", body, tok); rec.Code != want {
+			t.Errorf("%q = %d %s, want %d", body, rec.Code, rec.Body.String(), want)
+		}
+	}
+}

@@ -62,14 +62,15 @@ var (
 // Rule grants a set of capabilities on a path pattern. A pattern ending in "*"
 // matches by prefix; otherwise it matches exactly.
 //
-// AllowedParameters and DeniedParameters limit the request body parameters of
-// a write, with Vault's semantics (see [Parameters.Allows]). Keys are kept as
+// AllowedParameters, DeniedParameters and RequiredParameters limit the request
+// body parameters of a write, with Vault's semantics (see [Parameters.Allows]). Keys are kept as
 // written so the policy reads back unchanged; matching ignores their case.
 type Rule struct {
-	Path              string
-	Capabilities      []Capability
-	AllowedParameters map[string][]any
-	DeniedParameters  map[string][]any
+	Path               string
+	Capabilities       []Capability
+	AllowedParameters  map[string][]any
+	DeniedParameters   map[string][]any
+	RequiredParameters []string
 }
 
 // Policy is a named collection of rules.
@@ -84,9 +85,10 @@ type document struct {
 }
 
 type pathEntry struct {
-	Capabilities      []Capability     `json:"capabilities"`
-	AllowedParameters map[string][]any `json:"allowed_parameters,omitempty"`
-	DeniedParameters  map[string][]any `json:"denied_parameters,omitempty"`
+	Capabilities       []Capability     `json:"capabilities"`
+	AllowedParameters  map[string][]any `json:"allowed_parameters,omitempty"`
+	DeniedParameters   map[string][]any `json:"denied_parameters,omitempty"`
+	RequiredParameters []string         `json:"required_parameters,omitempty"`
 }
 
 // ParseDocument builds a policy from either a JSON or an HCL document, detecting
@@ -112,8 +114,8 @@ func bytesTrimLeadingSpace(data []byte) []byte {
 // error, at the top level and per path: silently dropping one would store a
 // different policy than the operator wrote — a misspelled "path" becomes an
 // empty policy, and a dropped restriction (such as Vault's
-// required_parameters, which uBixVault does not implement) would grant more
-// than intended.
+// min_wrapping_ttl, which uBixVault does not implement) would grant more than
+// intended.
 func Parse(name string, data []byte) (*Policy, error) {
 	var doc document
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -134,11 +136,15 @@ func Parse(name string, data []byte) (*Policy, error) {
 		if err := validateParameters("denied_parameters", entry.DeniedParameters); err != nil {
 			return nil, err
 		}
+		if err := validateRequired(entry.RequiredParameters); err != nil {
+			return nil, err
+		}
 		p.Rules = append(p.Rules, Rule{
-			Path:              path,
-			Capabilities:      entry.Capabilities,
-			AllowedParameters: entry.AllowedParameters,
-			DeniedParameters:  entry.DeniedParameters,
+			Path:               path,
+			Capabilities:       entry.Capabilities,
+			AllowedParameters:  entry.AllowedParameters,
+			DeniedParameters:   entry.DeniedParameters,
+			RequiredParameters: entry.RequiredParameters,
 		})
 	}
 	sort.Slice(p.Rules, func(i, j int) bool { return p.Rules[i].Path < p.Rules[j].Path })
@@ -150,9 +156,10 @@ func (p *Policy) Document() ([]byte, error) {
 	doc := document{Path: map[string]pathEntry{}}
 	for _, r := range p.Rules {
 		doc.Path[r.Path] = pathEntry{
-			Capabilities:      r.Capabilities,
-			AllowedParameters: r.AllowedParameters,
-			DeniedParameters:  r.DeniedParameters,
+			Capabilities:       r.Capabilities,
+			AllowedParameters:  r.AllowedParameters,
+			DeniedParameters:   r.DeniedParameters,
+			RequiredParameters: r.RequiredParameters,
 		}
 	}
 	return json.Marshal(doc)
