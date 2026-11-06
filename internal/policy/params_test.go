@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -211,8 +212,15 @@ func TestCapabilitiesMatchesAllows(t *testing.T) {
 				t.Errorf("%s: Allows(%s)=%v but Capabilities=%v", path, c, acl.Allows(path, c), acl.Capabilities(path))
 			}
 		}
-		if anyAllowed := len(got) > 0 && !got["deny"]; !anyAllowed && !got["deny"] {
-			t.Errorf("%s: empty result, want [deny]", path)
+		if len(got) == 0 {
+			t.Errorf("%s: empty result, want at least [deny]", path)
+		}
+	}
+
+	// Nothing granted, or a deny, reports exactly ["deny"].
+	for _, path := range []string{"zzz", "a/x/y"} {
+		if got := acl.Capabilities(path); !reflect.DeepEqual(got, []string{"deny"}) {
+			t.Errorf("%s: Capabilities = %v, want [deny]", path, got)
 		}
 	}
 }

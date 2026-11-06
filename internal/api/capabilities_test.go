@@ -108,3 +108,18 @@ func TestCapabilitiesOtherToken(t *testing.T) {
 		}
 	}
 }
+
+// A requested path named "data" must not replace the response envelope.
+func TestCapabilitiesSelfPathNamedData(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "d", `{"path":{"data":{"capabilities":["read"]},"other":{"capabilities":["list"]}}}`)
+	tok := tokenWith(t, h, root, `{"policies":["d"],"ttl":"1h"}`)
+	resp := capsOf(t, h, "/v1/sys/capabilities-self", `{"paths":["data","other"]}`, tok)
+	data, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("data is not the envelope map: %v", resp["data"])
+	}
+	if !reflect.DeepEqual(data["data"], []any{"read"}) || !reflect.DeepEqual(data["other"], []any{"list"}) {
+		t.Errorf("envelope = %v", data)
+	}
+}

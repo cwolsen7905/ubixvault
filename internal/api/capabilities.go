@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cwolsen7905/ubixvault/internal/barrier"
+	"github.com/cwolsen7905/ubixvault/internal/policy"
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
@@ -35,7 +36,7 @@ func (h *Handler) capabilitiesSelf(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "no token on request")
 		return
 	}
-	h.writeCapabilities(w, r.Context(), tok, req)
+	h.writeCapabilities(r.Context(), w, tok, req)
 }
 
 // capabilities reports what another token may do on each path. It needs an
@@ -61,13 +62,13 @@ func (h *Handler) capabilities(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	h.writeCapabilities(w, r.Context(), tok, req)
+	h.writeCapabilities(r.Context(), w, tok, req)
 }
 
 // writeCapabilities answers in Vault's shape: one key per path, plus
 // "capabilities" when a single path was asked, both at the top level and
 // under "data" (Vault's clients read either).
-func (h *Handler) writeCapabilities(w http.ResponseWriter, ctx context.Context, tok *token.Token, req capabilitiesRequest) {
+func (h *Handler) writeCapabilities(ctx context.Context, w http.ResponseWriter, tok *token.Token, req capabilitiesRequest) {
 	paths := req.Paths
 	if len(paths) == 0 {
 		paths = req.Path
@@ -76,9 +77,18 @@ func (h *Handler) writeCapabilities(w http.ResponseWriter, ctx context.Context, 
 		writeError(w, http.StatusBadRequest, "paths is required")
 		return
 	}
+	// Resolve the token's policies once, not once per path.
+	var acl *policy.ACL
+	if !tok.IsRoot() {
+		var err error
+		if acl, err = h.aclFor(ctx, tok); err != nil {
+			writeInternal(w, err)
+			return
+		}
+	}
 	out := map[string]any{}
 	for _, p := range paths {
-		caps, err := h.capabilitiesOn(ctx, tok, strings.TrimPrefix(p, "/"))
+		caps, err := capabilitiesOn(acl, tok, strings.TrimPrefix(p, "/"))
 		if err != nil {
 			writeInternal(w, err)
 			return
@@ -90,6 +100,9 @@ func (h *Handler) writeCapabilities(w http.ResponseWriter, ctx context.Context, 
 	}
 	body := map[string]any{"data": out}
 	for k, v := range out {
+		if k == "data" { // never replace the envelope
+			continue
+		}
 		body[k] = v
 	}
 	writeJSON(w, http.StatusOK, body)
@@ -98,13 +111,9 @@ func (h *Handler) writeCapabilities(w http.ResponseWriter, ctx context.Context, 
 // capabilitiesOn is what tok may do on path, mirroring authorize: root gets
 // ["root"]; the built-in self paths and the token's own cubbyhole report the
 // capabilities Vault's default policy gives them, merged with any ACL grant.
-func (h *Handler) capabilitiesOn(ctx context.Context, tok *token.Token, path string) ([]string, error) {
+func capabilitiesOn(acl *policy.ACL, tok *token.Token, path string) ([]string, error) {
 	if tok.IsRoot() {
 		return []string{"root"}, nil
-	}
-	acl, err := h.aclFor(ctx, tok)
-	if err != nil {
-		return nil, err
 	}
 	caps := acl.Capabilities(path)
 	builtin := builtinCapabilities(path)
