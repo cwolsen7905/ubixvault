@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -69,6 +70,8 @@ type Method struct {
 	store  Storage
 	tokens *token.Store
 	prefix string
+
+	writeMu sync.Mutex // serializes user writes, so UpdateUser is atomic
 }
 
 // New returns a method storing under prefix (e.g. "auth/userpass").
@@ -89,21 +92,69 @@ func (m *Method) WriteUser(ctx context.Context, username, password string, polic
 	if !validName(username) {
 		return ErrInvalidName
 	}
-	if password == "" || len(policies) == 0 {
+	if password == "" {
 		return ErrInvalidConfig
 	}
-	if token.HasRootPolicy(policies) {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	return m.writeUser(ctx, username, password, nil, UserInfo{Policies: policies, TokenTTL: ttl, TokenMaxTTL: maxTTL})
+}
+
+// UpdateUser applies change to the stored user's settings (zero values if
+// there is no such user) and writes the result, with no other user write in
+// between. An empty password keeps the current one; a new user needs one.
+// Only the active node writes (standbys forward), so an in-process lock is
+// enough.
+func (m *Method) UpdateUser(ctx context.Context, username, password string, change func(*UserInfo) error) error {
+	if !validName(username) {
+		return ErrInvalidName
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	existing, err := m.load(ctx, username)
+	switch {
+	case errors.Is(err, ErrUserNotFound):
+		existing = nil
+	case err != nil:
+		return err
+	}
+	info := UserInfo{}
+	if existing != nil {
+		info = UserInfo{Policies: existing.Policies, TokenTTL: existing.TokenTTL, TokenMaxTTL: existing.MaxTTL}
+	}
+	if err := change(&info); err != nil {
+		return err
+	}
+	if password == "" && existing == nil {
+		return ErrInvalidConfig
+	}
+	return m.writeUser(ctx, username, password, existing, info)
+}
+
+// writeUser persists a user. With a password it hashes it afresh; without
+// one it keeps keep's salt and hash. The caller holds writeMu.
+func (m *Method) writeUser(ctx context.Context, username, password string, keep *stored, info UserInfo) error {
+	if len(info.Policies) == 0 {
+		return ErrInvalidConfig
+	}
+	if token.HasRootPolicy(info.Policies) {
 		return token.ErrRootPolicy
 	}
-	salt := make([]byte, saltSize)
-	if _, err := rand.Read(salt); err != nil {
-		return fmt.Errorf("userpass: salt: %w", err)
+	rec := stored{Policies: info.Policies, TokenTTL: info.TokenTTL, MaxTTL: info.TokenMaxTTL}
+	if password != "" {
+		salt := make([]byte, saltSize)
+		if _, err := rand.Read(salt); err != nil {
+			return fmt.Errorf("userpass: salt: %w", err)
+		}
+		hash, err := derive(password, salt, iterations)
+		if err != nil {
+			return fmt.Errorf("userpass: hash password: %w", err)
+		}
+		rec.Salt, rec.Iterations, rec.Hash = salt, iterations, hash
+	} else {
+		rec.Salt, rec.Iterations, rec.Hash = keep.Salt, keep.Iterations, keep.Hash
 	}
-	hash, err := derive(password, salt, iterations)
-	if err != nil {
-		return fmt.Errorf("userpass: hash password: %w", err)
-	}
-	blob, err := json.Marshal(stored{Salt: salt, Iterations: iterations, Hash: hash, Policies: policies, TokenTTL: ttl, MaxTTL: maxTTL})
+	blob, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("userpass: marshal user: %w", err)
 	}
@@ -136,6 +187,8 @@ func (m *Method) DeleteUser(ctx context.Context, username string) error {
 	if !validName(username) {
 		return ErrInvalidName
 	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	if err := m.store.Delete(ctx, m.userKey(username)); err != nil {
 		return fmt.Errorf("userpass: delete user: %w", err)
 	}

@@ -710,13 +710,20 @@ its own. *Check parameters in each handler.* Every write endpoint would need it,
 and one forgotten handler would be a bypass; checking in `authorize` covers all
 paths at once.
 
-**Trade-off / follow-up:** `required_parameters` and limits on `GET` query
-parameters aren't implemented (the former is still refused at policy write).
+**Trade-off / follow-up:** limits on `GET` query parameters aren't
+implemented. `required_parameters` was added after the first cut, with Vault's
+semantics: each name must be present, checked before the "no parameters"
+shortcut, and merged across policies as a union. A JSON `null` does not count
+as present, because handlers read it as "not sent". It checks presence only: an
+empty value (`{}`, `""`) passes, so it cannot by itself guarantee, say, that a
+JWT role binds any claims.
 HCL parameter values are strings and booleans; numbers need the JSON form. Denied
 values are compared as sent, trimmed, and split at commas; other equivalent
 spellings are not normalized (a TTL denied as `"1h"` can be sent as `3600`), so
 for such fields use `allowed_parameters` instead. A
 value glob such as `"neptune-*"` also matches `"neptune-vault-prod-superusers"`;
-write exact values when a prefix could cover a privileged name. Only JWT role
-writes merge partial updates so far; the other auth methods still replace the
-whole role.
+write exact values when a prefix could cover a privileged name. Role writes on
+every auth method (JWT, Kubernetes, AppRole, cert, userpass) merge partial
+updates under a per-method lock, so a superuser can change one field of a role
+without having to resend, and be allowed to send, the rest. LDAP group writes
+carry only policies, so they still replace.
