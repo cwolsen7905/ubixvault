@@ -17,9 +17,10 @@ import (
 // tokenHeader is the request header carrying the client token.
 const tokenHeader = "X-Vault-Token" //nolint:gosec // G101: this is an HTTP header name, not a credential
 
-// selfTokenPaths are the token endpoints every authenticated token may call on
-// itself without an ACL grant (see authorize).
+// selfTokenPaths are the endpoints every authenticated token may call about
+// itself without an ACL grant (see authorize), as under Vault's default policy.
 var selfTokenPaths = map[string]bool{
+	"sys/capabilities-self":  true,
 	"auth/token/lookup-self": true,
 	"auth/token/renew-self":  true,
 	"auth/token/revoke-self": true,
