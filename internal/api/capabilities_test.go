@@ -34,7 +34,7 @@ func TestCapabilitiesSelf(t *testing.T) {
 		"secret/data/shared":     {"create", "read", "update"}, // merged across policies
 		"/secret/data/other":     {"deny"},                     // nothing granted
 		"cubbyhole/notes":        {"create", "delete", "list", "read", "update"},
-		"auth/token/lookup-self": {"read"},
+		"auth/token/lookup-self": {"create", "delete", "list", "read", "update"}, // authorize allows any method
 	}
 	for p, w := range want {
 		if !reflect.DeepEqual(data[p], w) {
@@ -121,5 +121,18 @@ func TestCapabilitiesSelfPathNamedData(t *testing.T) {
 	}
 	if !reflect.DeepEqual(data["data"], []any{"read"}) || !reflect.DeepEqual(data["other"], []any{"list"}) {
 		t.Errorf("envelope = %v", data)
+	}
+}
+
+// Every self-token path reports exactly what authorize enforces: any method.
+func TestCapabilitiesSelfTokenPathsMatchAuthorize(t *testing.T) {
+	h, root := unsealedHandler(t)
+	tok := tokenWith(t, h, root, `{"policies":[],"ttl":"1h"}`)
+	want := []any{"create", "delete", "list", "read", "update"}
+	for p := range selfTokenPaths {
+		resp := capsOf(t, h, "/v1/sys/capabilities-self", `{"path":"`+p+`"}`, tok)
+		if got := resp["capabilities"]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s = %v, want %v", p, got, want)
+		}
 	}
 }

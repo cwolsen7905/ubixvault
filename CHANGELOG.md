@@ -15,31 +15,41 @@ All notable changes to uBixVault are documented here. The format is based on
   capabilities merged across the token's policies (identity and templated ones
   included), `["deny"]` when a rule denies or nothing is granted, `["root"]`
   for root, and the built-in grants for the token's own cubbyhole and
-  `auth/token/*-self`. Parameter limits are not shown, as in Vault. Works with
+  `auth/token/*-self` and `sys/capabilities-self`, reported as the enforced
+  set (every capability but `sudo`, since any method is allowed). Parameter limits are not shown, as in Vault. Works with
   `vault token capabilities` and Vault's client libraries.
 
-- **`allowed_parameters` and `denied_parameters` in ACL policies**, in JSON and
-  HCL, with Vault's semantics (ADR D-024). They limit the body parameters of a
+- **`allowed_parameters`, `denied_parameters` and `required_parameters` in ACL
+  policies**, in JSON and HCL, with Vault's semantics (ADR D-024). They limit the body parameters of a
   write (`POST`/`PUT`): an empty list allows any value; when `allowed_parameters`
   is set, a parameter it doesn't name is refused unless `"*"` is a key; a list
   value must have every element allowed; a comma-separated string must equal an
   allowed value exactly (globs don't apply to it) and is refused if any element
   is denied; denial wins; names match case-insensitively, folded as the JSON
-  decoder folds them; string values may glob with a leading or trailing `*`. A refused request gets `403 permission
-  denied`. The limits come from the most specific matching path, so a broader
+  decoder folds them; string values may glob with a leading or trailing `*`;
+  `required_parameters` names parameters a write must send with a non-null
+  value (merged across policies as a union; presence only, as in Vault, so an
+  empty value such as `{}` passes). A refused request gets `403 permission denied`. The limits come from the most specific matching path, so a broader
   grant such as `auth/*` doesn't lift limits set on `auth/jwt/role/*`.
-  Policies without these fields behave as before. Not supported: Vault's
-  `required_parameters` (still refused), and limits on `GET` query parameters.
-- **JWT roles accept `token_policies`** (Vault's current name; it wins over
-  `policies`), and `policies`, `token_policies` and `bound_audiences` accept a
-  comma-separated string as well as a list. Role reads return `token_policies`.
+  Policies without these fields behave as before. Not supported: limits on
+  `GET` query parameters.
+- **Every auth method's roles accept `token_policies`** (Vault's current name;
+  it wins over `policies`): JWT, Kubernetes, AppRole, cert and userpass. List
+  fields (policies, bound audiences, service account names and namespaces,
+  allowed common names) accept a comma-separated string as well as a list.
+  Reads return `token_policies`. Kubernetes roles also accept `token_ttl` (wins
+  over `ttl`) and return both.
 
 ### Changed
 
-- **A JWT role write to an existing role changes only the fields it sends**, as
-  in Vault. It used to replace the whole role, so an update without `policies`
-  was refused and one without `bound_claims` cleared them. To clear a field, send
-  it empty (`"bound_claims": {}`).
+- **A role write to an existing role changes only the fields it sends**, as in
+  Vault, for JWT, Kubernetes, AppRole and cert roles and userpass users. It used
+  to replace the whole role, so an update without `policies` was refused and
+  one without, say, `bound_claims` cleared them. To clear a field, send it empty
+  (`"bound_claims": {}`). A userpass update without `password` keeps the current
+  one; a new user still needs one. Concurrent updates to one role are
+  serialized, so neither is lost. The `token_ttl` ≤ `token_max_ttl` check now
+  applies to the merged role.
 
 ### Security
 

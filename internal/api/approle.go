@@ -10,11 +10,13 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/token"
 )
 
+// approleRoleRequest is a role write; every field is optional (see partial.go).
 type approleRoleRequest struct {
-	Policies    []string      `json:"policies"`
-	TokenTTL    vaultDuration `json:"token_ttl"`
-	TokenMaxTTL vaultDuration `json:"token_max_ttl"`
-	SecretIDTTL vaultDuration `json:"secret_id_ttl"`
+	Policies      *stringList    `json:"policies"`
+	TokenPolicies *stringList    `json:"token_policies"` // Vault's current name; wins over policies
+	TokenTTL      *vaultDuration `json:"token_ttl"`
+	TokenMaxTTL   *vaultDuration `json:"token_max_ttl"`
+	SecretIDTTL   *vaultDuration `json:"secret_id_ttl"`
 }
 
 type approleLoginRequest struct {
@@ -27,21 +29,27 @@ func (h *Handler) approleWriteRole(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	tokenTTL, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
+	tokenTTL, ok := optionalDuration(w, req.TokenTTL, "token_ttl")
 	if !ok {
 		return
 	}
-	secretTTL, ok := parseOptionalDuration(w, string(req.SecretIDTTL), "secret_id_ttl")
+	secretTTL, ok := optionalDuration(w, req.SecretIDTTL, "secret_id_ttl")
 	if !ok {
 		return
 	}
-	maxTTL, ok := parseMaxTTL(w, req.TokenMaxTTL, tokenTTL)
+	maxTTL, ok := optionalDuration(w, req.TokenMaxTTL, "token_max_ttl")
 	if !ok {
 		return
 	}
-	role := approle.Role{Policies: req.Policies, TokenTTL: tokenTTL, TokenMaxTTL: maxTTL, SecretIDTTL: secretTTL}
-	if err := h.approle.WriteRole(r.Context(), r.PathValue("name"), role); err != nil {
-		writeAppRoleError(w, err)
+	err := h.approle.UpdateRole(r.Context(), r.PathValue("name"), func(role *approle.Role) error {
+		applyList(&role.Policies, firstSet(req.TokenPolicies, req.Policies))
+		apply(&role.TokenTTL, tokenTTL)
+		apply(&role.TokenMaxTTL, maxTTL)
+		apply(&role.SecretIDTTL, secretTTL)
+		return checkTTL(role.TokenTTL, role.TokenMaxTTL)
+	})
+	if err != nil {
+		writeRoleUpdateError(w, err, writeAppRoleError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -54,10 +62,11 @@ func (h *Handler) approleReadRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, map[string]any{
-		"policies":      role.Policies,
-		"token_ttl":     role.TokenTTL.String(),
-		"token_max_ttl": role.TokenMaxTTL.String(),
-		"secret_id_ttl": role.SecretIDTTL.String(),
+		"policies":       role.Policies,
+		"token_policies": role.Policies,
+		"token_ttl":      role.TokenTTL.String(),
+		"token_max_ttl":  role.TokenMaxTTL.String(),
+		"secret_id_ttl":  role.SecretIDTTL.String(),
 	})
 }
 

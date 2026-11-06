@@ -164,12 +164,13 @@ func TestPolicyReadIsStringAndRoundTrips(t *testing.T) {
 }
 
 // Unknown keys must fail loudly: a typo would otherwise store an empty policy,
-// and a dropped restriction (required_parameters) would grant more than written.
+// and a dropped restriction (min_wrapping_ttl) would grant more than written.
 func TestPolicyWriteRejectsUnknownKeys(t *testing.T) {
 	h, root := unsealedHandler(t)
 	for name, body := range map[string]string{
 		"misspelled path":         `{"paths":{"secret/*":{"capabilities":["read"]}}}`,
-		"required_parameters":     `{"path":{"secret/*":{"capabilities":["update"],"required_parameters":["k"]}}}`,
+		"min_wrapping_ttl":        `{"path":{"secret/*":{"capabilities":["update"],"min_wrapping_ttl":"1h"}}}`,
+		"required star":           `{"path":{"secret/*":{"capabilities":["update"],"required_parameters":["*"]}}}`,
 		"null parameter list":     `{"path":{"secret/*":{"capabilities":["update"],"allowed_parameters":{"k":null}}}}`,
 		"object parameter value":  `{"path":{"secret/*":{"capabilities":["update"],"denied_parameters":{"k":[{"a":1}]}}}}`,
 		"wrapped with extra keys": `{"policy":"path \"a\" { capabilities = [\"read\"] }","name":"x"}`,

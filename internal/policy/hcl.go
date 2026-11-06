@@ -18,6 +18,7 @@ import (
 //	    "*"        = []
 //	  }
 //	  denied_parameters = { "ttl" = [] }  # optional
+//	  required_parameters = ["bound_claims"]  # optional
 //	}
 //
 // Parameter values are strings or the booleans true/false; numbers are not
@@ -272,6 +273,16 @@ func (p *tokenParser) pathBody(pattern string) (Rule, error) {
 			} else {
 				rule.DeniedParameters = params
 			}
+		case "required_parameters":
+			if _, err := p.expect(tokEquals); err != nil {
+				return Rule{}, wrapMalformed(err)
+			}
+			if rule.RequiredParameters, err = p.stringList(); err != nil {
+				return Rule{}, err
+			}
+			if err := validateRequired(rule.RequiredParameters); err != nil {
+				return Rule{}, err
+			}
 		default:
 			return Rule{}, wrapMalformed(fmt.Errorf("unsupported attribute %q", key))
 		}
@@ -341,6 +352,28 @@ func (p *tokenParser) valueList() ([]any, error) {
 			return nil, wrapMalformed(fmt.Errorf("unexpected value %q", t.val))
 		}
 		p.pos++
+		if p.toks[p.pos].kind == tokComma {
+			p.pos++
+		}
+	}
+}
+
+// stringList parses `[ "a", "b" ]`.
+func (p *tokenParser) stringList() ([]string, error) {
+	if _, err := p.expect(tokLBracket); err != nil {
+		return nil, wrapMalformed(err)
+	}
+	out := []string{}
+	for {
+		if p.toks[p.pos].kind == tokRBracket {
+			p.pos++
+			return out, nil
+		}
+		v, err := p.expect(tokString)
+		if err != nil {
+			return nil, wrapMalformed(err)
+		}
+		out = append(out, v)
 		if p.toks[p.pos].kind == tokComma {
 			p.pos++
 		}

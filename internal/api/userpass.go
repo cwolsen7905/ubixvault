@@ -9,11 +9,15 @@ import (
 	"github.com/cwolsen7905/ubixvault/internal/userpass"
 )
 
+// userpassUserRequest is a user write; every field is optional (see
+// partial.go). Without a password an existing user keeps theirs; a new user
+// needs one.
 type userpassUserRequest struct {
-	Password    string        `json:"password"`
-	Policies    []string      `json:"policies"`
-	TokenTTL    vaultDuration `json:"token_ttl"`
-	TokenMaxTTL vaultDuration `json:"token_max_ttl"`
+	Password      string         `json:"password"`
+	Policies      *stringList    `json:"policies"`
+	TokenPolicies *stringList    `json:"token_policies"` // Vault's current name; wins over policies
+	TokenTTL      *vaultDuration `json:"token_ttl"`
+	TokenMaxTTL   *vaultDuration `json:"token_max_ttl"`
 }
 
 type userpassLoginRequest struct {
@@ -25,16 +29,22 @@ func (h *Handler) userpassWriteUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ttl, ok := parseOptionalDuration(w, string(req.TokenTTL), "token_ttl")
+	ttl, ok := optionalDuration(w, req.TokenTTL, "token_ttl")
 	if !ok {
 		return
 	}
-	maxTTL, ok := parseMaxTTL(w, req.TokenMaxTTL, ttl)
+	maxTTL, ok := optionalDuration(w, req.TokenMaxTTL, "token_max_ttl")
 	if !ok {
 		return
 	}
-	if err := h.userpass.WriteUser(r.Context(), r.PathValue("username"), req.Password, req.Policies, ttl, maxTTL); err != nil {
-		writeUserpassError(w, err)
+	err := h.userpass.UpdateUser(r.Context(), r.PathValue("username"), req.Password, func(u *userpass.UserInfo) error {
+		applyList(&u.Policies, firstSet(req.TokenPolicies, req.Policies))
+		apply(&u.TokenTTL, ttl)
+		apply(&u.TokenMaxTTL, maxTTL)
+		return checkTTL(u.TokenTTL, u.TokenMaxTTL)
+	})
+	if err != nil {
+		writeRoleUpdateError(w, err, writeUserpassError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -46,7 +56,12 @@ func (h *Handler) userpassReadUser(w http.ResponseWriter, r *http.Request) {
 		writeUserpassError(w, err)
 		return
 	}
-	writeData(w, map[string]any{"policies": info.Policies, "token_ttl": info.TokenTTL.String(), "token_max_ttl": info.TokenMaxTTL.String()})
+	writeData(w, map[string]any{
+		"policies":       info.Policies,
+		"token_policies": info.Policies,
+		"token_ttl":      info.TokenTTL.String(),
+		"token_max_ttl":  info.TokenMaxTTL.String(),
+	})
 }
 
 func (h *Handler) userpassListUsers(w http.ResponseWriter, r *http.Request) {

@@ -26,13 +26,26 @@ func validateParameters(field string, params map[string][]any) error {
 	return nil
 }
 
+// validateRequired checks a required_parameters list: non-empty names without
+// surrounding space (a padded name can never match a body key, so it would
+// lock the path), and no "*" (Vault gives it no meaning there).
+func validateRequired(names []string) error {
+	for _, n := range names {
+		if n == "" || n == "*" || strings.TrimSpace(n) != n {
+			return fmt.Errorf("%w: required_parameters: %q is not a parameter name", ErrMalformedPolicy, n)
+		}
+	}
+	return nil
+}
+
 // Parameters are the parameter limits that govern one write request: those of
 // the most specific rule granting the capability, merged across policies that
 // share that path. Keys are folded with [foldName]. A nil *Parameters limits
 // nothing.
 type Parameters struct {
-	allowed map[string][]any
-	denied  map[string][]any
+	allowed  map[string][]any
+	denied   map[string][]any
+	required map[string]bool
 }
 
 // Parameters returns the limits on a request's parameters for any of caps on
@@ -61,17 +74,24 @@ func (a *ACL) Parameters(path string, caps ...Capability) *Parameters {
 		return nil
 	}
 	var allowed, denied map[string][]any
+	var required map[string]bool
 	for _, r := range a.rules {
 		if r.Path != best || !grantsAny(r.Capabilities, caps) {
 			continue
 		}
 		allowed = mergeParameters(allowed, r.AllowedParameters)
 		denied = mergeParameters(denied, r.DeniedParameters)
+		for _, n := range r.RequiredParameters { // merged as a union, as in Vault
+			if required == nil {
+				required = map[string]bool{}
+			}
+			required[foldName(n)] = true
+		}
 	}
-	if len(allowed) == 0 && len(denied) == 0 {
+	if len(allowed) == 0 && len(denied) == 0 && len(required) == 0 {
 		return nil
 	}
-	return &Parameters{allowed: allowed, denied: denied}
+	return &Parameters{allowed: allowed, denied: denied, required: required}
 }
 
 func grantsAny(have, want []Capability) bool {
@@ -117,7 +137,12 @@ func mergeParameters(dst, src map[string][]any) map[string][]any {
 // Allows reports whether a request with the given body parameters satisfies
 // the limits, following Vault:
 //
-//   - A request without parameters is allowed.
+//   - required_parameters: each listed name must be sent with a non-null
+//     value, merged across policies as a union. This is checked first, so it
+//     also refuses a request without parameters. It guarantees presence only:
+//     an empty value such as {} or "" satisfies it, as in Vault. (null does
+//     not, because handlers treat null as "not sent".)
+//   - Otherwise a request without parameters is allowed.
 //   - denied_parameters: a "*" key refuses any request with parameters; a
 //     named parameter is refused if its value is listed, or always when its
 //     list is empty. Denial wins over allowed_parameters.
@@ -137,7 +162,33 @@ func mergeParameters(dst, src map[string][]any) map[string][]any {
 // Parameter names match the way the handler's JSON decoder matches them (see
 // [foldName]), so a name the decoder treats as "policies" is limited as one.
 func (p *Parameters) Allows(data map[string]any) bool {
-	if p == nil || len(data) == 0 {
+	if p == nil {
+		return true
+	}
+	if len(p.required) > 0 {
+		// Handlers read null as "not sent", and the JSON decoder applies keys
+		// that fold to the same field in order, so {"a":{},"A":null} ends up
+		// unset. A name counts as sent only if no key folding to it is null.
+		present := make(map[string]bool, len(data))
+		nulled := make(map[string]bool)
+		for name, value := range data {
+			key := foldName(name)
+			if value == nil {
+				nulled[key] = true
+				continue
+			}
+			present[key] = true
+		}
+		for key := range nulled {
+			delete(present, key)
+		}
+		for name := range p.required {
+			if !present[name] {
+				return false
+			}
+		}
+	}
+	if len(data) == 0 {
 		return true
 	}
 	if len(p.denied) > 0 {

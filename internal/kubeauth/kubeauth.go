@@ -77,6 +77,8 @@ type Method struct {
 
 	mu       sync.Mutex
 	reviewer TokenReviewer
+
+	writeMu sync.Mutex // serializes role writes, so updates are atomic
 }
 
 // New returns a method storing under prefix (e.g. "auth/kubernetes") that mints
@@ -153,6 +155,35 @@ func (m *Method) ensureReady(ctx context.Context) error {
 
 // WriteRole creates or replaces a role.
 func (m *Method) WriteRole(ctx context.Context, name string, role Role) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	return m.writeRole(ctx, name, role)
+}
+
+// UpdateRole applies change to the stored role (a zero Role if there is none)
+// and writes the result, with no other write in between, so concurrent
+// partial updates cannot drop each other's fields. Only the active node
+// writes (standbys forward), so an in-process lock is enough.
+func (m *Method) UpdateRole(ctx context.Context, name string, change func(*Role) error) error {
+	if !validName(name) {
+		return ErrInvalidName
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	v := Role{}
+	switch existing, err := m.ReadRole(ctx, name); {
+	case err == nil:
+		v = *existing
+	case !errors.Is(err, ErrRoleNotFound):
+		return err
+	}
+	if err := change(&v); err != nil {
+		return err
+	}
+	return m.writeRole(ctx, name, v)
+}
+
+func (m *Method) writeRole(ctx context.Context, name string, role Role) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
@@ -202,6 +233,8 @@ func (m *Method) DeleteRole(ctx context.Context, name string) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	if err := m.store.Delete(ctx, m.roleKey(name)); err != nil {
 		return fmt.Errorf("kubeauth: delete role: %w", err)
 	}

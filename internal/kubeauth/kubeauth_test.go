@@ -3,9 +3,11 @@ package kubeauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -278,5 +280,36 @@ func TestLoginAppliesRoleTTL(t *testing.T) {
 	}
 	if left := time.Until(def.ExpiresAt); left < token.DefaultTTL-time.Minute {
 		t.Fatalf("no role ttl: token expires in %v, want the default %v", left, token.DefaultTTL)
+	}
+}
+
+// Concurrent partial updates must not drop each other's changes.
+func TestUpdateRoleIsAtomic(t *testing.T) {
+	m := newMethod(t, nil)
+	ctx := context.Background()
+	if err := m.WriteRole(ctx, "x", Role{Policies: []string{"base"}}); err != nil {
+		t.Fatal(err)
+	}
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := m.UpdateRole(ctx, "x", func(v *Role) error {
+				v.Policies = append(append([]string{}, v.Policies...), fmt.Sprintf("p%d", i))
+				return nil
+			}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	got, err := m.ReadRole(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Policies) != n+1 {
+		t.Fatalf("got %d policies, want %d: updates were lost", len(got.Policies), n+1)
 	}
 }

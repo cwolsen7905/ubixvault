@@ -137,16 +137,12 @@ func capabilitiesOn(acl *policy.ACL, tok *token.Token, path string) ([]string, e
 	return merged, nil
 }
 
-// builtinCapabilities are the grants authorize makes without an ACL, written
-// as Vault's default policy writes them.
+// builtinCapabilities are the grants authorize makes without an ACL. authorize
+// lets these paths through for any HTTP method, so the set reported is the
+// enforced one: every capability but sudo.
 func builtinCapabilities(path string) []string {
-	switch {
-	case path == cubbyholeMountPrefix || strings.HasPrefix(path, cubbyholeMountPrefix+"/"):
+	if path == cubbyholeMountPrefix || strings.HasPrefix(path, cubbyholeMountPrefix+"/") || selfTokenPaths[path] {
 		return []string{"create", "delete", "list", "read", "update"}
-	case path == "auth/token/lookup-self":
-		return []string{"read"}
-	case selfTokenPaths[path]:
-		return []string{"update"}
 	}
 	return nil
 }

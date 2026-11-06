@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cwolsen7905/ubixvault/internal/storage"
@@ -54,6 +55,8 @@ type Method struct {
 	store  Storage
 	tokens *token.Store
 	prefix string
+
+	writeMu sync.Mutex // serializes writes, so updates are atomic
 }
 
 // New returns a method storing under prefix (e.g. "auth/cert").
@@ -67,6 +70,35 @@ func validName(name string) bool { return name != "" && !strings.Contains(name, 
 
 // WriteCert creates or replaces a cert role.
 func (m *Method) WriteCert(ctx context.Context, name string, role CertRole) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	return m.writeCert(ctx, name, role)
+}
+
+// UpdateCert applies change to the stored cert role (a zero CertRole if there is none)
+// and writes the result, with no other write in between, so concurrent
+// partial updates cannot drop each other's fields. Only the active node
+// writes (standbys forward), so an in-process lock is enough.
+func (m *Method) UpdateCert(ctx context.Context, name string, change func(*CertRole) error) error {
+	if !validName(name) {
+		return ErrInvalidName
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	v := CertRole{}
+	switch existing, err := m.ReadCert(ctx, name); {
+	case err == nil:
+		v = *existing
+	case !errors.Is(err, ErrCertNotFound):
+		return err
+	}
+	if err := change(&v); err != nil {
+		return err
+	}
+	return m.writeCert(ctx, name, v)
+}
+
+func (m *Method) writeCert(ctx context.Context, name string, role CertRole) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
@@ -119,6 +151,8 @@ func (m *Method) DeleteCert(ctx context.Context, name string) error {
 	if !validName(name) {
 		return ErrInvalidName
 	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	if err := m.store.Delete(ctx, m.certKey(name)); err != nil {
 		return fmt.Errorf("certauth: delete role: %w", err)
 	}
