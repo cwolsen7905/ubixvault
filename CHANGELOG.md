@@ -22,16 +22,23 @@ All notable changes to uBixVault are documented here. The format is based on
   grant such as `auth/*` doesn't lift limits set on `auth/jwt/role/*`.
   Policies without these fields behave as before. Not supported: limits on
   `GET` query parameters.
-- **JWT roles accept `token_policies`** (Vault's current name; it wins over
-  `policies`), and `policies`, `token_policies` and `bound_audiences` accept a
-  comma-separated string as well as a list. Role reads return `token_policies`.
+- **Every auth method's roles accept `token_policies`** (Vault's current name;
+  it wins over `policies`): JWT, Kubernetes, AppRole, cert and userpass. List
+  fields (policies, bound audiences, service account names and namespaces,
+  allowed common names) accept a comma-separated string as well as a list.
+  Reads return `token_policies`. Kubernetes roles also accept `token_ttl` (wins
+  over `ttl`) and return both.
 
 ### Changed
 
-- **A JWT role write to an existing role changes only the fields it sends**, as
-  in Vault. It used to replace the whole role, so an update without `policies`
-  was refused and one without `bound_claims` cleared them. To clear a field, send
-  it empty (`"bound_claims": {}`).
+- **A role write to an existing role changes only the fields it sends**, as in
+  Vault, for JWT, Kubernetes, AppRole and cert roles and userpass users. It used
+  to replace the whole role, so an update without `policies` was refused and
+  one without, say, `bound_claims` cleared them. To clear a field, send it empty
+  (`"bound_claims": {}`). A userpass update without `password` keeps the current
+  one; a new user still needs one. Concurrent updates to one role are
+  serialized, so neither is lost. The `token_ttl` ≤ `token_max_ttl` check now
+  applies to the merged role.
 
 ### Security
 

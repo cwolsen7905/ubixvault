@@ -3,7 +3,9 @@ package userpass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,5 +89,36 @@ func TestPasswordUpdate(t *testing.T) {
 	}
 	if _, err := m.Login(ctx, "carol", "new"); err != nil {
 		t.Fatalf("new password should work: %v", err)
+	}
+}
+
+// Concurrent partial updates must not drop each other's changes.
+func TestUpdateUserIsAtomic(t *testing.T) {
+	m := newMethod(t)
+	ctx := context.Background()
+	if err := m.WriteUser(ctx, "x", "pw", []string{"base"}, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := m.UpdateUser(ctx, "x", "", func(v *UserInfo) error {
+				v.Policies = append(append([]string{}, v.Policies...), fmt.Sprintf("p%d", i))
+				return nil
+			}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	got, err := m.ReadUser(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Policies) != n+1 {
+		t.Fatalf("got %d policies, want %d: updates were lost", len(got.Policies), n+1)
 	}
 }
