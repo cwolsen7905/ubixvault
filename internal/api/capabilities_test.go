@@ -136,3 +136,27 @@ func TestCapabilitiesSelfTokenPathsMatchAuthorize(t *testing.T) {
 		}
 	}
 }
+
+// Requested paths are cleaned as the router cleans request URLs, so dot
+// segments cannot borrow another path's grant.
+func TestCapabilitiesSelfCleansPaths(t *testing.T) {
+	h, root := unsealedHandler(t)
+	setPolicy(t, h, root, "app", `{"path":{"secret/data/app/*":{"capabilities":["read"]},"secret/data/ro/":{"capabilities":["list"]}}}`)
+	tok := tokenWith(t, h, root, `{"policies":["app"],"ttl":"1h"}`)
+	resp := capsOf(t, h, "/v1/sys/capabilities-self",
+		`{"paths":["secret/data/app/../admin","secret/data/app/x","secret//data/app/x","/secret/data/app/./x","secret/data/app/../app/y","../secret/data/admin","secret/data/ro/"]}`, tok)
+	data := resp["data"].(map[string]any)
+	for p, want := range map[string][]any{
+		"secret/data/app/../admin": {"deny"},
+		"secret/data/app/x":        {"read"},
+		"secret//data/app/x":       {"read"},
+		"/secret/data/app/./x":     {"read"},
+		"secret/data/app/../app/y": {"read"},
+		"../secret/data/admin":     {"deny"},
+		"secret/data/ro/":          {"list"}, // trailing slash kept
+	} {
+		if !reflect.DeepEqual(data[p], want) {
+			t.Errorf("%q = %v, want %v", p, data[p], want)
+		}
+	}
+}
