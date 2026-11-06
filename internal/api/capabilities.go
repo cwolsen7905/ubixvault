@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 
@@ -88,7 +89,7 @@ func (h *Handler) writeCapabilities(ctx context.Context, w http.ResponseWriter, 
 	}
 	out := map[string]any{}
 	for _, p := range paths {
-		caps, err := capabilitiesOn(acl, tok, strings.TrimPrefix(p, "/"))
+		caps, err := capabilitiesOn(acl, tok, cleanRequestPath(p))
 		if err != nil {
 			writeInternal(w, err)
 			return
@@ -106,6 +107,18 @@ func (h *Handler) writeCapabilities(ctx context.Context, w http.ResponseWriter, 
 		body[k] = v
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// cleanRequestPath normalises a requested path the way the HTTP router does
+// before authorize sees it: dot segments and duplicate slashes go, and so does
+// the leading slash. A trailing slash is kept, since it matters to list paths
+// and to rules ending in a slash.
+func cleanRequestPath(p string) string {
+	c := strings.TrimPrefix(path.Clean("/"+p), "/")
+	if c != "" && strings.HasSuffix(p, "/") {
+		c += "/"
+	}
+	return c
 }
 
 // capabilitiesOn is what tok may do on path, mirroring authorize: root gets
