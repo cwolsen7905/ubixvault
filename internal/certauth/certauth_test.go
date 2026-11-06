@@ -9,7 +9,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -159,5 +161,37 @@ func TestWriteCertValidation(t *testing.T) {
 	}
 	if err := m.WriteCert(ctx, "bad/name", CertRole{Certificate: caPEM, Policies: []string{"p"}}); !errors.Is(err, ErrInvalidName) {
 		t.Errorf("bad name: want ErrInvalidName, got %v", err)
+	}
+}
+
+// Concurrent partial updates must not drop each other's changes.
+func TestUpdateCertIsAtomic(t *testing.T) {
+	m := newMethod(t)
+	ctx := context.Background()
+	_, _, caPEM := makeCA(t)
+	if err := m.WriteCert(ctx, "x", CertRole{Certificate: caPEM, Policies: []string{"base"}}); err != nil {
+		t.Fatal(err)
+	}
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := m.UpdateCert(ctx, "x", func(v *CertRole) error {
+				v.Policies = append(append([]string{}, v.Policies...), fmt.Sprintf("p%d", i))
+				return nil
+			}); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	got, err := m.ReadCert(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Policies) != n+1 {
+		t.Fatalf("got %d policies, want %d: updates were lost", len(got.Policies), n+1)
 	}
 }

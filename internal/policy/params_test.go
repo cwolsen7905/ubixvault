@@ -183,7 +183,13 @@ path "auth/jwt/role/*" {
 		`path "x" { allowed_parameters = { "a" = [] } }`,
 		`path "x" { capabilities = ["update"] allowed_parameters = { "a" = [1] } }`,
 		`path "x" { capabilities = ["update"] allowed_parameters = { "a" = [] "a" = ["b"] } }`,
-		`path "x" { capabilities = ["update"] required_parameters = ["a"] }`,
+		`path "x" { capabilities = ["update"] min_wrapping_ttl = "1h" }`,
+		`path "x" { capabilities = ["update"] required_parameters = [1] }`,
+		`path "x" { capabilities = ["update"] required_parameters = [" bound_claims"] }`,
+		`path "x" { capabilities = ["update"] required_parameters = ["*"] }`,
+		`path "x" { capabilities = ["update"] required_parameters = ["a",,"b"] }`,
+		`path "x" { capabilities = ["update"] allowed_parameters = { "a" = ["x",,"y"] } }`,
+		`{"path":{"x":{"capabilities":["update"],"required_parameters":["bound_claims "]}}}`,
 		`path "x" { capabilities = ["update"] allowed_parameters = { "a" = [`,
 	} {
 		if _, err := ParseDocument("p", []byte(bad)); err == nil {
@@ -222,5 +228,40 @@ func TestCapabilitiesMatchesAllows(t *testing.T) {
 		if got := acl.Capabilities(path); !reflect.DeepEqual(got, []string{"deny"}) {
 			t.Errorf("%s: Capabilities = %v, want [deny]", path, got)
 		}
+	}
+}
+
+func TestRequiredParameters(t *testing.T) {
+	p := mustParse(t, `{"path":{"auth/jwt/role/*":{"capabilities":["create","update"],"required_parameters":["bound_claims"]}}}`)
+	params := NewACL(p).Parameters("auth/jwt/role/a", Create, Update)
+	for data, want := range map[string]bool{
+		`{}`:                                      false,
+		`{"policies":["x"]}`:                      false,
+		`{"bound_claims":{"sub":"x"}}`:            true,
+		`{"BOUND_CLAIMS":{}}`:                     true,
+		`{"bound_claim\u017f":{}}`:                true,  // decodes as bound_claims, so it is present
+		`{"bound_claims":null,"other":1}`:         false, // null reads as "not sent"
+		`{"bound_claims":{}}`:                     true,  // presence only, as in Vault
+		`{"bound_claims":{},"BOUND_CLAIMS":null}`: false, // decoder: the later null wins
+		`{"BOUND_CLAIMS":null,"bound_claims":{}}`: false, // refused either way round
+	} {
+		if got := params.Allows(body(t, data)); got != want {
+			t.Errorf("Allows(%s) = %v, want %v", data, got, want)
+		}
+	}
+	// Merged as a union across policies on the same path.
+	q := mustParse(t, `{"path":{"auth/jwt/role/*":{"capabilities":["update"],"required_parameters":["token_ttl"]}}}`)
+	merged := NewACL(p, q).Parameters("auth/jwt/role/a", Update)
+	if merged.Allows(body(t, `{"bound_claims":{}}`)) || !merged.Allows(body(t, `{"bound_claims":{},"token_ttl":"1h"}`)) {
+		t.Error("required_parameters should merge as a union")
+	}
+	// HCL form, and it reads back.
+	h := mustParse(t, `path "x" {
+  capabilities = ["update"]
+  required_parameters = ["a", "b"]
+}`)
+	doc, _ := h.Document()
+	if !strings.Contains(string(doc), `"required_parameters":["a","b"]`) {
+		t.Fatalf("document %s", doc)
 	}
 }
