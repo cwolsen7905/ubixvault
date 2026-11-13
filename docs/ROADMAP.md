@@ -184,6 +184,7 @@ partial analogs are completed.
 - [~] **Transit extras** — key derivation + convergent encryption **shipped** (stdlib HKDF); BYOK import still to do.
 - [x] **Cubbyhole** — per-token private storage, destroyed on token revoke.
 - [x] **OIDC discovery** — resolve the JWKS URL from `.well-known/openid-configuration`.
+- [x] **Delegated policy administration** (1.7.0) — ACL `allowed_parameters` / `denied_parameters` / `required_parameters` (ADR D-024); partial role updates and `token_policies` on every auth method; `sys/capabilities(-self)`; roles can no longer grant `root`.
 
 ### Toward Vault Enterprise parity (Enterprise-differentiated features)
 Mostly large and compliance-oriented; listed so the gap is explicit (see

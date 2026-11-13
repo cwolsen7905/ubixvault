@@ -71,7 +71,7 @@ communicate openly if a fix needs longer.
 
 ## Raft integrated storage (experimental)
 
-`-storage raft` / chart `storage.type=raft` is **experimental** in 1.6.0: it has
+`-storage raft` / chart `storage.type=raft` is **experimental** (since 1.6.0): it has
 had no production soak and no independent review, and the points below are the
 security-relevant parts of running it. Full detail:
 [`docs/design/raft-storage.md`](docs/design/raft-storage.md) and

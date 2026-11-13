@@ -6,6 +6,14 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-12
+
+> Delegated administration you can trust: an operator can be allowed to manage
+> auth roles without being able to make themselves root. ACL policies gain
+> Vault's parameter limits, roles take partial updates, and tokens can ask what
+> they may do. **Breaking for anyone relying on it:** a role that lists `root`
+> no longer logs in (see Security).
+
 ### Added
 
 - **`sys/capabilities-self` and `sys/capabilities`**, as in Vault: what a
@@ -50,6 +58,11 @@ All notable changes to uBixVault are documented here. The format is based on
   one; a new user still needs one. Concurrent updates to one role are
   serialized, so neither is lost. The `token_ttl` ≤ `token_max_ttl` check now
   applies to the merged role.
+- **Chart 0.1.23 (appVersion 1.7.0), with image and metadata pointing at
+  `ubixsys`** (since 0.1.22). `image.repository` defaults to
+  `ghcr.io/ubixsys/ubixvault`; Chart `home`/`sources`/maintainer, the Makefile
+  `IMAGE` and the cosign example in `DEPLOYMENT.md` follow the canonical
+  `github.com/ubixsys/ubixvault` repo.
 
 ### Security
 
@@ -63,12 +76,6 @@ All notable changes to uBixVault are documented here. The format is based on
   `root` is refused. All as in Vault. **If a role already lists `root`, logins
   through it now fail: remove `root` from it.**
 
-### Changed
-
-- **Chart 0.1.22: image and metadata now point at `ubixsys`.** `image.repository`
-  defaults to `ghcr.io/ubixsys/ubixvault`; Chart `home`/`sources`/maintainer, the
-  Makefile `IMAGE` and the cosign example in `DEPLOYMENT.md` follow the canonical
-  `github.com/ubixsys/ubixvault` repo.
 
 ## [1.6.0] — 2026-10-14
 
@@ -714,6 +721,8 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
+[1.7.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.7.0
+[1.6.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.6.0
 [1.5.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.5.0
 [1.4.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.4.0
 [1.3.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.3.0
