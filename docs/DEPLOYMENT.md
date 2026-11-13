@@ -573,8 +573,8 @@ and carry an **SPDX SBOM attestation**, both produced in CI via GitHub OIDC and
 bound to the image digest. Verify a release before deploying:
 
 ```sh
-IMAGE=ghcr.io/ubixsys/ubixvault:1.6.0
-IDENTITY='https://github.com/ubixsys/ubixvault/.github/workflows/image.yml@refs/tags/v1.6.0'
+IMAGE=ghcr.io/ubixsys/ubixvault:1.7.0
+IDENTITY='https://github.com/ubixsys/ubixvault/.github/workflows/image.yml@refs/tags/v1.7.0'
 
 # Verify the signature came from this repo's release workflow.
 cosign verify "$IMAGE" \

@@ -6,6 +6,14 @@ All notable changes to uBixVault are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-12
+
+> Delegated administration you can trust: an operator can be allowed to manage
+> auth roles without being able to make themselves root. ACL policies gain
+> Vault's parameter limits, roles take partial updates, and tokens can ask what
+> they may do. **Breaking for anyone relying on it:** a role that lists `root`
+> no longer logs in (see Security).
+
 ### Added
 
 - **`sys/capabilities-self` and `sys/capabilities`**, as in Vault: what a
@@ -50,6 +58,10 @@ All notable changes to uBixVault are documented here. The format is based on
   one; a new user still needs one. Concurrent updates to one role are
   serialized, so neither is lost. The `token_ttl` ≤ `token_max_ttl` check now
   applies to the merged role.
+- **Chart 0.1.23 (appVersion 1.7.0): image and metadata point at `ubixsys`.**
+  `image.repository` defaults to `ghcr.io/ubixsys/ubixvault`; Chart
+  `home`/`sources`/maintainer, the Makefile `IMAGE` and the cosign example in
+  `DEPLOYMENT.md` follow the canonical `github.com/ubixsys/ubixvault` repo.
 
 ### Security
 
@@ -63,12 +75,6 @@ All notable changes to uBixVault are documented here. The format is based on
   `root` is refused. All as in Vault. **If a role already lists `root`, logins
   through it now fail: remove `root` from it.**
 
-### Changed
-
-- **Chart 0.1.22: image and metadata now point at `ubixsys`.** `image.repository`
-  defaults to `ghcr.io/ubixsys/ubixvault`; Chart `home`/`sources`/maintainer, the
-  Makefile `IMAGE` and the cosign example in `DEPLOYMENT.md` follow the canonical
-  `github.com/ubixsys/ubixvault` repo.
 
 ## [1.6.0] — 2026-10-14
 
@@ -714,17 +720,19 @@ Eleventh beta: cloud-KMS / HSM auto-unseal — the last 1.0 engineering gate.
   a failing or slow command leaves the vault sealed (fail-safe). Joins the static
   KEK and transit seals behind the same interface.
 
-[1.5.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.5.0
-[1.4.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.4.0
-[1.3.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.3.0
-[1.2.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.1
-[1.2.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.2.0
-[1.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.1.0
-[1.0.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0
-[1.0.0-rc.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.2
-[1.0.0-rc.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v1.0.0-rc.1
-[0.2.0-beta.12]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.12
-[0.2.0-beta.11]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.11
+[1.7.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.7.0
+[1.6.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.6.0
+[1.5.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.5.0
+[1.4.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.4.0
+[1.3.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.3.0
+[1.2.1]: https://github.com/ubixsys/ubixvault/releases/tag/v1.2.1
+[1.2.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.2.0
+[1.1.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.1.0
+[1.0.0]: https://github.com/ubixsys/ubixvault/releases/tag/v1.0.0
+[1.0.0-rc.2]: https://github.com/ubixsys/ubixvault/releases/tag/v1.0.0-rc.2
+[1.0.0-rc.1]: https://github.com/ubixsys/ubixvault/releases/tag/v1.0.0-rc.1
+[0.2.0-beta.12]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.12
+[0.2.0-beta.11]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.11
 
 ## [0.2.0-beta.10] — 2026-08-19
 
@@ -782,7 +790,7 @@ live unseal-share rotation, and scheduled backups.
   durability), using a least-privilege `sys/snapshot` token. Chart bumped to
   0.1.9; the README documents the token/policy setup and the restore procedure.
 
-[0.2.0-beta.9]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.9
+[0.2.0-beta.9]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.9
 
 ## [0.2.0-beta.8] — 2026-08-06
 
@@ -815,7 +823,7 @@ Eighth beta: Transit grows into full crypto-as-a-service, plus response wrapping
   signatures can be verified without the vault. Symmetric-only operations
   (encrypt/decrypt/hmac) reject signing keys and vice versa.
 
-[0.2.0-beta.8]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.8
+[0.2.0-beta.8]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.8
 
 ## [0.2.0-beta.7] — 2026-07-30
 
@@ -832,7 +840,7 @@ Seventh beta: JWT/OIDC login, completing the auth-method set.
   a policy set and token TTL. Login validates `exp`/`nbf`, the bound issuer,
   audiences, and per-claim bindings before issuing the token.
 
-[0.2.0-beta.7]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.7
+[0.2.0-beta.7]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.7
 
 ## [0.2.0-beta.6] — 2026-07-30
 
@@ -851,7 +859,7 @@ Sixth beta: human login (userpass) and certificate management from the console.
   type), and issue certificates. Issued cert/key/CA render as copy-able PEM
   blocks, with a "shown once" warning on the private key.
 
-[0.2.0-beta.6]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.6
+[0.2.0-beta.6]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.6
 
 ## [0.2.0-beta.5] — 2026-07-29
 
@@ -883,7 +891,7 @@ auto-unseal, and security hardening.
   modes. Chart: `sealTransit.*` (mutually exclusive with `autoUnseal`). No new
   dependency — the Transit paths are Vault-compatible.
 
-[0.2.0-beta.5]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.5
+[0.2.0-beta.5]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.5
 
 ## [0.2.0-beta.4] — 2026-07-29
 
@@ -904,7 +912,7 @@ Fourth beta: machine authentication and API hardening.
   requests get `429` with `Retry-After`. Exposed in the Helm chart via
   `rateLimit.*`.
 
-[0.2.0-beta.4]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.4
+[0.2.0-beta.4]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.4
 
 ## [0.2.0-beta.3] — 2026-07-25
 
@@ -924,7 +932,7 @@ Third beta: the web console gains full read/write management.
   `textContent`, and every write is an audited `/v1` call requiring the token's
   capabilities.
 
-[0.2.0-beta.3]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.3
+[0.2.0-beta.3]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.3
 
 ## [0.2.0-beta.2] — 2026-07-25
 
@@ -953,7 +961,7 @@ fix.
   Vanilla HTML/JS/CSS served from the binary under a strict CSP (no external
   assets, no new dependency).
 
-[0.2.0-beta.2]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.2
+[0.2.0-beta.2]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.2
 
 ## [0.2.0-beta.1] — 2026-07-23
 
@@ -997,7 +1005,7 @@ security review.
 - The in-house HCL parser is a policy-grammar subset, not full HCL.
 - Cascading revocation and lease renewal cover dynamic-database leases.
 
-[0.2.0-beta.1]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.2.0-beta.1
+[0.2.0-beta.1]: https://github.com/ubixsys/ubixvault/releases/tag/v0.2.0-beta.1
 
 ## [0.1.0] — 2026-07-19
 
@@ -1052,4 +1060,4 @@ authenticated, authorized, audited HTTP API.
 - The in-memory unseal progress and the audit device's HMAC salt are
   per-process; cross-restart correlation of audit entries is future work.
 
-[0.1.0]: https://github.com/cwolsen7905/ubixvault/releases/tag/v0.1.0
+[0.1.0]: https://github.com/ubixsys/ubixvault/releases/tag/v0.1.0

@@ -42,7 +42,7 @@ credentials — over a Vault-API-compatible HTTP interface.
 
 ## Raft integrated storage (experimental)
 
-> **EXPERIMENTAL in 1.6.0.** Raft storage has not had a production soak. It
+> **EXPERIMENTAL (since 1.6.0).** Raft storage has not had a production soak. It
 > ships behind this label so it can be tried, tested and migrated to on
 > non-critical clusters; the label is dropped only after a dev/prod soak.
 > Like everything here it has **not been independently security-audited** (see
