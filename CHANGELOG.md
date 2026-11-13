@@ -58,11 +58,10 @@ All notable changes to uBixVault are documented here. The format is based on
   one; a new user still needs one. Concurrent updates to one role are
   serialized, so neither is lost. The `token_ttl` ≤ `token_max_ttl` check now
   applies to the merged role.
-- **Chart 0.1.23 (appVersion 1.7.0), with image and metadata pointing at
-  `ubixsys`** (since 0.1.22). `image.repository` defaults to
-  `ghcr.io/ubixsys/ubixvault`; Chart `home`/`sources`/maintainer, the Makefile
-  `IMAGE` and the cosign example in `DEPLOYMENT.md` follow the canonical
-  `github.com/ubixsys/ubixvault` repo.
+- **Chart 0.1.23 (appVersion 1.7.0): image and metadata point at `ubixsys`.**
+  `image.repository` defaults to `ghcr.io/ubixsys/ubixvault`; Chart
+  `home`/`sources`/maintainer, the Makefile `IMAGE` and the cosign example in
+  `DEPLOYMENT.md` follow the canonical `github.com/ubixsys/ubixvault` repo.
 
 ### Security
 
