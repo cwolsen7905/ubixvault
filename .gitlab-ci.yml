@@ -183,6 +183,11 @@ console-e2e:
 # The sign-off job from the include above. It runs in an alpine image (curl, jq), so it goes
 # to the instance's k8s runner, which takes tagged jobs only and honours each job's image;
 # the shell runner would ignore the image. Reads approvals with the group's
-# AI_REVIEW_GITLAB_TOKEN; without it the job passes as UNVERIFIED.
+# AI_REVIEW_GITLAB_TOKEN. The shared script passes as UNVERIFIED when it has no token; a
+# secrets manager's gate fails closed (CONTRIBUTING), so before_script refuses to start
+# without one. (An unreachable GitLab still reads as UNVERIFIED inside the shared script;
+# closing that needs an option upstream in uBixCore's ci/bin/require-approval.sh.)
 require-approval:
   tags: [k8s]
+  before_script:
+    - '[ -n "${APPROVAL_GITLAB_TOKEN:-${AI_REVIEW_GITLAB_TOKEN:-}}" ] || { echo "require-approval: FAILED: no APPROVAL_GITLAB_TOKEN or AI_REVIEW_GITLAB_TOKEN, so the sign-off cannot be checked; failing closed."; exit 1; }'
