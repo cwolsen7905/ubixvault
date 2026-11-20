@@ -20,6 +20,14 @@ include:
   - project: ubixsys/ubixkelpie
     ref: 788c9416214a6bdf4ceaffd851eaf34ac7850a38
     file: ci/kelpie.yml
+  # The merge sign-off gate: an Approve or a thumbs-up from an owner before merge
+  # (ubixcore docs/ci-require-approval.md). Runs in .post, after the checks below. Kelpie's
+  # prod webhook retries it the moment someone signs off. Pinned to the uBixCore commit that
+  # last changed the include, the same pin as replikate: no release ships it yet (v0.47.0
+  # predates it). Switch to the first v* tag that contains it once there is one.
+  - project: ubixsys/ubixcore
+    ref: aaa3fb5f0272a8eeb6aa7debac0bf46d718402b4
+    file: ci/require-approval.yml
 
 stages: [test]
 
@@ -36,6 +44,7 @@ default:
 
 variables:
   AI_REVIEW_BASE_BRANCH: main
+  UBIX_APPROVAL_OWNERS: "cwolsen"                 # whose Approve/thumbs-up counts, incl. on their own MR
   GO_IMAGE: golang:1.26                         # go.mod needs >= 1.25.0; GitHub CI tests on 1.26
   LINT_IMAGE: golangci/golangci-lint:v2.12.2    # same version as GitHub
   MARIADB_IMAGE: mariadb:11
@@ -170,3 +179,27 @@ console-e2e:
     when: always
     expire_in: 1 week
     paths: [console-e2e-out/screenshots, console-e2e-out/server.log]
+
+# The sign-off job from the include above. It runs in an alpine image (curl, jq), so it goes
+# to the instance's k8s runner, which takes tagged jobs only and honours each job's image;
+# the shell runner would ignore the image. Reads approvals with the group's
+# AI_REVIEW_GITLAB_TOKEN. The shared script passes as UNVERIFIED (exit 0) when it has no
+# token or cannot read the approvals (GitLab unreachable, an error, an unreadable answer). A
+# secrets manager's gate fails closed (CONTRIBUTING), so before_script refuses to start
+# without a token, and wraps `bash` (the shared script ends with `bash "$SCRIPT"`) so that a
+# run reporting UNVERIFIED fails the job. Drop the wrapper once uBixCore's
+# ci/bin/require-approval.sh has a fail-closed option.
+require-approval:
+  tags: [k8s]
+  before_script:
+    - '[ -n "${APPROVAL_GITLAB_TOKEN:-${AI_REVIEW_GITLAB_TOKEN:-}}" ] || { echo "require-approval: FAILED: no APPROVAL_GITLAB_TOKEN or AI_REVIEW_GITLAB_TOKEN, so the sign-off cannot be checked; failing closed."; exit 1; }'
+    - command -v bash >/dev/null 2>&1 || apk add --no-cache bash >/dev/null
+    - |
+      bash() {
+        out="$(command bash "$@")" && rc=0 || rc=$?
+        printf '%s\n' "$out"
+        case "$out" in *UNVERIFIED*)
+          echo "require-approval: FAILED: the sign-off could not be verified; failing closed. Retry the job."; return 1 ;;
+        esac
+        return "$rc"
+      }
